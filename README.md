@@ -11,8 +11,7 @@ AssetName.blendmax
 ```
 
 `geometry.fbx` carries geometry and scene structure. `manifest.json` is data
-created automatically by Python; it is not another programming language you
-need to learn.
+created automatically by Python.
 
 ## Target environment
 
