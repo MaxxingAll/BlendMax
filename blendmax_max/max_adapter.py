@@ -9,7 +9,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from . import TARGET_MAX_VERSION, TARGET_VRAY_VERSION
+from . import (
+    SUPPORTED_VRAY_MAX_RELEASE,
+    SUPPORTED_VRAY_MIN_RELEASE,
+    SUPPORTED_VRAY_RANGE,
+    TARGET_MAX_VERSION,
+)
 from .errors import ExportError
 from .models import SceneNode
 
@@ -193,9 +198,17 @@ class MaxRuntimeAdapter:
             pass
 
         max_matches_target = detected_max_version == TARGET_MAX_VERSION
+        parsed_vray_version = self._parse_vray_version(detected_vray_version)
+        vray_release = (
+            parsed_vray_version[:2]
+            if parsed_vray_version is not None
+            else None
+        )
         vray_matches_target = bool(
-            detected_vray_version
-            and TARGET_VRAY_VERSION in detected_vray_version
+            vray_release
+            and SUPPORTED_VRAY_MIN_RELEASE
+            <= vray_release
+            <= SUPPORTED_VRAY_MAX_RELEASE
         )
         compatibility_warnings = []
         if not max_matches_target:
@@ -206,14 +219,14 @@ class MaxRuntimeAdapter:
             )
         if not vray_installed:
             compatibility_warnings.append(
-                "V-Ray was not detected; target is V-Ray {0}.".format(
-                    TARGET_VRAY_VERSION
+                "V-Ray was not detected; supported range is {0}.".format(
+                    SUPPORTED_VRAY_RANGE
                 )
             )
         elif detected_vray_version and not vray_matches_target:
             compatibility_warnings.append(
-                "Untested V-Ray version detected: {0}; target is {1}.".format(
-                    detected_vray_version, TARGET_VRAY_VERSION
+                "Untested V-Ray version detected: {0}; supported range is {1}.".format(
+                    detected_vray_version, SUPPORTED_VRAY_RANGE
                 )
             )
 
@@ -230,15 +243,44 @@ class MaxRuntimeAdapter:
             "vray": {
                 "installed": vray_installed,
                 "version": detected_vray_version,
+                "parsed_version": (
+                    ".".join(
+                        [
+                            str(parsed_vray_version[0]),
+                            "{0:02d}".format(parsed_vray_version[1]),
+                            "{0:02d}".format(parsed_vray_version[2]),
+                        ]
+                    )
+                    if parsed_vray_version is not None
+                    else None
+                ),
             },
             "compatibility": {
                 "target_3ds_max": TARGET_MAX_VERSION,
-                "target_vray": TARGET_VRAY_VERSION,
+                "supported_vray_range": SUPPORTED_VRAY_RANGE,
                 "max_matches_target": max_matches_target,
                 "vray_matches_target": vray_matches_target,
                 "warnings": compatibility_warnings,
             },
         }
+
+    def _parse_vray_version(
+        self,
+        raw_version: Optional[str],
+    ) -> Optional[Tuple[int, int, int]]:
+        if not raw_version:
+            return None
+        match = re.search(
+            r"(?<!\d)(\d+)\.(\d+)(?:\.(\d+))?(?!\d)",
+            str(raw_version),
+        )
+        if not match:
+            return None
+        return (
+            int(match.group(1)),
+            int(match.group(2)),
+            int(match.group(3) or 0),
+        )
 
     def _parse_max_version(self, raw_version: Iterable[str]) -> Optional[str]:
         values = [str(value) for value in raw_version]

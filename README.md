@@ -17,10 +17,11 @@ created automatically by Python.
 
 - Autodesk 3ds Max 2025.3
 - Python 3.11 supplied with 3ds Max
-- V-Ray 7.40
+- V-Ray 7.00.x through 7.40.x
 
-Other modern Max/V-Ray versions receive a compatibility warning rather than a
-hard rejection.
+Other modern Max versions and V-Ray releases outside that range receive a
+compatibility warning rather than a hard rejection. Patch builds within each
+supported V-Ray release family are accepted.
 
 ## Run it in 3ds Max
 
@@ -54,12 +55,21 @@ bitmap paths. V-Ray colours are serialized as RGBA values from 0 to 1. Only map
 controls for connected texture slots are retained, reducing manifest noise.
 
 Alpha.2 also records detected Max, renderer, and V-Ray versions and ignores
-empty `None`/`undefined` bitmap paths.
+empty `None`/`undefined` bitmap paths. V-Ray release families from 7.00.x
+through 7.40.x are treated as compatible.
+
+## Verified Alpha.2 test
+
+The Max exporter has been tested in Autodesk 3ds Max 2025.3 with V-Ray
+7.00.02. A `VRayMtl` using separate `VRayBitmap` maps for Diffuse, Bump, and
+Reflection Roughness exported all three files with their correct slot names and
+no warnings.
 
 Full V-Ray-to-Blender material interpretation is **not claimed complete** in
-this build. The next Max-side milestone is to test actual V-Ray materials and
-lock mappings for `VRayMtl`, `VRayBlendMtl`, `VRayBitmap`, and commonly used
-procedural maps.
+this build. The current Max-side milestone is to complete core `VRayMtl`
+coverage and lock its Blender Principled BSDF mappings. The next major phase is
+the Blender `.blendmax` importer. Advanced compound materials such as
+`VRayBlendMtl` are deferred until the basic end-to-end conversion works.
 
 ## Local tests
 

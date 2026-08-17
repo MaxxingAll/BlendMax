@@ -37,7 +37,7 @@ class FakeRuntime:
 
     @staticmethod
     def vrayVersion():
-        return "V-Ray 7.40.02 for x64"
+        return '#("7.00.02", "00000", "6c03966c")'
 
     @staticmethod
     def classOf(value):
@@ -58,10 +58,50 @@ class MaxAdapterTests(unittest.TestCase):
     def test_detects_target_environment(self):
         metadata = self.adapter.source_metadata()
         self.assertEqual(metadata["max_version"], "2025.3")
-        self.assertEqual(metadata["vray"]["version"], "V-Ray 7.40.02 for x64")
+        self.assertEqual(
+            metadata["vray"]["version"],
+            '#("7.00.02", "00000", "6c03966c")',
+        )
+        self.assertEqual(metadata["vray"]["parsed_version"], "7.00.02")
+        self.assertEqual(
+            metadata["compatibility"]["supported_vray_range"],
+            "7.00.x to 7.40.x",
+        )
         self.assertTrue(metadata["compatibility"]["max_matches_target"])
         self.assertTrue(metadata["compatibility"]["vray_matches_target"])
         self.assertEqual(metadata["compatibility"]["warnings"], [])
+
+    def test_accepts_upper_supported_vray_release_family(self):
+        class UpperRangeRuntime(FakeRuntime):
+            @staticmethod
+            def vrayVersion():
+                return "V-Ray 7.40.02 for x64"
+
+        metadata = MaxRuntimeAdapter(runtime=UpperRangeRuntime()).source_metadata()
+        self.assertEqual(metadata["vray"]["parsed_version"], "7.40.02")
+        self.assertTrue(metadata["compatibility"]["vray_matches_target"])
+        self.assertEqual(metadata["compatibility"]["warnings"], [])
+
+    def test_warns_for_vray_release_above_supported_range(self):
+        class NewerRuntime(FakeRuntime):
+            @staticmethod
+            def vrayVersion():
+                return '#("7.50.00", "00000", "future")'
+
+        metadata = MaxRuntimeAdapter(runtime=NewerRuntime()).source_metadata()
+        self.assertFalse(metadata["compatibility"]["vray_matches_target"])
+        self.assertEqual(len(metadata["compatibility"]["warnings"]), 1)
+        self.assertIn("7.00.x to 7.40.x", metadata["compatibility"]["warnings"][0])
+
+    def test_warns_for_vray_release_below_supported_range(self):
+        class OlderRuntime(FakeRuntime):
+            @staticmethod
+            def vrayVersion():
+                return '#("6.20.00", "00000", "older")'
+
+        metadata = MaxRuntimeAdapter(runtime=OlderRuntime()).source_metadata()
+        self.assertFalse(metadata["compatibility"]["vray_matches_target"])
+        self.assertEqual(len(metadata["compatibility"]["warnings"]), 1)
 
     def test_prunes_unneeded_vray_defaults(self):
         filtered = self.adapter._filter_material_properties(

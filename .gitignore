@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+*.blendmax
+*.fbx
+*.max
+export/
+.DS_Store
+Thumbs.db
