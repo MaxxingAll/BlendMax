@@ -109,12 +109,14 @@ class MaxAdapterTests(unittest.TestCase):
             {
                 "Diffuse": [1.0, 0.0, 0.0, 1.0],
                 "reflection_glossiness": 0.7,
+                "reflection_lockIOR": False,
                 "reflection_subdivs": 8,
                 "unrelated_internal_value": 123,
             },
         )
         self.assertIn("Diffuse", filtered)
         self.assertIn("reflection_glossiness", filtered)
+        self.assertIs(filtered["reflection_lockIOR"], False)
         self.assertNotIn("reflection_subdivs", filtered)
         self.assertNotIn("unrelated_internal_value", filtered)
 

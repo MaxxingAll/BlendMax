@@ -50,6 +50,7 @@ VRAY_MTL_PROPERTIES = {
     "reflection_fresnel",
     "reflection_glossiness",
     "reflection_ior",
+    "reflection_lockior",
     "reflection_maxdepth",
     "reflection_metalness",
     "reflection_weight",

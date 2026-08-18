@@ -56,7 +56,8 @@ controls for connected texture slots are retained, reducing manifest noise.
 
 Alpha.2 also records detected Max, renderer, and V-Ray versions and ignores
 empty `None`/`undefined` bitmap paths. V-Ray release families from 7.00.x
-through 7.40.x are treated as compatible.
+through 7.40.x are treated as compatible. For `VRayMtl`, separate Fresnel and
+refraction IOR values and the Fresnel-IOR lock state are preserved.
 
 ## Verified Alpha.2 test
 
