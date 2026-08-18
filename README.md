@@ -1,4 +1,4 @@
-# BlendMax Max Exporter v0.1 alpha.3.1
+# BlendMax Max Exporter v0.1 alpha.3.2
 
 BlendMax packages one isolated 3ds Max asset for conversion in Blender. The Max
 side is written in Python with `pymxs` and creates:
@@ -78,6 +78,10 @@ Reflection Roughness, Bump, Metalness, Fresnel IOR, Refraction, and Opacity maps
 
 Alpha.3.1 corrects the 3ds Max 2025 AppBundle component categories used to load
 the persistent menu and its post-start-up registration script.
+
+Alpha.3.2 makes every menu launcher add its installed Python directory before
+importing `blendmax_actions`, matching how 3ds Max runs files with
+`python.ExecuteFile`.
 
 ## Verified environment
 

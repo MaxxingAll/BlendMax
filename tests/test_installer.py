@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import runpy
+import shutil
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -24,7 +27,7 @@ class InstallerTests(unittest.TestCase):
             bundle = Path(temporary) / BUNDLE_NAME
             version = build_bundle(SOURCE_ROOT, bundle)
 
-            self.assertEqual(version, "0.1.0-alpha.3.1")
+            self.assertEqual(version, "0.1.0-alpha.3.2")
             self.assertTrue(
                 (bundle / "Contents" / "python" / "blendmax_max" / "exporter.py").is_file()
             )
@@ -54,7 +57,52 @@ class InstallerTests(unittest.TestCase):
             [component.get("Description") for component in components],
             ["macroscripts parts", "post-start-up scripts parts"],
         )
-        self.assertEqual(manifest.get("FriendlyVersion"), "0.1.0-alpha.3.1")
+        self.assertEqual(manifest.get("FriendlyVersion"), "0.1.0-alpha.3.2")
+
+    def test_launchers_import_actions_when_executed_from_an_isolated_path(self):
+        launchers = {
+            "launch_export.py": "export_asset",
+            "launch_update.py": "install_update",
+            "launch_project_page.py": "open_project_page",
+            "launch_about.py": "show_about",
+        }
+        launcher_source = (
+            SOURCE_ROOT
+            / "appbundle"
+            / BUNDLE_NAME
+            / "Contents"
+            / "python"
+        )
+        original_path = list(sys.path)
+
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                for filename, action in launchers.items():
+                    with self.subTest(launcher=filename):
+                        isolated = root / Path(filename).stem
+                        isolated.mkdir()
+                        launcher = isolated / filename
+                        shutil.copy2(launcher_source / filename, launcher)
+                        marker = isolated / "called.txt"
+                        (isolated / "blendmax_actions.py").write_text(
+                            "def {0}():\n"
+                            "    from pathlib import Path\n"
+                            "    Path({1!r}).write_text('called', encoding='utf-8')\n".format(
+                                action,
+                                str(marker),
+                            ),
+                            encoding="utf-8",
+                        )
+
+                        sys.modules.pop("blendmax_actions", None)
+                        sys.path[:] = original_path
+                        runpy.run_path(str(launcher), run_name="__blendmax_launcher_test__")
+
+                        self.assertEqual(marker.read_text(encoding="utf-8"), "called")
+        finally:
+            sys.path[:] = original_path
+            sys.modules.pop("blendmax_actions", None)
 
     def test_install_replaces_only_the_existing_bundle(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -68,7 +116,7 @@ class InstallerTests(unittest.TestCase):
 
             result = install_from_source(SOURCE_ROOT, install_root=plugins)
 
-            self.assertEqual(result["version"], "0.1.0-alpha.3.1")
+            self.assertEqual(result["version"], "0.1.0-alpha.3.2")
             self.assertFalse((target / "stale.txt").exists())
             self.assertEqual(
                 (unrelated / "keep.txt").read_text(encoding="utf-8"),
@@ -101,7 +149,7 @@ class InstallerTests(unittest.TestCase):
             plugins = root / "ApplicationPlugins"
             result = install_from_zip(archive_path, install_root=plugins)
 
-            self.assertEqual(result["version"], "0.1.0-alpha.3.1")
+            self.assertEqual(result["version"], "0.1.0-alpha.3.2")
             self.assertTrue((plugins / BUNDLE_NAME / "PackageContents.xml").is_file())
 
     def test_rejects_zip_path_traversal(self):
