@@ -4,5 +4,7 @@ __pycache__/
 *.fbx
 *.max
 export/
+dist/
+*.zip
 .DS_Store
 Thumbs.db

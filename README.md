@@ -1,7 +1,7 @@
-# BlendMax Max Exporter v0.1 alpha.2
+# BlendMax Max Exporter v0.1 alpha.3
 
-This is the first runnable 3ds Max half of BlendMax. It is written entirely in
-Python and uses `pymxs` to create a portable `.blendmax` package containing:
+BlendMax packages one isolated 3ds Max asset for conversion in Blender. The Max
+side is written in Python with `pymxs` and creates:
 
 ```text
 AssetName.blendmax
@@ -23,16 +23,34 @@ Other modern Max versions and V-Ray releases outside that range receive a
 compatibility warning rather than a hard rejection. Patch builds within each
 supported V-Ray release family are accepted.
 
-## Run it in 3ds Max
+## Install the persistent 3ds Max menu
 
-1. Extract this project somewhere permanent.
-2. Open the asset scene in 3ds Max.
-3. Choose **Scripting > Run Script**.
-4. Select `run_blendmax_max.py`.
-5. Choose where to save the `.blendmax` package.
+1. Extract the release ZIP.
+2. In 3ds Max, choose **Scripting > Run Script** one final time.
+3. Select `install_blendmax.py`.
+4. Restart 3ds Max.
+5. Use **BlendMax > Export Asset...** from the main menu.
 
-The exporter temporarily gives nodes unique FBX names and restores their
-original names and your previous selection after export.
+The installer places `BlendMax.bundle` in the current Windows user's Autodesk
+ApplicationPlugins folder. It does not modify the 3ds Max installation folder
+and does not require administrator rights.
+
+3ds Max 2025 introduced a new menu system. Its menu actions still require a
+small MacroScript/MAXScript registration bridge; all exporter, installer,
+updater, validation, and material logic remains Python.
+
+## Update BlendMax
+
+1. Download a newer BlendMax release ZIP without extracting it.
+2. In 3ds Max, choose **BlendMax > Install Update from ZIP...**.
+3. Select the ZIP and restart 3ds Max when prompted.
+
+The updater validates the release structure, rejects unsafe archive paths,
+builds a new AppBundle in a staging directory, and replaces only the installed
+`BlendMax.bundle` folder. If installation fails, the previous bundle is
+restored.
+
+`run_blendmax_max.py` remains available as a development fallback.
 
 ## v0.1 rules
 
@@ -43,7 +61,7 @@ original names and your previous selection after export.
 - Assets smaller than 1 cm on their largest dimension are rejected with the
   roast notification.
 - Assets wider or deeper than 50 m are exported at their original size, but the
-  manifest records the scale Blender must apply to fit the 50 × 50 m limit.
+  manifest records the scale Blender must apply to fit the 50 x 50 m limit.
 - FBX is exported in binary form, Z-up, metres, without animation or embedded
   textures.
 
@@ -54,23 +72,17 @@ parameters, sub-material connections, sub-texture connections, and discoverable
 bitmap paths. V-Ray colours are serialized as RGBA values from 0 to 1. Only map
 controls for connected texture slots are retained, reducing manifest noise.
 
-Alpha.2 also records detected Max, renderer, and V-Ray versions and ignores
-empty `None`/`undefined` bitmap paths. V-Ray release families from 7.00.x
-through 7.40.x are treated as compatible. For `VRayMtl`, separate Fresnel and
-refraction IOR values and the Fresnel-IOR lock state are preserved.
+Alpha.3 preserves separate Fresnel and refraction IOR values and the explicit
+Fresnel-IOR lock state. Verified `VRayMtl` coverage currently includes Diffuse,
+Reflection Roughness, Bump, Metalness, Fresnel IOR, Refraction, and Opacity maps.
 
-## Verified Alpha.2 test
+## Verified environment
 
-The Max exporter has been tested in Autodesk 3ds Max 2025.3 with V-Ray
-7.00.02. A `VRayMtl` using separate `VRayBitmap` maps for Diffuse, Bump, and
-Reflection Roughness exported all three files with their correct slot names and
-no warnings.
+The exporter has been tested in Autodesk 3ds Max 2025.3 with V-Ray 7.00.02.
+V-Ray release families from 7.00.x through 7.40.x are treated as compatible.
 
-Full V-Ray-to-Blender material interpretation is **not claimed complete** in
-this build. The current Max-side milestone is to complete core `VRayMtl`
-coverage and lock its Blender Principled BSDF mappings. The next major phase is
-the Blender `.blendmax` importer. Advanced compound materials such as
-`VRayBlendMtl` are deferred until the basic end-to-end conversion works.
+Full V-Ray-to-Blender material interpretation is **not claimed complete**.
+Advanced compound materials such as `VRayBlendMtl` remain deferred.
 
 ## Local tests
 
@@ -80,5 +92,6 @@ From the extracted project folder, using ordinary Python:
 python -m unittest discover -s tests -v
 ```
 
-The tests cover the scene rules, size policy, texture collection, and archive
-creation. Actual `pymxs` and FBX behavior must be tested inside 3ds Max.
+The tests cover scene rules, size policy, texture collection, archive creation,
+AppBundle construction, installation, and ZIP update safety. Actual `pymxs`,
+FBX, and 3ds Max menu behavior must be tested inside 3ds Max.
