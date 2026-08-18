@@ -88,6 +88,13 @@ importing `blendmax_actions`, matching how 3ds Max runs files with
 The exporter has been tested in Autodesk 3ds Max 2025.3 with V-Ray 7.00.02.
 V-Ray release families from 7.00.x through 7.40.x are treated as compatible.
 
+The **0.1.0-alpha.3.2 Max-side baseline is frozen**. Its persistent menu,
+installer, updater, package structure, and nine core `VRayMtl` conversion
+features are verified. See the
+[`TEST_MATRIX.md`](https://github.com/MaxxingAll/BlendMax/blob/main/TEST_MATRIX.md)
+record for the complete manual and automated results and the input contract for
+the Blender importer.
+
 Full V-Ray-to-Blender material interpretation is **not claimed complete**.
 Advanced compound materials such as `VRayBlendMtl` remain deferred.
 
