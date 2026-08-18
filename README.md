@@ -1,4 +1,4 @@
-# BlendMax Max Exporter v0.1 alpha.3
+# BlendMax Max Exporter v0.1 alpha.3.1
 
 BlendMax packages one isolated 3ds Max asset for conversion in Blender. The Max
 side is written in Python with `pymxs` and creates:
@@ -75,6 +75,9 @@ controls for connected texture slots are retained, reducing manifest noise.
 Alpha.3 preserves separate Fresnel and refraction IOR values and the explicit
 Fresnel-IOR lock state. Verified `VRayMtl` coverage currently includes Diffuse,
 Reflection Roughness, Bump, Metalness, Fresnel IOR, Refraction, and Opacity maps.
+
+Alpha.3.1 corrects the 3ds Max 2025 AppBundle component categories used to load
+the persistent menu and its post-start-up registration script.
 
 ## Verified environment
 

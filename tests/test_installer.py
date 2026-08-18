@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from blendmax_install import (
@@ -23,7 +24,7 @@ class InstallerTests(unittest.TestCase):
             bundle = Path(temporary) / BUNDLE_NAME
             version = build_bundle(SOURCE_ROOT, bundle)
 
-            self.assertEqual(version, "0.1.0-alpha.3")
+            self.assertEqual(version, "0.1.0-alpha.3.1")
             self.assertTrue(
                 (bundle / "Contents" / "python" / "blendmax_max" / "exporter.py").is_file()
             )
@@ -40,6 +41,21 @@ class InstallerTests(unittest.TestCase):
             self.assertIn("BlendMaxExport`BlendMax", menu)
             self.assertIn("BlendMaxUpdate`BlendMax", menu)
 
+    def test_manifest_uses_3ds_max_component_categories(self):
+        manifest = ET.parse(
+            SOURCE_ROOT
+            / "appbundle"
+            / BUNDLE_NAME
+            / "PackageContents.xml"
+        ).getroot()
+        components = manifest.findall("Components")
+
+        self.assertEqual(
+            [component.get("Description") for component in components],
+            ["macroscripts parts", "post-start-up scripts parts"],
+        )
+        self.assertEqual(manifest.get("FriendlyVersion"), "0.1.0-alpha.3.1")
+
     def test_install_replaces_only_the_existing_bundle(self):
         with tempfile.TemporaryDirectory() as temporary:
             plugins = Path(temporary) / "ApplicationPlugins"
@@ -52,7 +68,7 @@ class InstallerTests(unittest.TestCase):
 
             result = install_from_source(SOURCE_ROOT, install_root=plugins)
 
-            self.assertEqual(result["version"], "0.1.0-alpha.3")
+            self.assertEqual(result["version"], "0.1.0-alpha.3.1")
             self.assertFalse((target / "stale.txt").exists())
             self.assertEqual(
                 (unrelated / "keep.txt").read_text(encoding="utf-8"),
@@ -85,7 +101,7 @@ class InstallerTests(unittest.TestCase):
             plugins = root / "ApplicationPlugins"
             result = install_from_zip(archive_path, install_root=plugins)
 
-            self.assertEqual(result["version"], "0.1.0-alpha.3")
+            self.assertEqual(result["version"], "0.1.0-alpha.3.1")
             self.assertTrue((plugins / BUNDLE_NAME / "PackageContents.xml").is_file())
 
     def test_rejects_zip_path_traversal(self):
