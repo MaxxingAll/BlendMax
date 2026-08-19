@@ -88,6 +88,13 @@ VRAY_MTL_PROPERTIES = {
 }
 
 
+VRAY_MAP_SLOT_ALIASES = {
+    # V-Ray 7 can display this slot as Reflection Roughness while retaining
+    # the older reflectionGlossiness property stem for its map controls.
+    "reflectionroughness": "reflectionglossiness",
+}
+
+
 class MaxRuntimeAdapter:
     def __init__(self, runtime=None) -> None:
         if runtime is None:
@@ -119,7 +126,7 @@ class MaxRuntimeAdapter:
 
     def _is_exportable_superclass(self, superclass: str) -> bool:
         lowered = superclass.casefold()
-        return "geometryclass" in lowered or "shape" in lowered
+        return "geometryclass" in lowered
 
     def snapshot_scene(self) -> List[SceneNode]:
         max_nodes = list(self.rt.objects)
@@ -417,10 +424,10 @@ class MaxRuntimeAdapter:
         if class_name.casefold() != "vraymtl":
             return {}
 
-        normalized_slots = {
-            re.sub(r"[^a-z0-9]", "", str(slot).casefold())
-            for slot in slot_names
-        }
+        normalized_slots = set()
+        for slot in slot_names:
+            normalized = re.sub(r"[^a-z0-9]", "", str(slot).casefold())
+            normalized_slots.add(VRAY_MAP_SLOT_ALIASES.get(normalized, normalized))
         controls = {}
         for key, value in properties.items():
             lowered = key.casefold()
@@ -432,6 +439,10 @@ class MaxRuntimeAdapter:
                     stem = stem[: -len(suffix)]
                     break
             normalized_stem = re.sub(r"[^a-z0-9]", "", stem)
+            normalized_stem = VRAY_MAP_SLOT_ALIASES.get(
+                normalized_stem,
+                normalized_stem,
+            )
             if normalized_stem in normalized_slots:
                 controls[key] = value
         return controls
@@ -536,8 +547,13 @@ class MaxRuntimeAdapter:
             "graph": list(graph.values()),
         }
 
-    def discover_texture_paths(self, material_data: Dict[str, Any]) -> List[str]:
-        candidates: List[str] = []
+    def discover_texture_references(
+        self,
+        material_data: Dict[str, Any],
+    ) -> List[Dict[str, str]]:
+        """Return only graph-reachable bitmap references with stable owners."""
+
+        candidates: List[Dict[str, str]] = []
         likely_path_tokens = ("filename", "file", "path", "mapname", "bitmap")
         for entry in material_data.get("graph", []):
             if entry.get("kind") != "texture":
@@ -546,32 +562,31 @@ class MaxRuntimeAdapter:
                 if not isinstance(value, str):
                     continue
                 if any(token in key.casefold() for token in likely_path_tokens):
-                    candidates.append(self._resolve_texture_path(value))
+                    raw_path = value.strip()
+                    resolved_path = self._resolve_texture_path(raw_path)
+                    if resolved_path:
+                        candidates.append(
+                            {
+                                "graph_node_id": str(entry.get("id", "")),
+                                "parameter": str(key),
+                                "raw_path": raw_path,
+                                "resolved_path": resolved_path,
+                            }
+                        )
 
-        for class_name in ("Bitmaptexture", "VRayBitmap"):
-            try:
-                texture_class = getattr(self.rt, class_name)
-                instances = list(self.rt.getClassInstances(texture_class))
-            except Exception:
+        unique: List[Dict[str, str]] = []
+        seen = set()
+        for reference in candidates:
+            key = (
+                reference["graph_node_id"],
+                reference["parameter"].casefold(),
+                reference["resolved_path"].casefold(),
+            )
+            if key in seen:
                 continue
-            for texture in instances:
-                for property_name in ("filename", "file", "HDRIMapName"):
-                    try:
-                        raw_value = getattr(texture, property_name)
-                    except Exception:
-                        continue
-                    if raw_value is None:
-                        continue
-                    try:
-                        if raw_value == self.rt.undefined:
-                            continue
-                    except Exception:
-                        pass
-                    value = str(raw_value).strip()
-                    if value and value.casefold() not in {"none", "undefined"}:
-                        candidates.append(self._resolve_texture_path(value))
-
-        return list(dict.fromkeys(path for path in candidates if path))
+            seen.add(key)
+            unique.append(reference)
+        return unique
 
     def _resolve_texture_path(self, value: str) -> str:
         raw = os.path.expandvars(str(value)).strip()
@@ -595,14 +610,37 @@ class MaxRuntimeAdapter:
         return os.path.normpath(raw)
 
     @contextmanager
-    def prepared_export(self, export_ids: Iterable[str]):
+    def prepared_export(
+        self,
+        export_ids: Iterable[str],
+        selection_ids: Optional[Iterable[str]] = None,
+    ):
         ids = list(export_ids)
         nodes = [self._nodes_by_id[node_id] for node_id in ids]
+        selected_id_list = list(selection_ids) if selection_ids is not None else ids
+        selection_nodes = [self._nodes_by_id[node_id] for node_id in selected_id_list]
         previous_selection = list(self.rt.selection)
         renamed: List[Tuple[Any, str]] = []
+        group_states: List[Tuple[Any, bool]] = []
         export_names: Dict[str, str] = {}
 
         try:
+            for node in nodes:
+                try:
+                    if not bool(self.rt.isGroupHead(node)):
+                        continue
+                    was_open = bool(self.rt.isOpenGroupHead(node))
+                    group_states.append((node, was_open))
+                    if not was_open:
+                        self.rt.setGroupOpen(node, True)
+                except Exception as exc:
+                    raise ExportError(
+                        "Could not open asset group {0} for an isolated export: {1}".format(
+                            getattr(node, "name", "Unnamed"),
+                            exc,
+                        )
+                    )
+
             for node_id, node in zip(ids, nodes):
                 original_name = str(node.name)
                 export_name = "BM_{0}".format(uuid.uuid4().hex[:16])
@@ -612,9 +650,32 @@ class MaxRuntimeAdapter:
 
             self.rt.clearSelection()
             try:
-                self.rt.select(self.rt.Array(*nodes))
+                self.rt.select(self.rt.Array(*selection_nodes))
             except Exception:
-                self.rt.select(nodes)
+                self.rt.select(selection_nodes)
+
+            expected_ids = set(selected_id_list)
+            selected_nodes = list(self.rt.selection)
+            selected_ids = {self._anim_id(node) for node in selected_nodes}
+            unexpected_nodes = [
+                str(getattr(node, "name", "Unnamed"))
+                for node in selected_nodes
+                if self._anim_id(node) not in expected_ids
+            ]
+            missing_ids = sorted(expected_ids - selected_ids)
+            if unexpected_nodes or missing_ids:
+                details = []
+                if unexpected_nodes:
+                    details.append(
+                        "unexpected nodes: {0}".format(", ".join(unexpected_nodes))
+                    )
+                if missing_ids:
+                    details.append("missing node IDs: {0}".format(", ".join(missing_ids)))
+                raise ExportError(
+                    "3ds Max expanded the BlendMax export selection ({0}).".format(
+                        "; ".join(details)
+                    )
+                )
             yield export_names
         finally:
             for node, original_name in renamed:
@@ -622,6 +683,15 @@ class MaxRuntimeAdapter:
                     node.name = original_name
                 except Exception:
                     pass
+            group_restore_error = None
+            for group_head, was_open in reversed(group_states):
+                try:
+                    current_open = bool(self.rt.isOpenGroupHead(group_head))
+                    if current_open != was_open:
+                        self.rt.setGroupOpen(group_head, was_open)
+                except Exception as exc:
+                    if group_restore_error is None:
+                        group_restore_error = exc
             try:
                 self.rt.clearSelection()
                 if previous_selection:
@@ -631,6 +701,12 @@ class MaxRuntimeAdapter:
                         self.rt.select(previous_selection)
             except Exception:
                 pass
+            if group_restore_error is not None:
+                raise ExportError(
+                    "BlendMax could not restore the original group state: {0}".format(
+                        group_restore_error
+                    )
+                )
 
     def export_selected_fbx(self, output_path) -> List[str]:
         warnings: List[str] = []
@@ -642,44 +718,74 @@ class MaxRuntimeAdapter:
         except Exception:
             pass
 
+        settings_pushed = False
         try:
-            self.rt.FBXExporterSetParam("ResetExport")
-        except Exception:
-            warnings.append("The FBX exporter preset could not be reset; explicit BlendMax settings were still applied.")
-
-        settings = {
-            "Animation": False,
-            "ASCII": False,
-            "Cameras": False,
-            "Lights": False,
-            "EmbedTextures": False,
-            "ConvertUnit": "m",
-            "Preserveinstances": True,
-            "Shape": False,
-            "Skin": False,
-            "ShowWarnings": False,
-            "SmoothingGroups": True,
-            "TangentSpaceExport": True,
-            "Triangulate": False,
-            "UpAxis": "Z",
-        }
-        for key, value in settings.items():
             try:
-                result = self.rt.FBXExporterSetParam(key, value)
+                result = self.rt.FBXExporterSetParam("PushSettings")
                 if str(result).casefold() == "unsupplied":
-                    warnings.append("FBX setting was not supported: {0}".format(key))
+                    warnings.append(
+                        "The FBX exporter could not preserve the current settings."
+                    )
+                else:
+                    settings_pushed = True
             except Exception as exc:
-                warnings.append("Could not set FBX option {0}: {1}".format(key, exc))
+                warnings.append(
+                    "Could not preserve the current FBX settings: {0}".format(exc)
+                )
 
-        try:
-            self.rt.exportFile(
-                str(output),
-                self.rt.Name("noPrompt"),
-                selectedOnly=True,
-                using=self.rt.FBXEXP,
-            )
-        except Exception as exc:
-            raise ExportError("3ds Max FBX export failed: {0}".format(exc))
+            try:
+                self.rt.FBXExporterSetParam("ResetExport")
+            except Exception:
+                warnings.append(
+                    "The FBX exporter preset could not be reset; explicit "
+                    "BlendMax settings were still applied."
+                )
+
+            settings = {
+                "Animation": False,
+                "ASCII": False,
+                "Cameras": False,
+                "Lights": False,
+                "EmbedTextures": False,
+                "ConvertUnit": "m",
+                "Preserveinstances": True,
+                "Shape": False,
+                "Skin": False,
+                "ShowWarnings": False,
+                "SmoothingGroups": True,
+                "TangentSpaceExport": True,
+                "Triangulate": False,
+                "UpAxis": "Z",
+            }
+            for key, value in settings.items():
+                try:
+                    result = self.rt.FBXExporterSetParam(key, value)
+                    if str(result).casefold() == "unsupplied":
+                        warnings.append(
+                            "FBX setting was not supported: {0}".format(key)
+                        )
+                except Exception as exc:
+                    warnings.append(
+                        "Could not set FBX option {0}: {1}".format(key, exc)
+                    )
+
+            try:
+                self.rt.exportFile(
+                    str(output),
+                    self.rt.Name("noPrompt"),
+                    selectedOnly=True,
+                    using=self.rt.FBXEXP,
+                )
+            except Exception as exc:
+                raise ExportError("3ds Max FBX export failed: {0}".format(exc))
+        finally:
+            if settings_pushed:
+                try:
+                    self.rt.FBXExporterSetParam("PopSettings")
+                except Exception as exc:
+                    warnings.append(
+                        "Could not restore the previous FBX settings: {0}".format(exc)
+                    )
 
         if not output.is_file() or output.stat().st_size == 0:
             raise ExportError("3ds Max did not create a usable FBX file.")

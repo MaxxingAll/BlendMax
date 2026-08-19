@@ -95,10 +95,11 @@ def validate_scene(
             )
 
         export_ids = [root.node_id]
+        export_ids.extend(node.node_id for node in payload)
         export_ids.extend(
             node.node_id
             for node in scene_nodes
-            if node.node_id in descendant_ids
+            if node.node_id in descendant_ids and node.is_group_head
         )
         mode = "group"
     else:
@@ -176,4 +177,3 @@ def evaluate_size_policy(
         recommended_scale=recommended_scale,
         oversized=oversized,
     )
-

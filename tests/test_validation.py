@@ -49,6 +49,25 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(result.object_count, 2)
         self.assertEqual(result.export_ids, ("g", "1", "2"))
 
+    def test_ignored_group_descendant_is_not_exported(self):
+        nodes = [
+            node("g", "ChairGroup", group_head=True, exportable=False),
+            node("1", "Seat", parent_id="g", group_member=True),
+            SceneNode(
+                node_id="light",
+                name="StudioLight",
+                node_type="VRayLight",
+                superclass="Light",
+                parent_id="g",
+                is_group_member=True,
+                exportable=False,
+            ),
+        ]
+        result = validate_scene(nodes)
+        self.assertEqual(result.payload_ids, ("1",))
+        self.assertEqual(result.export_ids, ("g", "1"))
+        self.assertIn("StudioLight", result.warnings[0])
+
     def test_rejects_object_outside_group(self):
         nodes = [
             node("g", "ChairGroup", group_head=True, exportable=False),
@@ -83,4 +102,3 @@ class ValidationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

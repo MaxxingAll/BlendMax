@@ -30,7 +30,7 @@ class BlendMaxExporter:
         bounds = self.adapter.bounds_in_meters(validation.payload_ids)
         size_policy = evaluate_size_policy(bounds["dimensions"])
         material_data = self.adapter.capture_material_graph(validation.payload_ids)
-        texture_paths = self.adapter.discover_texture_paths(material_data)
+        texture_references = self.adapter.discover_texture_references(material_data)
 
         output = ensure_blendmax_suffix(output_path)
         all_warnings: List[str] = list(validation.warnings)
@@ -43,11 +43,14 @@ class BlendMaxExporter:
             stage = Path(temporary)
             fbx_path = stage / "geometry.fbx"
 
-            with self.adapter.prepared_export(validation.export_ids) as export_names:
+            with self.adapter.prepared_export(
+                validation.export_ids,
+                selection_ids=validation.payload_ids,
+            ) as export_names:
                 all_warnings.extend(self.adapter.export_selected_fbx(fbx_path))
 
             texture_records = copy_texture_files(
-                texture_paths,
+                texture_references,
                 stage / "textures",
             )
             missing_count = sum(
@@ -61,6 +64,19 @@ class BlendMaxExporter:
                 )
 
             root = snapshot_by_id[validation.root_id]
+            exported_ids = set(validation.export_ids)
+
+            def exported_parent_id(node_id):
+                parent_id = snapshot_by_id[node_id].parent_id
+                visited = set()
+                while parent_id and parent_id not in visited:
+                    if parent_id in exported_ids:
+                        return parent_id
+                    visited.add(parent_id)
+                    parent = snapshot_by_id.get(parent_id)
+                    parent_id = parent.parent_id if parent is not None else None
+                return None
+
             object_records = []
             for node_id in validation.export_ids:
                 node = snapshot_by_id[node_id]
@@ -71,7 +87,7 @@ class BlendMaxExporter:
                         "fbx_name": export_names[node.node_id],
                         "node_type": node.node_type,
                         "superclass": node.superclass,
-                        "parent_id": node.parent_id,
+                        "parent_id": exported_parent_id(node_id),
                         "is_group_head": node.is_group_head,
                         "is_group_member": node.is_group_member,
                     }
@@ -80,7 +96,7 @@ class BlendMaxExporter:
             manifest = {
                 "schema": {
                     "name": "BlendMax Manifest",
-                    "version": "0.1.0",
+                    "version": "0.1.1",
                 },
                 "generator": {
                     "name": "BlendMax Max Exporter",
@@ -122,7 +138,13 @@ class BlendMaxExporter:
             "asset_name": root.name,
             "object_count": validation.object_count,
             "texture_count": sum(
-                1 for record in texture_records if record["status"] == "copied"
+                1
+                for package_path in {
+                    record["package_path"]
+                    for record in texture_records
+                    if record["status"] == "copied"
+                }
+                if package_path
             ),
             "warning_count": len(all_warnings),
             "recommended_blender_scale": size_policy.recommended_scale,
