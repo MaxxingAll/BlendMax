@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
+from blendmax_max.errors import ExportError
 from blendmax_max.max_adapter import MaxRuntimeAdapter
 
 
@@ -10,6 +13,13 @@ class FakeColor:
     g = 127.5
     b = 0.0
     a = 255.0
+
+
+class FakePoint:
+    def __init__(self, x, y, z):
+        self.x = x
+        self.y = y
+        self.z = z
 
 
 class FakeUnits:
@@ -103,6 +113,80 @@ class MaxAdapterTests(unittest.TestCase):
         self.assertFalse(metadata["compatibility"]["vray_matches_target"])
         self.assertEqual(len(metadata["compatibility"]["warnings"]), 1)
 
+    def test_bounds_use_evaluated_world_vertices_and_delete_snapshot(self):
+        class Node:
+            name = "RotatedAsset"
+            min = FakePoint(-5000.0, -5000.0, -5000.0)
+            max = FakePoint(5000.0, 5000.0, 5000.0)
+
+        class Mesh:
+            numverts = 3
+
+        class BoundsRuntime(FakeRuntime):
+            def __init__(self):
+                self.mesh = Mesh()
+                self.vertices = (
+                    FakePoint(1000.0, -500.0, 0.0),
+                    FakePoint(2000.0, 500.0, 100.0),
+                    FakePoint(1250.0, 250.0, 250.0),
+                )
+                self.deleted = []
+
+            def snapshotAsMesh(self, _node):
+                return self.mesh
+
+            def getVert(self, _mesh, index):
+                return self.vertices[index - 1]
+
+            def delete(self, value):
+                self.deleted.append(value)
+
+        runtime = BoundsRuntime()
+        adapter = MaxRuntimeAdapter(runtime=runtime)
+        adapter._nodes_by_id = {"1": Node()}
+
+        bounds = adapter.bounds_in_meters(("1",))
+
+        self.assertEqual(bounds["minimum"], [1.0, -0.5, 0.0])
+        self.assertEqual(bounds["maximum"], [2.0, 0.5, 0.25])
+        self.assertEqual(bounds["dimensions"], [1.0, 1.0, 0.25])
+        self.assertEqual(runtime.deleted, [runtime.mesh])
+
+    def test_bounds_fall_back_to_node_box_and_cleanup_failed_snapshot(self):
+        class Node:
+            name = "FallbackAsset"
+            min = FakePoint(-2000.0, -1000.0, 0.0)
+            max = FakePoint(3000.0, 4000.0, 500.0)
+
+        class Mesh:
+            numverts = 2
+
+        class FailingBoundsRuntime(FakeRuntime):
+            def __init__(self):
+                self.mesh = Mesh()
+                self.deleted = []
+
+            def snapshotAsMesh(self, _node):
+                return self.mesh
+
+            @staticmethod
+            def getVert(_mesh, _index):
+                raise RuntimeError("simulated vertex failure")
+
+            def delete(self, value):
+                self.deleted.append(value)
+
+        runtime = FailingBoundsRuntime()
+        adapter = MaxRuntimeAdapter(runtime=runtime)
+        adapter._nodes_by_id = {"1": Node()}
+
+        bounds = adapter.bounds_in_meters(("1",))
+
+        self.assertEqual(bounds["minimum"], [-2.0, -1.0, 0.0])
+        self.assertEqual(bounds["maximum"], [3.0, 4.0, 0.5])
+        self.assertEqual(bounds["dimensions"], [5.0, 5.0, 0.5])
+        self.assertEqual(runtime.deleted, [runtime.mesh])
+
     def test_prunes_unneeded_vray_defaults(self):
         filtered = self.adapter._filter_material_properties(
             "VRayMtl",
@@ -138,6 +222,246 @@ class MaxAdapterTests(unittest.TestCase):
                 "texmap_diffuse_multiplier": 100.0,
             },
         )
+
+    def test_matches_reflection_roughness_to_glossiness_controls(self):
+        controls = self.adapter._connected_map_controls(
+            "VRayMtl",
+            {
+                "texmap_reflectionGlossiness_on": False,
+                "texmap_reflectionGlossiness_multiplier": 37.0,
+                "texmap_reflection_on": True,
+            },
+            ["Reflection roughness"],
+        )
+        self.assertEqual(
+            controls,
+            {
+                "texmap_reflectionGlossiness_on": False,
+                "texmap_reflectionGlossiness_multiplier": 37.0,
+            },
+        )
+
+    def test_v01_exports_geometry_but_not_shapes(self):
+        self.assertTrue(self.adapter._is_exportable_superclass("GeometryClass"))
+        self.assertFalse(self.adapter._is_exportable_superclass("Shape"))
+
+    def test_texture_references_keep_graph_owner_and_resolve_relative_path(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            texture = root / "maps" / "wood.png"
+            texture.parent.mkdir()
+            texture.write_bytes(b"texture")
+
+            class RelativeRuntime(FakeRuntime):
+                maxFilePath = str(root)
+
+            references = MaxRuntimeAdapter(
+                runtime=RelativeRuntime()
+            ).discover_texture_references(
+                {
+                    "graph": [
+                        {
+                            "id": "tex_42",
+                            "kind": "texture",
+                            "parameters": {"filename": "maps/wood.png"},
+                        },
+                        {
+                            "id": "mat_7",
+                            "kind": "material",
+                            "parameters": {"filename": "stale.png"},
+                        },
+                    ]
+                }
+            )
+
+            self.assertEqual(len(references), 1)
+            self.assertEqual(references[0]["graph_node_id"], "tex_42")
+            self.assertEqual(references[0]["parameter"], "filename")
+            self.assertEqual(references[0]["raw_path"], "maps/wood.png")
+            self.assertEqual(references[0]["resolved_path"], str(texture))
+
+    def test_fbx_settings_are_restored_after_success(self):
+        class PluginManager:
+            @staticmethod
+            def loadClass(_value):
+                return True
+
+        class FBXRuntime:
+            FBXEXPORTER = object()
+            FBXEXP = object()
+            pluginManager = PluginManager()
+
+            def __init__(self):
+                self.calls = []
+
+            def FBXExporterSetParam(self, *args):
+                self.calls.append(args)
+                return True
+
+            @staticmethod
+            def Name(value):
+                return value
+
+            @staticmethod
+            def exportFile(path, *_args, **_kwargs):
+                Path(path).write_bytes(b"fbx")
+
+        runtime = FBXRuntime()
+        with tempfile.TemporaryDirectory() as temporary:
+            warnings = MaxRuntimeAdapter(runtime=runtime).export_selected_fbx(
+                Path(temporary) / "geometry.fbx"
+            )
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(runtime.calls[0], ("PushSettings",))
+        self.assertEqual(runtime.calls[1], ("ResetExport",))
+        self.assertEqual(runtime.calls[-1], ("PopSettings",))
+
+    def test_fbx_settings_are_restored_after_export_failure(self):
+        class PluginManager:
+            @staticmethod
+            def loadClass(_value):
+                return True
+
+        class FailingFBXRuntime:
+            FBXEXPORTER = object()
+            FBXEXP = object()
+            pluginManager = PluginManager()
+
+            def __init__(self):
+                self.calls = []
+
+            def FBXExporterSetParam(self, *args):
+                self.calls.append(args)
+                return True
+
+            @staticmethod
+            def Name(value):
+                return value
+
+            @staticmethod
+            def exportFile(*_args, **_kwargs):
+                raise RuntimeError("simulated failure")
+
+        runtime = FailingFBXRuntime()
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaises(ExportError):
+                MaxRuntimeAdapter(runtime=runtime).export_selected_fbx(
+                    Path(temporary) / "geometry.fbx"
+                )
+
+        self.assertEqual(runtime.calls[0], ("PushSettings",))
+        self.assertEqual(runtime.calls[-1], ("PopSettings",))
+
+    def _group_export_adapter(self, always_expand=False):
+        class Node:
+            def __init__(self, handle, name, group_head=False):
+                self.handle = handle
+                self.name = name
+                self.group_head = group_head
+
+        group = Node(101, "AssetGroup", group_head=True)
+        mesh = Node(102, "Mesh")
+        ignored = Node(103, "IgnoredLight")
+        previous = Node(104, "PreviouslySelected")
+
+        class GroupRuntime:
+            undefined = object()
+
+            def __init__(self):
+                self.selection = [previous]
+                self.group_is_open = False
+                self.group_calls = []
+
+            @staticmethod
+            def getHandleByAnim(node):
+                return node.handle
+
+            @staticmethod
+            def isGroupHead(node):
+                return node.group_head
+
+            def isOpenGroupHead(self, _node):
+                return self.group_is_open
+
+            def setGroupOpen(self, _node, is_open):
+                self.group_is_open = bool(is_open)
+                self.group_calls.append(bool(is_open))
+
+            @staticmethod
+            def Array(*nodes):
+                return list(nodes)
+
+            def clearSelection(self):
+                self.selection = []
+
+            def select(self, nodes):
+                selected = list(nodes)
+                if mesh in selected and (always_expand or not self.group_is_open):
+                    selected.append(ignored)
+                self.selection = selected
+
+        runtime = GroupRuntime()
+        adapter = MaxRuntimeAdapter(runtime=runtime)
+        adapter._nodes_by_id = {
+            "101": group,
+            "102": mesh,
+        }
+        return adapter, runtime, group, mesh, ignored, previous
+
+    def test_prepared_export_opens_group_and_restores_scene_state(self):
+        adapter, runtime, group, mesh, ignored, previous = self._group_export_adapter()
+
+        with adapter.prepared_export(
+            ("101", "102"),
+            selection_ids=("102",),
+        ) as export_names:
+            self.assertTrue(runtime.group_is_open)
+            self.assertEqual(runtime.selection, [mesh])
+            self.assertNotIn(ignored, runtime.selection)
+            self.assertEqual(set(export_names), {"101", "102"})
+            self.assertTrue(group.name.startswith("BM_"))
+            self.assertTrue(mesh.name.startswith("BM_"))
+
+        self.assertFalse(runtime.group_is_open)
+        self.assertEqual(runtime.group_calls, [True, False])
+        self.assertEqual(runtime.selection, [previous])
+        self.assertEqual(group.name, "AssetGroup")
+        self.assertEqual(mesh.name, "Mesh")
+
+    def test_prepared_export_restores_group_after_body_failure(self):
+        adapter, runtime, group, mesh, _ignored, previous = self._group_export_adapter()
+
+        with self.assertRaisesRegex(RuntimeError, "simulated body failure"):
+            with adapter.prepared_export(
+                ("101", "102"),
+                selection_ids=("102",),
+            ):
+                raise RuntimeError("simulated body failure")
+
+        self.assertFalse(runtime.group_is_open)
+        self.assertEqual(runtime.group_calls, [True, False])
+        self.assertEqual(runtime.selection, [previous])
+        self.assertEqual(group.name, "AssetGroup")
+        self.assertEqual(mesh.name, "Mesh")
+
+    def test_prepared_export_rejects_unexpected_group_selection_expansion(self):
+        adapter, runtime, group, mesh, ignored, previous = self._group_export_adapter(
+            always_expand=True
+        )
+
+        with self.assertRaisesRegex(ExportError, "expanded the BlendMax export selection"):
+            with adapter.prepared_export(
+                ("101", "102"),
+                selection_ids=("102",),
+            ):
+                self.fail("An expanded selection must not reach the FBX exporter.")
+
+        self.assertFalse(runtime.group_is_open)
+        self.assertEqual(runtime.selection, [previous])
+        self.assertEqual(group.name, "AssetGroup")
+        self.assertEqual(mesh.name, "Mesh")
+        self.assertEqual(ignored.name, "IgnoredLight")
 
 
 if __name__ == "__main__":

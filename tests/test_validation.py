@@ -49,6 +49,25 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(result.object_count, 2)
         self.assertEqual(result.export_ids, ("g", "1", "2"))
 
+    def test_ignored_group_descendant_is_not_exported(self):
+        nodes = [
+            node("g", "ChairGroup", group_head=True, exportable=False),
+            node("1", "Seat", parent_id="g", group_member=True),
+            SceneNode(
+                node_id="light",
+                name="StudioLight",
+                node_type="VRayLight",
+                superclass="Light",
+                parent_id="g",
+                is_group_member=True,
+                exportable=False,
+            ),
+        ]
+        result = validate_scene(nodes)
+        self.assertEqual(result.payload_ids, ("1",))
+        self.assertEqual(result.export_ids, ("g", "1"))
+        self.assertIn("StudioLight", result.warnings[0])
+
     def test_rejects_object_outside_group(self):
         nodes = [
             node("g", "ChairGroup", group_head=True, exportable=False),
@@ -59,15 +78,28 @@ class ValidationTests(unittest.TestCase):
             validate_scene(nodes)
         self.assertEqual(caught.exception.code, "MIXED_ASSETS")
 
-    def test_rejects_more_than_fifteen_payload_objects(self):
+    def test_accepts_thirty_payload_objects(self):
         nodes = [node("g", "Group", group_head=True, exportable=False)]
         nodes.extend(
             node(str(index), "Part", parent_id="g", group_member=True)
-            for index in range(16)
+            for index in range(30)
+        )
+
+        result = validate_scene(nodes)
+
+        self.assertEqual(result.object_count, 30)
+
+    def test_rejects_more_than_thirty_payload_objects(self):
+        nodes = [node("g", "Group", group_head=True, exportable=False)]
+        nodes.extend(
+            node(str(index), "Part", parent_id="g", group_member=True)
+            for index in range(31)
         )
         with self.assertRaises(SceneValidationError) as caught:
             validate_scene(nodes)
         self.assertEqual(caught.exception.code, "TOO_MANY_OBJECTS")
+        self.assertIn("31 objects", str(caught.exception))
+        self.assertIn("at most 30", str(caught.exception))
 
     def test_oversized_asset_produces_scale_recommendation(self):
         result = evaluate_size_policy((100.0, 20.0, 5.0))
@@ -83,4 +115,3 @@ class ValidationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

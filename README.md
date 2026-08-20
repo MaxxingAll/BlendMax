@@ -1,4 +1,4 @@
-# BlendMax Max Exporter v0.1 alpha.3.2
+# BlendMax Max Exporter v0.1 alpha.3.6
 
 BlendMax packages one isolated 3ds Max asset for conversion in Blender. The Max
 side is written in Python with `pymxs` and creates:
@@ -55,22 +55,29 @@ restored.
 ## v0.1 rules
 
 - The scene must contain exactly one grouped asset or one standalone object.
-- A grouped asset may contain at most 15 geometry/shape nodes.
+- A grouped asset may contain at most 30 geometry nodes. Nested group heads and
+  ignored non-geometry nodes do not count toward this limit.
 - Geometry outside the single asset group causes an error.
-- Cameras, lights, and other non-geometry nodes are ignored and reported.
+- Shapes, cameras, lights, helpers, and other non-geometry nodes are ignored
+  and reported. Convert required splines to geometry before exporting.
 - Assets smaller than 1 cm on their largest dimension are rejected with the
   roast notification.
 - Assets wider or deeper than 50 m are exported at their original size, but the
   manifest records the scale Blender must apply to fit the 50 x 50 m limit.
 - FBX is exported in binary form, Z-up, metres, without animation or embedded
-  textures.
+  textures. BlendMax restores the user's previous FBX exporter settings when
+  the export finishes or fails.
 
 ## Material status
 
 This alpha records assigned material classes, conversion-relevant material/map
-parameters, sub-material connections, sub-texture connections, and discoverable
+parameters, sub-material connections, sub-texture connections, and reachable
 bitmap paths. V-Ray colours are serialized as RGBA values from 0 to 1. Only map
 controls for connected texture slots are retained, reducing manifest noise.
+Each packaged texture record explicitly identifies its material-graph node,
+source parameter, raw Max path, resolved source path, and package path. This
+keeps relative paths and duplicate filenames unambiguous for the Blender
+importer.
 
 Alpha.3 preserves separate Fresnel and refraction IOR values and the explicit
 Fresnel-IOR lock state. Verified `VRayMtl` coverage currently includes Diffuse,
@@ -83,17 +90,41 @@ Alpha.3.2 makes every menu launcher add its installed Python directory before
 importing `blendmax_actions`, matching how 3ds Max runs files with
 `python.ExecuteFile`.
 
+Alpha.3.3 preserves the
+Reflection Roughness map's V-Ray `reflectionGlossiness` enable/multiplier
+controls, copies only graph-reachable textures, excludes ignored scene nodes
+from object records, restores FBX settings, and formalizes geometry-only v0.1
+support. The manifest schema is `0.1.1`.
+
+Alpha.3.4 fixes closed-group selection discovered during the mixed-group test.
+BlendMax temporarily opens asset groups before selecting the intended group
+geometry payload, restores their original open/closed state afterward, and
+aborts if 3ds Max adds any unexpected nodes to the FBX selection. The group
+head remains represented in the manifest without forcing FBX to recurse through
+every group member.
+
+Alpha.3.5 calculates manifest bounds from the evaluated world-space mesh
+vertices. This keeps rotated assets from inheriting an inflated conservative
+node bounding box and prevents false oversized-asset scale recommendations.
+BlendMax deletes each temporary mesh snapshot immediately and falls back to the
+legacy node bounds if evaluated vertices are unavailable.
+
+Alpha.3.6 raises the grouped-asset geometry limit from 15 to 30 objects after a
+four-potted-plants production asset demonstrated that realistic nested assets
+can approach the original cap while still representing one isolated asset.
+
 ## Verified environment
 
 The exporter has been tested in Autodesk 3ds Max 2025.3 with V-Ray 7.00.02.
 V-Ray release families from 7.00.x through 7.40.x are treated as compatible.
 
-The **0.1.0-alpha.3.2 Max-side baseline is frozen**. Its persistent menu,
-installer, updater, package structure, and nine core `VRayMtl` conversion
-features are verified. See the
+The **Max exporter is under active development**. The Blender importer is
+deliberately deferred while exporter behavior, scene coverage, and material
+coverage continue to improve. The persistent menu and the nine core `VRayMtl`
+features are verified, while every new exporter change receives automated and
+3ds Max regression testing. See the
 [`TEST_MATRIX.md`](https://github.com/MaxxingAll/BlendMax/blob/main/TEST_MATRIX.md)
-record for the complete manual and automated results and the input contract for
-the Blender importer.
+record for the complete manual and automated results.
 
 Full V-Ray-to-Blender material interpretation is **not claimed complete**.
 Advanced compound materials such as `VRayBlendMtl` remain deferred.
@@ -106,6 +137,8 @@ From the extracted project folder, using ordinary Python:
 python -m unittest discover -s tests -v
 ```
 
-The tests cover scene rules, size policy, texture collection, archive creation,
+The 38 tests cover scene rules, the 30-object boundary, exact and fallback
+bounds, size policy, texture ownership and collisions,
+group isolation and restoration, archive creation, FBX state restoration,
 AppBundle construction, installation, and ZIP update safety. Actual `pymxs`,
 FBX, and 3ds Max menu behavior must be tested inside 3ds Max.

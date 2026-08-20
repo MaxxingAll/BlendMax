@@ -41,37 +41,56 @@ def _unique_texture_name(source: Path, used_names: Dict[str, Path]) -> str:
 
 
 def copy_texture_files(
-    source_paths: Iterable[str],
+    texture_references: Iterable[Any],
     texture_directory,
 ) -> List[Dict[str, Any]]:
     destination = Path(texture_directory)
     destination.mkdir(parents=True, exist_ok=True)
     used_names: Dict[str, Path] = {}
     records: List[Dict[str, Any]] = []
-    seen_sources = set()
+    copied_sources: Dict[str, Dict[str, Any]] = {}
 
-    for raw_path in source_paths:
-        raw = str(raw_path or "").strip()
-        if not raw or raw.casefold() in {"none", "undefined"}:
+    for item in texture_references:
+        if isinstance(item, dict):
+            raw_path = str(item.get("raw_path") or "").strip()
+            resolved_path = str(
+                item.get("resolved_path") or item.get("source_path") or raw_path
+            ).strip()
+            graph_node_id = item.get("graph_node_id")
+            parameter = item.get("parameter")
+        else:
+            raw_path = str(item or "").strip()
+            resolved_path = raw_path
+            graph_node_id = None
+            parameter = None
+
+        if not resolved_path or resolved_path.casefold() in {"none", "undefined"}:
             continue
-        source = Path(os.path.expandvars(raw)).expanduser()
+        source = Path(os.path.expandvars(resolved_path)).expanduser()
         source_key = os.path.normcase(os.path.abspath(str(source)))
-        if source_key in seen_sources:
-            continue
-        seen_sources.add(source_key)
+        source_result = copied_sources.get(source_key)
+        if source_result is None:
+            source_result = {
+                "status": "missing",
+                "package_path": None,
+            }
+            if source.is_file():
+                filename = _unique_texture_name(source, used_names)
+                target = destination / filename
+                if not target.exists():
+                    shutil.copy2(str(source), str(target))
+                source_result["status"] = "copied"
+                source_result["package_path"] = "textures/{0}".format(filename)
+            copied_sources[source_key] = source_result
 
         record: Dict[str, Any] = {
-            "source_path": raw,
-            "status": "missing",
-            "package_path": None,
+            "graph_node_id": graph_node_id,
+            "parameter": parameter,
+            "raw_path": raw_path or resolved_path,
+            "source_path": resolved_path,
+            "status": source_result["status"],
+            "package_path": source_result["package_path"],
         }
-        if source.is_file():
-            filename = _unique_texture_name(source, used_names)
-            target = destination / filename
-            if not target.exists():
-                shutil.copy2(str(source), str(target))
-            record["status"] = "copied"
-            record["package_path"] = "textures/{0}".format(filename)
         records.append(record)
 
     return records

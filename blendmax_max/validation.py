@@ -8,7 +8,7 @@ from .errors import SceneValidationError
 from .models import SceneNode, SizePolicyResult, ValidationResult
 
 
-DEFAULT_MAX_OBJECTS = 15
+DEFAULT_MAX_OBJECTS = 30
 DEFAULT_MAX_FOOTPRINT_M = 50.0
 DEFAULT_MIN_LARGEST_DIMENSION_M = 0.01
 
@@ -95,10 +95,11 @@ def validate_scene(
             )
 
         export_ids = [root.node_id]
+        export_ids.extend(node.node_id for node in payload)
         export_ids.extend(
             node.node_id
             for node in scene_nodes
-            if node.node_id in descendant_ids
+            if node.node_id in descendant_ids and node.is_group_head
         )
         mode = "group"
     else:
@@ -176,4 +177,3 @@ def evaluate_size_policy(
         recommended_scale=recommended_scale,
         oversized=oversized,
     )
-
