@@ -15,6 +15,13 @@ class FakeColor:
     a = 255.0
 
 
+class FakePoint:
+    def __init__(self, x, y, z):
+        self.x = x
+        self.y = y
+        self.z = z
+
+
 class FakeUnits:
     DisplayType = "Generic"
 
@@ -105,6 +112,80 @@ class MaxAdapterTests(unittest.TestCase):
         metadata = MaxRuntimeAdapter(runtime=OlderRuntime()).source_metadata()
         self.assertFalse(metadata["compatibility"]["vray_matches_target"])
         self.assertEqual(len(metadata["compatibility"]["warnings"]), 1)
+
+    def test_bounds_use_evaluated_world_vertices_and_delete_snapshot(self):
+        class Node:
+            name = "RotatedAsset"
+            min = FakePoint(-5000.0, -5000.0, -5000.0)
+            max = FakePoint(5000.0, 5000.0, 5000.0)
+
+        class Mesh:
+            numverts = 3
+
+        class BoundsRuntime(FakeRuntime):
+            def __init__(self):
+                self.mesh = Mesh()
+                self.vertices = (
+                    FakePoint(1000.0, -500.0, 0.0),
+                    FakePoint(2000.0, 500.0, 100.0),
+                    FakePoint(1250.0, 250.0, 250.0),
+                )
+                self.deleted = []
+
+            def snapshotAsMesh(self, _node):
+                return self.mesh
+
+            def getVert(self, _mesh, index):
+                return self.vertices[index - 1]
+
+            def delete(self, value):
+                self.deleted.append(value)
+
+        runtime = BoundsRuntime()
+        adapter = MaxRuntimeAdapter(runtime=runtime)
+        adapter._nodes_by_id = {"1": Node()}
+
+        bounds = adapter.bounds_in_meters(("1",))
+
+        self.assertEqual(bounds["minimum"], [1.0, -0.5, 0.0])
+        self.assertEqual(bounds["maximum"], [2.0, 0.5, 0.25])
+        self.assertEqual(bounds["dimensions"], [1.0, 1.0, 0.25])
+        self.assertEqual(runtime.deleted, [runtime.mesh])
+
+    def test_bounds_fall_back_to_node_box_and_cleanup_failed_snapshot(self):
+        class Node:
+            name = "FallbackAsset"
+            min = FakePoint(-2000.0, -1000.0, 0.0)
+            max = FakePoint(3000.0, 4000.0, 500.0)
+
+        class Mesh:
+            numverts = 2
+
+        class FailingBoundsRuntime(FakeRuntime):
+            def __init__(self):
+                self.mesh = Mesh()
+                self.deleted = []
+
+            def snapshotAsMesh(self, _node):
+                return self.mesh
+
+            @staticmethod
+            def getVert(_mesh, _index):
+                raise RuntimeError("simulated vertex failure")
+
+            def delete(self, value):
+                self.deleted.append(value)
+
+        runtime = FailingBoundsRuntime()
+        adapter = MaxRuntimeAdapter(runtime=runtime)
+        adapter._nodes_by_id = {"1": Node()}
+
+        bounds = adapter.bounds_in_meters(("1",))
+
+        self.assertEqual(bounds["minimum"], [-2.0, -1.0, 0.0])
+        self.assertEqual(bounds["maximum"], [3.0, 4.0, 0.5])
+        self.assertEqual(bounds["dimensions"], [5.0, 5.0, 0.5])
+        self.assertEqual(runtime.deleted, [runtime.mesh])
 
     def test_prunes_unneeded_vray_defaults(self):
         filtered = self.adapter._filter_material_properties(

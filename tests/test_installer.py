@@ -27,7 +27,7 @@ class InstallerTests(unittest.TestCase):
             bundle = Path(temporary) / BUNDLE_NAME
             version = build_bundle(SOURCE_ROOT, bundle)
 
-            self.assertEqual(version, "0.1.0-alpha.3.4")
+            self.assertEqual(version, "0.1.0-alpha.3.6")
             self.assertTrue(
                 (bundle / "Contents" / "python" / "blendmax_max" / "exporter.py").is_file()
             )
@@ -57,7 +57,7 @@ class InstallerTests(unittest.TestCase):
             [component.get("Description") for component in components],
             ["macroscripts parts", "post-start-up scripts parts"],
         )
-        self.assertEqual(manifest.get("FriendlyVersion"), "0.1.0-alpha.3.4")
+        self.assertEqual(manifest.get("FriendlyVersion"), "0.1.0-alpha.3.6")
 
     def test_launchers_import_actions_when_executed_from_an_isolated_path(self):
         launchers = {
@@ -116,7 +116,7 @@ class InstallerTests(unittest.TestCase):
 
             result = install_from_source(SOURCE_ROOT, install_root=plugins)
 
-            self.assertEqual(result["version"], "0.1.0-alpha.3.4")
+            self.assertEqual(result["version"], "0.1.0-alpha.3.6")
             self.assertFalse((target / "stale.txt").exists())
             self.assertEqual(
                 (unrelated / "keep.txt").read_text(encoding="utf-8"),
@@ -149,7 +149,7 @@ class InstallerTests(unittest.TestCase):
             plugins = root / "ApplicationPlugins"
             result = install_from_zip(archive_path, install_root=plugins)
 
-            self.assertEqual(result["version"], "0.1.0-alpha.3.4")
+            self.assertEqual(result["version"], "0.1.0-alpha.3.6")
             self.assertTrue((plugins / BUNDLE_NAME / "PackageContents.xml").is_file())
 
     def test_rejects_zip_path_traversal(self):

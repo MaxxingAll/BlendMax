@@ -1,4 +1,4 @@
-# BlendMax Max Exporter v0.1 alpha.3.4
+# BlendMax Max Exporter v0.1 alpha.3.6
 
 BlendMax packages one isolated 3ds Max asset for conversion in Blender. The Max
 side is written in Python with `pymxs` and creates:
@@ -55,7 +55,8 @@ restored.
 ## v0.1 rules
 
 - The scene must contain exactly one grouped asset or one standalone object.
-- A grouped asset may contain at most 15 geometry nodes.
+- A grouped asset may contain at most 30 geometry nodes. Nested group heads and
+  ignored non-geometry nodes do not count toward this limit.
 - Geometry outside the single asset group causes an error.
 - Shapes, cameras, lights, helpers, and other non-geometry nodes are ignored
   and reported. Convert required splines to geometry before exporting.
@@ -102,6 +103,16 @@ aborts if 3ds Max adds any unexpected nodes to the FBX selection. The group
 head remains represented in the manifest without forcing FBX to recurse through
 every group member.
 
+Alpha.3.5 calculates manifest bounds from the evaluated world-space mesh
+vertices. This keeps rotated assets from inheriting an inflated conservative
+node bounding box and prevents false oversized-asset scale recommendations.
+BlendMax deletes each temporary mesh snapshot immediately and falls back to the
+legacy node bounds if evaluated vertices are unavailable.
+
+Alpha.3.6 raises the grouped-asset geometry limit from 15 to 30 objects after a
+four-potted-plants production asset demonstrated that realistic nested assets
+can approach the original cap while still representing one isolated asset.
+
 ## Verified environment
 
 The exporter has been tested in Autodesk 3ds Max 2025.3 with V-Ray 7.00.02.
@@ -126,7 +137,8 @@ From the extracted project folder, using ordinary Python:
 python -m unittest discover -s tests -v
 ```
 
-The 35 tests cover scene rules, size policy, texture ownership and collisions,
+The 38 tests cover scene rules, the 30-object boundary, exact and fallback
+bounds, size policy, texture ownership and collisions,
 group isolation and restoration, archive creation, FBX state restoration,
 AppBundle construction, installation, and ZIP update safety. Actual `pymxs`,
 FBX, and 3ds Max menu behavior must be tested inside 3ds Max.

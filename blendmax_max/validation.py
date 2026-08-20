@@ -8,7 +8,7 @@ from .errors import SceneValidationError
 from .models import SceneNode, SizePolicyResult, ValidationResult
 
 
-DEFAULT_MAX_OBJECTS = 15
+DEFAULT_MAX_OBJECTS = 30
 DEFAULT_MAX_FOOTPRINT_M = 50.0
 DEFAULT_MIN_LARGEST_DIMENSION_M = 0.01
 

@@ -318,16 +318,19 @@ class MaxRuntimeAdapter:
         for node_id in payload_ids:
             node = self._nodes_by_id[node_id]
             try:
-                node_min = node.min
-                node_max = node.max
-                values_min = [float(node_min.x), float(node_min.y), float(node_min.z)]
-                values_max = [float(node_max.x), float(node_max.y), float(node_max.z)]
-            except Exception as exc:
-                raise ExportError(
-                    "Could not calculate the bounding box for {0}: {1}".format(
-                        getattr(node, "name", node_id), exc
+                values_min, values_max = self._evaluated_mesh_bounds(node)
+            except Exception as evaluated_exc:
+                try:
+                    values_min, values_max = self._node_bounds(node)
+                except Exception as node_exc:
+                    raise ExportError(
+                        "Could not calculate the bounding box for {0}: "
+                        "evaluated mesh failed ({1}); node bounds failed ({2})".format(
+                            getattr(node, "name", node_id),
+                            evaluated_exc,
+                            node_exc,
+                        )
                     )
-                )
             for index in range(3):
                 minimum[index] = min(minimum[index], values_min[index])
                 maximum[index] = max(maximum[index], values_max[index])
@@ -354,6 +357,45 @@ class MaxRuntimeAdapter:
             "maximum": maximum_m,
             "dimensions": dimensions_m,
         }
+
+    @staticmethod
+    def _node_bounds(node) -> Tuple[List[float], List[float]]:
+        node_min = node.min
+        node_max = node.max
+        return (
+            [float(node_min.x), float(node_min.y), float(node_min.z)],
+            [float(node_max.x), float(node_max.y), float(node_max.z)],
+        )
+
+    def _evaluated_mesh_bounds(
+        self,
+        node,
+    ) -> Tuple[List[float], List[float]]:
+        mesh = None
+        try:
+            # snapshotAsMesh evaluates the modifier stack and returns world-space
+            # vertices, avoiding the conservative node.min/node.max box produced
+            # by rotated geometry.
+            mesh = self.rt.snapshotAsMesh(node)
+            vertex_count = int(mesh.numverts)
+            if vertex_count <= 0:
+                raise ValueError("evaluated mesh has no vertices")
+
+            minimum = [float("inf"), float("inf"), float("inf")]
+            maximum = [float("-inf"), float("-inf"), float("-inf")]
+            for vertex_index in range(1, vertex_count + 1):
+                vertex = self.rt.getVert(mesh, vertex_index)
+                values = [float(vertex.x), float(vertex.y), float(vertex.z)]
+                for axis in range(3):
+                    minimum[axis] = min(minimum[axis], values[axis])
+                    maximum[axis] = max(maximum[axis], values[axis])
+            return minimum, maximum
+        finally:
+            if mesh is not None:
+                try:
+                    self.rt.delete(mesh)
+                except Exception:
+                    pass
 
     def _primitive_value(self, value) -> Tuple[bool, Any]:
         if value is None:

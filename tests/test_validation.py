@@ -78,15 +78,28 @@ class ValidationTests(unittest.TestCase):
             validate_scene(nodes)
         self.assertEqual(caught.exception.code, "MIXED_ASSETS")
 
-    def test_rejects_more_than_fifteen_payload_objects(self):
+    def test_accepts_thirty_payload_objects(self):
         nodes = [node("g", "Group", group_head=True, exportable=False)]
         nodes.extend(
             node(str(index), "Part", parent_id="g", group_member=True)
-            for index in range(16)
+            for index in range(30)
+        )
+
+        result = validate_scene(nodes)
+
+        self.assertEqual(result.object_count, 30)
+
+    def test_rejects_more_than_thirty_payload_objects(self):
+        nodes = [node("g", "Group", group_head=True, exportable=False)]
+        nodes.extend(
+            node(str(index), "Part", parent_id="g", group_member=True)
+            for index in range(31)
         )
         with self.assertRaises(SceneValidationError) as caught:
             validate_scene(nodes)
         self.assertEqual(caught.exception.code, "TOO_MANY_OBJECTS")
+        self.assertIn("31 objects", str(caught.exception))
+        self.assertIn("at most 30", str(caught.exception))
 
     def test_oversized_asset_produces_scale_recommendation(self):
         result = evaluate_size_policy((100.0, 20.0, 5.0))
