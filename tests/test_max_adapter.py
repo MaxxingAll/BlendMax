@@ -245,6 +245,75 @@ class MaxAdapterTests(unittest.TestCase):
         self.assertTrue(self.adapter._is_exportable_superclass("GeometryClass"))
         self.assertFalse(self.adapter._is_exportable_superclass("Shape"))
 
+    def test_snapshot_marks_hidden_and_frozen_scene_nodes(self):
+        class Node:
+            def __init__(
+                self,
+                handle,
+                name,
+                parent=None,
+                *,
+                geometry=True,
+                group_head=False,
+                hidden=False,
+                frozen=False,
+            ):
+                self.handle = handle
+                self.name = name
+                self.parent = parent
+                self.geometry = geometry
+                self.group_head = group_head
+                self.isHiddenInVpt = hidden
+                self.isFrozen = frozen
+
+        root = Node(1, "Root", geometry=False, group_head=True)
+        visible = Node(2, "Visible", root)
+        frozen = Node(3, "Frozen", root, frozen=True)
+        hidden_group = Node(
+            4,
+            "HiddenGroup",
+            root,
+            geometry=False,
+            group_head=True,
+            hidden=True,
+        )
+        hidden_child = Node(5, "HiddenChild", hidden_group)
+
+        class SnapshotRuntime:
+            undefined = object()
+            objects = [root, visible, frozen, hidden_group, hidden_child]
+
+            @staticmethod
+            def getHandleByAnim(value):
+                return value.handle
+
+            @staticmethod
+            def classOf(value):
+                return "Editable_Poly" if value.geometry else "Dummy"
+
+            @staticmethod
+            def superClassOf(value):
+                return "GeometryClass" if value.geometry else "Helper"
+
+            @staticmethod
+            def isGroupHead(value):
+                return value.group_head
+
+            @staticmethod
+            def isGroupMember(value):
+                return value.parent is not None
+
+        snapshots = MaxRuntimeAdapter(runtime=SnapshotRuntime()).snapshot_scene()
+        by_id = {snapshot.node_id: snapshot for snapshot in snapshots}
+
+        self.assertTrue(by_id["2"].exportable)
+        self.assertFalse(by_id["2"].hidden_or_frozen)
+        self.assertFalse(by_id["3"].exportable)
+        self.assertTrue(by_id["3"].hidden_or_frozen)
+        self.assertTrue(by_id["4"].hidden_or_frozen)
+        self.assertTrue(by_id["5"].exportable)
+        self.assertFalse(by_id["5"].hidden_or_frozen)
+
     def test_texture_references_keep_graph_owner_and_resolve_relative_path(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

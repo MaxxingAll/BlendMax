@@ -47,6 +47,10 @@ def _has_group_ancestor(
     return False
 
 
+def _is_geometry(node: SceneNode) -> bool:
+    return not node.is_group_head and "geometryclass" in node.superclass.casefold()
+
+
 def validate_scene(
     nodes: Iterable[SceneNode],
     max_objects: int = DEFAULT_MAX_OBJECTS,
@@ -54,6 +58,15 @@ def validate_scene(
     """Accept exactly one group asset or one standalone exportable object."""
 
     scene_nodes = list(nodes)
+    if any(node.hidden_or_frozen for node in scene_nodes):
+        raise SceneValidationError(
+            "HIDDEN_OR_FROZEN_OBJECTS",
+            (
+                "The scene contains hidden or frozen objects! "
+                "Ensure all objects are visible and unfrozen before continuing."
+            ),
+        )
+
     node_by_id = {node.node_id: node for node in scene_nodes}
     exportable = [node for node in scene_nodes if node.exportable]
     group_heads = [node for node in scene_nodes if node.is_group_head]
@@ -99,7 +112,8 @@ def validate_scene(
         export_ids.extend(
             node.node_id
             for node in scene_nodes
-            if node.node_id in descendant_ids and node.is_group_head
+            if node.node_id in descendant_ids
+            and node.is_group_head
         )
         mode = "group"
     else:
@@ -129,7 +143,9 @@ def validate_scene(
     ignored = [
         node.name
         for node in scene_nodes
-        if not node.exportable and not node.is_group_head
+        if not node.exportable
+        and not node.is_group_head
+        and not _is_geometry(node)
     ]
     warnings = []
     if ignored:

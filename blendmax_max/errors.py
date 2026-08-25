@@ -16,3 +16,6 @@ class SceneValidationError(BlendMaxError):
 class ExportError(BlendMaxError):
     code = "EXPORT_FAILED"
 
+
+class CleanupError(BlendMaxError):
+    code = "CLEANUP_FAILED"

@@ -16,6 +16,7 @@ class SceneNode:
     is_group_head: bool = False
     is_group_member: bool = False
     exportable: bool = True
+    hidden_or_frozen: bool = False
 
 
 @dataclass(frozen=True)
@@ -36,4 +37,3 @@ class SizePolicyResult:
     dimensions_m: Tuple[float, float, float]
     recommended_scale: float
     oversized: bool
-

@@ -1,12 +1,12 @@
-# BlendMax Alpha.3.6 Test Matrix
+# BlendMax Alpha.4.1.0 Test Matrix
 
-Status: **Max exporter active development — Blender importer deferred**
+Status: **Alpha.4.1.0 Max cleanup and duplicate-material merge host pass**
 
 ## Reference environment
 
 - Autodesk 3ds Max 2025.3
 - V-Ray 7.00.02
-- BlendMax Max Exporter 0.1.0-alpha.3.6
+- BlendMax Max Exporter 0.1.0-alpha.4.1.0
 - BlendMax manifest schema 0.1.1
 - FBX binary, Z-up, metres, animation disabled
 
@@ -15,7 +15,8 @@ asset through Alpha.3.2. Alpha.3.3 repaired the Reflection Roughness control
 alias and texture-to-package references. Alpha.3.4 added isolated group
 selection. Alpha.3.5 replaced conservative rotated node bounds with exact
 evaluated-mesh bounds while keeping a safe fallback. Alpha.3.6 raises the
-grouped-asset geometry limit from 15 to 30 objects.
+grouped-asset geometry limit from 15 to 30 objects. Alpha.4.0 adds the explicit
+Join Mesh by Material cleanup and a strict hidden/frozen-object preflight.
 
 Manual evidence packages are not committed because they contain user-provided
 textures. Their filenames are recorded here so results can be traced to the
@@ -45,7 +46,17 @@ textures, and zero exporter warnings for the final accepted test case.
 | AppBundle manifest | Loads in 3ds Max 2025.3 with the `macroscripts parts` and `post-start-up scripts parts` component categories | Pass |
 | Persistent menu | Top-level **BlendMax** menu remains available after restarting 3ds Max | Pass |
 | Export action | **Export Asset...** invokes the installed Python exporter | Pass |
+| Cleanup submenu | **Cleanup > Join Mesh by Material...** is registered through the persistent menu | Pass in 3ds Max 2025.3 |
+| Cleanup action | Selected visible mesh is joined by actual material identity in one undoable operation | Pass with Alpha.4.0.1 ring-light asset: 74 inputs to 31 material meshes |
+| Root pinning | Closed/expanded-member selection is rejected; one open group head selected through its pink box is accepted | Pass with Alpha.4.0.1 pink-box instruction and pinned-root workflow |
+| Shape detection | Counts Shape/Spline/Line-class descendants without inspecting spline topology and classifies zero-polygon geometry as linework | Pass with Alpha.4.0.1 ring-light asset: 141 detected Shapes |
+| Shape deletion refusal | Stops before the main cleanup confirmation and reports the detected Shape count | Automated pass; Max UI pending |
+| Shape deletion approval | Deletes approved Shapes in the same cleanup undo transaction | Pass with Alpha.4.0.1 ring-light asset: 141 Shapes deleted |
+| Identical duplicate material detection | Same-name Physical/V-Ray materials with matching recursive fingerprints are eligible for merge | Pass with Alpha.4.1.0 ring-light asset: five identical sets detected |
+| Different material setup protection | Same name with different class, properties, or nested maps remains separate | Automated pass; differing ring-light materials remained separate |
+| Duplicate material approval/refusal | Approval creates one `<name>_MERGED` copy; refusal preserves separate material identities | Approval pass with Alpha.4.1.0: ten originals replaced; refusal automated pass |
 | Update action | **Install Update from ZIP...** opens the Python ZIP updater | Pass |
+| In-session update reload | The next menu action loads the replaced Python files instead of Max's cached modules | Automated pass; Max host retest pending |
 | Project action | **Project Page** opens the BlendMax repository | Pass |
 | About action | **About BlendMax** displays installed version information | Pass |
 | Menu-to-package workflow | Alpha.3.2 menu export produces a valid `.blendmax` ZIP with FBX, manifest, and textures | Pass |
@@ -56,6 +67,7 @@ textures, and zero exporter warnings for the final accepted test case.
 | --- | --- | --- | --- |
 | `Basketbalv2l.blendmax` | One Editable Mesh; 2,276 vertices; 4,548 triangles; UVs, normals, tangents, binormals, and two polygon material IDs; one Multi/Sub parent with two `VRayMtl` children | Two 1500 x 1500 JPEG maps; standard `Bitmaptexture` diffuse and `Normal_Bump` -> `Bitmaptexture` bump graph | Pass with Alpha.3.5; exact manifest bounds match decoded FBX within 0.000000224 m and zero warnings |
 | `4pottedplants.blendmax` | One root group with four nested plant groups and 12 geometry nodes; 168,980 vertices; 174,837 polygons; Multi/Sub -> three `VRay2SidedMtl` leaf branches -> front/back `VRayMtl`, plus direct pot, substrate, and branch materials | Eight unique PNG files represented by 13 graph-owned bitmap references; three `VRayColor` nodes and one procedural `Noise` node | Pass with Alpha.3.5; hierarchy, UVs, polygon material IDs, graph ownership, and exact bounds retained with zero warnings |
+| Ring-light SKP-derived Max asset | 74 input meshes, nested groups, 31 material identities before duplicate comparison, and extensive imported linework | Five identical material sets merged; ten originals replaced; 141 Shapes deleted | Pass with Alpha.4.1.0: 26 clean material meshes retained under the root |
 
 ## Exporter regression checks
 
@@ -77,16 +89,24 @@ textures, and zero exporter warnings for the final accepted test case.
 | Rotated geometry uses exact evaluated world-space bounds | Pass | Pass with `Basketbalv2l.blendmax`; maximum manifest-to-FBX dimension delta was 0.000000224 m |
 | Failed evaluated-mesh bounds clean up and fall back to node bounds | Pass | Runtime failure path covered automatically |
 | Grouped asset accepts 30 geometry nodes and rejects 31 | Pass | Existing 12-geometry production asset passes; exact 30/31 Max boundary test pending |
+| Hidden/frozen scene object aborts export before FBX processing | Pass | Pending |
+| Hidden/frozen scene object aborts cleanup before geometry processing | Pass | Pending |
+| Cleanup removes all nested groups but retains the selected root | Pass by planner | Pending |
+| Multi/Sub faces resolve through explicit `materialIDList`, not list position | Pass | Pending |
+| Face-material scan crosses the Python/Max boundary once per staging mesh | Pass by implementation review | Pending performance test |
 
 ## Automated regression suite
 
-Alpha.3.6 passes 38 automated tests covering:
+Alpha.4.1.0 passes 92 automated tests across the Max exporter/cleanup and Blender
+importer, including:
 
 - one-object and one-group scene rules;
 - the inclusive 30-object group limit and 31-object rejection boundary;
 - tiny and oversized asset policies;
 - evaluated world-space mesh bounds, temporary mesh cleanup, and safe fallback;
 - material graph serialization and parameter pruning;
+- duplicate-name Physical/V-Ray material fingerprints, nested-map differences,
+  merge approval/refusal, and multi-variant naming;
 - V-Ray version compatibility from 7.00.x through 7.40.x;
 - graph-owned bitmap collection, relative paths, duplicate filenames, and
   package creation;
@@ -97,8 +117,15 @@ Alpha.3.6 passes 38 automated tests covering:
 - FBX exporter setting restoration on success and failure;
 - AppBundle construction and exact-bundle replacement;
 - safe ZIP update extraction and rollback behavior;
-- 3ds Max 2025 manifest component categories; and
-- isolated `python.ExecuteFile` launcher imports.
+- 3ds Max 2025 manifest component categories;
+- isolated `python.ExecuteFile` launcher imports;
+- strict hidden/frozen-object preflight for cleanup and export;
+- explicit open-group pink-box root pinning;
+- root-scoped Shape detection and refusal-before-cleanup behavior;
+- zero-polygon geometry classification as imported linework;
+- root-scoped cleanup planning and nested-group preservation;
+- explicit Multi/Sub material-ID lookup and compact BitArray generation; and
+- the Cleanup submenu/action launcher in the installable AppBundle.
 
 Run the suite from the project root:
 
@@ -106,10 +133,9 @@ Run the suite from the project root:
 python -m unittest discover -s tests -v
 ```
 
-## Future importer contract tracking
+## Importer contract tracking
 
-The Blender importer is not being implemented yet. These fields are tracked so
-the Max exporter can develop toward a clear future input contract:
+The Blender importer now consumes these exporter fields:
 
 - manifest schema version `0.1.1`;
 - graph nodes identified by stable per-package IDs and `material` or `texture`
@@ -124,8 +150,5 @@ the Max exporter can develop toward a clear future input contract:
 - geometry delivered as binary FBX in metres with Z up; and
 - unsupported advanced materials remaining outside the current v0.1 scope.
 
-No exporter freeze is currently planned. Scene handling, additional material
-properties, and other Max-side improvements may continue before Blender
-importer development begins. Compound material graphs are now captured by the
-exporter; their Blender shader translation remains deferred until importer
-development.
+No exporter freeze is currently planned. Compound material graphs are captured
+by the exporter; additional Blender shader translations remain incremental.

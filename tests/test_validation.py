@@ -14,6 +14,7 @@ def node(
     group_head=False,
     group_member=False,
     exportable=True,
+    hidden_or_frozen=False,
 ):
     return SceneNode(
         node_id=node_id,
@@ -24,6 +25,7 @@ def node(
         is_group_head=group_head,
         is_group_member=group_member,
         exportable=exportable,
+        hidden_or_frozen=hidden_or_frozen,
     )
 
 
@@ -77,6 +79,73 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaises(SceneValidationError) as caught:
             validate_scene(nodes)
         self.assertEqual(caught.exception.code, "MIXED_ASSETS")
+
+    def test_hidden_geometry_inside_group_aborts_export(self):
+        nodes = [
+            node("g", "Asset", group_head=True, exportable=False),
+            node("1", "Visible", parent_id="g", group_member=True),
+            node(
+                "hidden_group",
+                "HiddenBranch",
+                parent_id="g",
+                group_head=True,
+                group_member=True,
+                exportable=False,
+                hidden_or_frozen=True,
+            ),
+            node(
+                "2",
+                "HiddenMesh",
+                parent_id="hidden_group",
+                group_member=True,
+                exportable=False,
+                hidden_or_frozen=True,
+            ),
+        ]
+
+        with self.assertRaises(SceneValidationError) as caught:
+            validate_scene(nodes)
+
+        self.assertEqual(caught.exception.code, "HIDDEN_OR_FROZEN_OBJECTS")
+        self.assertIn("hidden or frozen objects", str(caught.exception))
+
+    def test_hidden_geometry_outside_group_also_aborts_export(self):
+        nodes = [
+            node("g", "Asset", group_head=True, exportable=False),
+            node("1", "Visible", parent_id="g", group_member=True),
+            node("2", "HiddenOther", exportable=False, hidden_or_frozen=True),
+        ]
+
+        with self.assertRaises(SceneValidationError) as caught:
+            validate_scene(nodes)
+
+        self.assertEqual(caught.exception.code, "HIDDEN_OR_FROZEN_OBJECTS")
+
+    def test_hidden_group_aborts_before_asset_count_validation(self):
+        nodes = [
+            node("g1", "VisibleAsset", group_head=True, exportable=False),
+            node("1", "Visible", parent_id="g1", group_member=True),
+            node(
+                "g2",
+                "HiddenAsset",
+                group_head=True,
+                exportable=False,
+                hidden_or_frozen=True,
+            ),
+            node(
+                "2",
+                "Hidden",
+                parent_id="g2",
+                group_member=True,
+                exportable=False,
+                hidden_or_frozen=True,
+            ),
+        ]
+
+        with self.assertRaises(SceneValidationError) as caught:
+            validate_scene(nodes)
+
+        self.assertEqual(caught.exception.code, "HIDDEN_OR_FROZEN_OBJECTS")
 
     def test_accepts_thirty_payload_objects(self):
         nodes = [node("g", "Group", group_head=True, exportable=False)]

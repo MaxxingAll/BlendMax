@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
 import traceback
 import webbrowser
@@ -14,6 +15,21 @@ if str(PYTHON_ROOT) not in sys.path:
 
 
 PROJECT_URL = "https://github.com/MaxxingAll/BlendMax"
+
+
+def _fresh_core_callable(module_name: str, callable_name: str):
+    """Load an action from the currently installed core, not Max's module cache."""
+
+    importlib.invalidate_caches()
+    stale_modules = [
+        name
+        for name in sys.modules
+        if name == "blendmax_max" or name.startswith("blendmax_max.")
+    ]
+    for name in sorted(stale_modules, key=lambda value: value.count("."), reverse=True):
+        sys.modules.pop(name, None)
+    module = importlib.import_module(module_name)
+    return getattr(module, callable_name)
 
 
 def _runtime():
@@ -30,8 +46,18 @@ def _notify(message: str, title: str = "BlendMax") -> None:
 
 
 def export_asset() -> None:
-    from blendmax_max.max_entrypoint import run_interactive
+    run_interactive = _fresh_core_callable(
+        "blendmax_max.max_entrypoint",
+        "run_interactive",
+    )
+    run_interactive()
 
+
+def join_mesh_by_material() -> None:
+    run_interactive = _fresh_core_callable(
+        "blendmax_max.cleanup_entrypoint",
+        "run_interactive",
+    )
     run_interactive()
 
 
@@ -50,7 +76,8 @@ def install_update() -> None:
             (
                 "BlendMax {version} installed.\n\n"
                 "Location:\n{bundle_path}\n\n"
-                "Restart 3ds Max to finish the update."
+                "The Python update is active for the next BlendMax action.\n"
+                "Restart 3ds Max only if the menu layout was changed."
             ).format(**result),
             "BlendMax Update Complete",
         )
@@ -68,11 +95,14 @@ def open_project_page() -> None:
 
 def show_about() -> None:
     from blendmax_install import default_install_root
-    from blendmax_max import (
-        SUPPORTED_VRAY_RANGE,
-        TARGET_MAX_VERSION,
-        __version__,
-    )
+
+    core = _fresh_core_callable("blendmax_max", "__version__")
+    # Loading one value refreshes the package; read the remaining metadata from
+    # that same newly imported module so About cannot show a cached version.
+    core_module = sys.modules["blendmax_max"]
+    supported_vray_range = core_module.SUPPORTED_VRAY_RANGE
+    target_max_version = core_module.TARGET_MAX_VERSION
+    version = core
 
     bundle = default_install_root() / "BlendMax.bundle"
     _notify(
@@ -83,9 +113,9 @@ def show_about() -> None:
             "Implementation: Python with a 3ds Max 2025 menu bridge\n\n"
             "Installed at:\n{bundle}"
         ).format(
-            version=__version__,
-            max_version=TARGET_MAX_VERSION,
-            vray_range=SUPPORTED_VRAY_RANGE,
+            version=version,
+            max_version=target_max_version,
+            vray_range=supported_vray_range,
             bundle=bundle,
         ),
         "About BlendMax",

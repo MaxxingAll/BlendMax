@@ -5,6 +5,13 @@ macroScript BlendMaxExport category:"BlendMax" tooltip:"Export a BlendMax asset"
     python.ExecuteFile pyFile throwOnError:true
 )
 
+macroScript BlendMaxJoinByMaterial category:"BlendMax" tooltip:"Join visible mesh faces by material" buttonText:"Join Mesh by Material..."
+(
+    local scriptDir = getFilenamePath (getSourceFileName())
+    local pyFile = scriptDir + "..\\python\\launch_join_by_material.py"
+    python.ExecuteFile pyFile throwOnError:true
+)
+
 macroScript BlendMaxUpdate category:"BlendMax" tooltip:"Install a BlendMax update ZIP" buttonText:"Install Update from ZIP..."
 (
     local scriptDir = getFilenamePath (getSourceFileName())

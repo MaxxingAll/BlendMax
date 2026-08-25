@@ -12,6 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VERSION_PATTERN = re.compile(r'^__version__\s*=\s*["\']([^"\']+)["\']', re.MULTILINE)
 INCLUDED_ROOTS = (
     "README.md",
+    "CHANGELOG.md",
     "TEST_MATRIX.md",
     "install_blendmax.py",
     "blendmax_install.py",

@@ -27,7 +27,7 @@ class InstallerTests(unittest.TestCase):
             bundle = Path(temporary) / BUNDLE_NAME
             version = build_bundle(SOURCE_ROOT, bundle)
 
-            self.assertEqual(version, "0.1.0-alpha.3.6")
+            self.assertEqual(version, "0.1.0-alpha.4.1.0")
             self.assertTrue(
                 (bundle / "Contents" / "python" / "blendmax_max" / "exporter.py").is_file()
             )
@@ -42,6 +42,8 @@ class InstallerTests(unittest.TestCase):
             ).read_text(encoding="utf-8")
             self.assertIn("#cuiRegisterMenus", menu)
             self.assertIn("BlendMaxExport`BlendMax", menu)
+            self.assertIn("\"Cleanup\"", menu)
+            self.assertIn("BlendMaxJoinByMaterial`BlendMax", menu)
             self.assertIn("BlendMaxUpdate`BlendMax", menu)
 
     def test_manifest_uses_3ds_max_component_categories(self):
@@ -57,11 +59,13 @@ class InstallerTests(unittest.TestCase):
             [component.get("Description") for component in components],
             ["macroscripts parts", "post-start-up scripts parts"],
         )
-        self.assertEqual(manifest.get("FriendlyVersion"), "0.1.0-alpha.3.6")
+        self.assertEqual(manifest.get("AppVersion"), "0.1.0.2")
+        self.assertEqual(manifest.get("FriendlyVersion"), "0.1.0-alpha.4.1.0")
 
     def test_launchers_import_actions_when_executed_from_an_isolated_path(self):
         launchers = {
             "launch_export.py": "export_asset",
+            "launch_join_by_material.py": "join_mesh_by_material",
             "launch_update.py": "install_update",
             "launch_project_page.py": "open_project_page",
             "launch_about.py": "show_about",
@@ -104,6 +108,53 @@ class InstallerTests(unittest.TestCase):
             sys.path[:] = original_path
             sys.modules.pop("blendmax_actions", None)
 
+    def test_launcher_reloads_updated_actions_without_restarting_host(self):
+        launcher_source = (
+            SOURCE_ROOT
+            / "appbundle"
+            / BUNDLE_NAME
+            / "Contents"
+            / "python"
+            / "launch_join_by_material.py"
+        )
+        original_path = list(sys.path)
+
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                launcher = root / launcher_source.name
+                shutil.copy2(launcher_source, launcher)
+                marker = root / "called.txt"
+                actions = root / "blendmax_actions.py"
+                actions.write_text(
+                    "def join_mesh_by_material():\n"
+                    "    from pathlib import Path\n"
+                    "    Path({0!r}).write_text('old', encoding='utf-8')\n".format(
+                        str(marker)
+                    ),
+                    encoding="utf-8",
+                )
+
+                sys.modules.pop("blendmax_actions", None)
+                sys.path[:] = original_path
+                runpy.run_path(str(launcher), run_name="__blendmax_reload_test_one__")
+                self.assertEqual(marker.read_text(encoding="utf-8"), "old")
+
+                actions.write_text(
+                    "def join_mesh_by_material():\n"
+                    "    from pathlib import Path\n"
+                    "    Path({0!r}).write_text('new-version', encoding='utf-8')\n".format(
+                        str(marker)
+                    ),
+                    encoding="utf-8",
+                )
+                runpy.run_path(str(launcher), run_name="__blendmax_reload_test_two__")
+
+                self.assertEqual(marker.read_text(encoding="utf-8"), "new-version")
+        finally:
+            sys.path[:] = original_path
+            sys.modules.pop("blendmax_actions", None)
+
     def test_install_replaces_only_the_existing_bundle(self):
         with tempfile.TemporaryDirectory() as temporary:
             plugins = Path(temporary) / "ApplicationPlugins"
@@ -116,7 +167,7 @@ class InstallerTests(unittest.TestCase):
 
             result = install_from_source(SOURCE_ROOT, install_root=plugins)
 
-            self.assertEqual(result["version"], "0.1.0-alpha.3.6")
+            self.assertEqual(result["version"], "0.1.0-alpha.4.1.0")
             self.assertFalse((target / "stale.txt").exists())
             self.assertEqual(
                 (unrelated / "keep.txt").read_text(encoding="utf-8"),
@@ -149,7 +200,7 @@ class InstallerTests(unittest.TestCase):
             plugins = root / "ApplicationPlugins"
             result = install_from_zip(archive_path, install_root=plugins)
 
-            self.assertEqual(result["version"], "0.1.0-alpha.3.6")
+            self.assertEqual(result["version"], "0.1.0-alpha.4.1.0")
             self.assertTrue((plugins / BUNDLE_NAME / "PackageContents.xml").is_file())
 
     def test_rejects_zip_path_traversal(self):

@@ -10,4 +10,4 @@ if str(SCRIPT_ROOT) not in sys.path:
 import blendmax_actions
 
 importlib.reload(blendmax_actions)
-blendmax_actions.open_project_page()
+blendmax_actions.join_mesh_by_material()

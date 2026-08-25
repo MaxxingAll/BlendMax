@@ -128,6 +128,15 @@ class MaxRuntimeAdapter:
         lowered = superclass.casefold()
         return "geometryclass" in lowered
 
+    def _is_hidden_or_frozen(self, node) -> bool:
+        for property_name in ("isHiddenInVpt", "isFrozen"):
+            try:
+                if bool(getattr(node, property_name)):
+                    return True
+            except Exception:
+                continue
+        return False
+
     def snapshot_scene(self) -> List[SceneNode]:
         max_nodes = list(self.rt.objects)
         self._nodes_by_id = {
@@ -155,6 +164,7 @@ class MaxRuntimeAdapter:
                 is_group_member = False
 
             superclass = self._superclass_name(node)
+            hidden_or_frozen = self._is_hidden_or_frozen(node)
             snapshots.append(
                 SceneNode(
                     node_id=node_id,
@@ -164,7 +174,11 @@ class MaxRuntimeAdapter:
                     parent_id=parent_id,
                     is_group_head=is_group_head,
                     is_group_member=is_group_member,
-                    exportable=self._is_exportable_superclass(superclass),
+                    exportable=(
+                        self._is_exportable_superclass(superclass)
+                        and not hidden_or_frozen
+                    ),
+                    hidden_or_frozen=hidden_or_frozen,
                 )
             )
         return snapshots
