@@ -7,6 +7,8 @@ from blendmax_blender.material_graph import (
     find_texture_link,
     map_amount,
     map_is_enabled,
+    physical_map_is_enabled,
+    physical_roughness,
     rgba,
     vray_roughness,
 )
@@ -50,6 +52,31 @@ class BlenderMaterialGraphTests(unittest.TestCase):
             ),
             0.8,
         )
+
+    def test_physical_material_roughness_honors_the_invert_checkbox(self):
+        self.assertAlmostEqual(physical_roughness({"roughness": 0.2}), 0.2)
+        self.assertAlmostEqual(
+            physical_roughness({"roughness": 0.2, "roughness_inv": True}),
+            0.8,
+        )
+        self.assertAlmostEqual(
+            physical_roughness(
+                {"coat_roughness": 0.75, "coat_roughness_inv": True},
+                "coat_roughness",
+            ),
+            0.25,
+        )
+
+    def test_physical_material_map_enable_uses_actual_max_slot_names(self):
+        parameters = {
+            "base_color_map_on": False,
+            "roughness_map_on": True,
+            "bump_map_on": False,
+        }
+        self.assertFalse(physical_map_is_enabled(parameters, "Base Color Map"))
+        self.assertTrue(physical_map_is_enabled(parameters, "Roughness Map"))
+        self.assertFalse(physical_map_is_enabled(parameters, "Bump Map"))
+        self.assertTrue(physical_map_is_enabled(parameters, "Unknown Map"))
 
     def test_rgba_is_clamped_and_supplies_alpha(self):
         self.assertEqual(rgba([1.2, -1, 0.5]), (1.0, 0.0, 0.5, 1.0))

@@ -15,6 +15,8 @@ from .material_graph import (
     luminance,
     map_amount,
     map_is_enabled,
+    physical_map_is_enabled,
+    physical_roughness,
     rgba,
     scalar,
     sorted_sub_materials,
@@ -166,6 +168,8 @@ class MaterialBuilder:
         next_stack = stack + (ref,)
         if class_name == "vraymtl":
             return self._build_vray_mtl(tree, node, material, next_stack, x, y)
+        if class_name == "physicalmaterial":
+            return self._build_physical_mtl(tree, node, material, next_stack, x, y)
         if class_name == "vray2sidedmtl":
             return self._build_two_sided(tree, node, material, next_stack, x, y)
 
@@ -233,6 +237,277 @@ class MaterialBuilder:
         tree.links.new(front, mixer.inputs[1])
         tree.links.new(back, mixer.inputs[2])
         return mixer.outputs[0]
+
+    def _build_physical_mtl(
+        self,
+        tree,
+        graph_node: GraphNode,
+        material,
+        stack: Tuple[str, ...],
+        x: float,
+        y: float,
+    ):
+        """Translate a 3ds Max Physical Material to a Principled BSDF."""
+
+        parameters = graph_node.parameters
+        bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
+        bsdf.label = graph_node.name
+        bsdf.location = (x, y)
+
+        base_color = rgba(parameters.get("base_color"), (0.5, 0.5, 0.5, 1.0))
+        transparency = clamp01(scalar(parameters, "transparency", 0.0))
+        transmission_color = rgba(parameters.get("trans_color"), (1.0, 1.0, 1.0, 1.0))
+        if transparency > 0.0:
+            base_color = tuple(
+                base_color[index] * (1.0 - transparency)
+                + transmission_color[index] * transparency
+                for index in range(4)
+            )
+
+        reflection_color = rgba(parameters.get("refl_color"), (1.0, 1.0, 1.0, 1.0))
+        emission_color = rgba(parameters.get("emit_color"), (0.0, 0.0, 0.0, 1.0))
+        coat_color = rgba(parameters.get("coat_color"), (1.0, 1.0, 1.0, 1.0))
+
+        _set_default(bsdf, ("Base Color",), base_color)
+        _set_default(
+            bsdf,
+            ("Base Weight", "Weight"),
+            clamp01(scalar(parameters, "base_weight", 1.0)),
+        )
+        _set_default(bsdf, ("Metallic",), clamp01(scalar(parameters, "metalness", 0.0)))
+        _set_default(bsdf, ("Roughness",), physical_roughness(parameters))
+        _set_default(bsdf, ("IOR",), max(1.0, scalar(parameters, "trans_ior", 1.52)))
+        _set_default(
+            bsdf,
+            ("Specular IOR Level", "Specular"),
+            clamp01(0.5 * scalar(parameters, "reflectivity", 1.0)),
+        )
+        _set_default(bsdf, ("Specular Tint",), reflection_color)
+        _set_default(bsdf, ("Transmission Weight", "Transmission"), transparency)
+        _set_default(bsdf, ("Alpha",), 1.0)
+        _set_default(bsdf, ("Thin Wall",), bool(parameters.get("thin_walled", False)))
+        _set_default(
+            bsdf,
+            ("Diffuse Roughness",),
+            clamp01(scalar(parameters, "diff_roughness", 0.0)),
+        )
+        _set_default(
+            bsdf,
+            ("Anisotropic IOR Level", "Anisotropic"),
+            clamp01(scalar(parameters, "anisotropy", 0.0)),
+        )
+        _set_default(
+            bsdf,
+            ("Anisotropic Rotation",),
+            scalar(parameters, "anisoangle", 0.0),
+        )
+        _set_default(
+            bsdf,
+            ("Coat Weight", "Coat"),
+            clamp01(scalar(parameters, "coating", 0.0)),
+        )
+        _set_default(
+            bsdf,
+            ("Coat Roughness",),
+            physical_roughness(parameters, "coat_roughness"),
+        )
+        _set_default(bsdf, ("Coat IOR",), max(1.0, scalar(parameters, "coat_ior", 1.52)))
+        _set_default(bsdf, ("Coat Tint",), coat_color)
+        _set_default(
+            bsdf,
+            ("Sheen Weight", "Sheen"),
+            clamp01(scalar(parameters, "sheen", 0.0)),
+        )
+        _set_default(
+            bsdf,
+            ("Sheen Roughness",),
+            clamp01(scalar(parameters, "sheen_roughness", 0.5)),
+        )
+        _set_default(
+            bsdf,
+            ("Sheen Tint",),
+            rgba(parameters.get("sheen_color"), (1.0, 1.0, 1.0, 1.0)),
+        )
+        _set_default(
+            bsdf,
+            ("Subsurface Weight", "Subsurface"),
+            clamp01(scalar(parameters, "scattering", 0.0)),
+        )
+        _set_default(bsdf, ("Emission Color", "Emission"), emission_color)
+        _set_default(
+            bsdf,
+            ("Emission Strength",),
+            max(0.0, scalar(parameters, "emission", 0.0))
+            * max(0.0, scalar(parameters, "emit_luminance", 1500.0) / 1500.0),
+        )
+        _set_default(
+            bsdf,
+            ("Thin Film Thickness",),
+            max(0.0, scalar(parameters, "thin_film_thickness", 0.0)),
+        )
+        _set_default(
+            bsdf,
+            ("Thin Film IOR",),
+            max(1.0, scalar(parameters, "thin_film_ior", 1.5)),
+        )
+
+        def enabled_link(*slot_names: str) -> Optional[GraphLink]:
+            link = find_texture_link(graph_node, *slot_names)
+            if link is None or not physical_map_is_enabled(parameters, link.slot):
+                return None
+            return link
+
+        base_color_link = enabled_link("Base Color", "Base Color Map")
+        if base_color_link is not None:
+            texture = self._texture_output(
+                tree, base_color_link.ref, "color", stack, x - 700, y + 520
+            )
+            target = _socket(bsdf.inputs, "Base Color")
+            if texture is not None and target is not None:
+                tree.links.new(texture, target)
+
+        base_weight_link = enabled_link("Base Weight", "Base Weight Map")
+        if base_weight_link is not None:
+            texture = self._texture_output(
+                tree, base_weight_link.ref, "data", stack, x - 700, y + 380
+            )
+            target = _socket(bsdf.inputs, "Base Weight", "Weight")
+            if texture is not None and target is not None:
+                tree.links.new(self._to_value(tree, texture, x - 480, y + 380), target)
+
+        reflectivity_link = enabled_link(
+            "Reflection Weight", "Reflection Weight Map", "Reflectivity", "Reflectivity Map"
+        )
+        if reflectivity_link is not None:
+            texture = self._texture_output(
+                tree, reflectivity_link.ref, "data", stack, x - 700, y + 240
+            )
+            target = _socket(bsdf.inputs, "Specular IOR Level", "Specular")
+            if texture is not None and target is not None:
+                tree.links.new(self._to_value(tree, texture, x - 480, y + 240), target)
+
+        roughness_link = enabled_link("Roughness", "Roughness Map")
+        if roughness_link is not None:
+            texture = self._texture_output(
+                tree, roughness_link.ref, "data", stack, x - 700, y + 100
+            )
+            target = _socket(bsdf.inputs, "Roughness")
+            if texture is not None and target is not None:
+                value = self._to_value(tree, texture, x - 500, y + 100)
+                if bool(parameters.get("roughness_inv", False)):
+                    value = self._invert_value(tree, value, x - 300, y + 100)
+                tree.links.new(value, target)
+
+        metalness_link = enabled_link("Metalness", "Metalness Map")
+        if metalness_link is not None:
+            texture = self._texture_output(
+                tree, metalness_link.ref, "data", stack, x - 700, y - 40
+            )
+            target = _socket(bsdf.inputs, "Metallic")
+            if texture is not None and target is not None:
+                tree.links.new(self._to_value(tree, texture, x - 480, y - 40), target)
+
+        transparency_link = enabled_link(
+            "Transparency",
+            "Transparency Map",
+            "Transparency Weight",
+            "Transparency Weight Map",
+        )
+        if transparency_link is not None:
+            texture = self._texture_output(
+                tree, transparency_link.ref, "data", stack, x - 700, y - 180
+            )
+            target = _socket(bsdf.inputs, "Transmission Weight", "Transmission")
+            if texture is not None and target is not None:
+                tree.links.new(self._to_value(tree, texture, x - 480, y - 180), target)
+
+        transmission_color_link = enabled_link(
+            "Transparency Color", "Transparency Color Map"
+        )
+        if transmission_color_link is not None and transparency > 0.0:
+            texture = self._texture_output(
+                tree, transmission_color_link.ref, "color", stack, x - 700, y - 320
+            )
+            target = _socket(bsdf.inputs, "Base Color")
+            if texture is not None and target is not None:
+                tree.links.new(texture, target)
+
+        emission_color_link = enabled_link("Emission Color", "Emission Color Map")
+        if emission_color_link is not None:
+            texture = self._texture_output(
+                tree, emission_color_link.ref, "color", stack, x - 700, y - 460
+            )
+            target = _socket(bsdf.inputs, "Emission Color", "Emission")
+            if texture is not None and target is not None:
+                tree.links.new(texture, target)
+
+        emission_link = enabled_link(
+            "Emission", "Emission Map", "Emission Weight", "Emission Weight Map"
+        )
+        if emission_link is not None:
+            texture = self._texture_output(
+                tree, emission_link.ref, "data", stack, x - 700, y - 600
+            )
+            target = _socket(bsdf.inputs, "Emission Strength")
+            if texture is not None and target is not None:
+                tree.links.new(self._to_value(tree, texture, x - 480, y - 600), target)
+
+        coat_link = enabled_link(
+            "Coat Weight",
+            "Coat Weight Map",
+            "Coating",
+            "Coating Map",
+            "Coating Weight",
+            "Coating Weight Map",
+        )
+        if coat_link is not None:
+            texture = self._texture_output(tree, coat_link.ref, "data", stack, x - 700, y - 740)
+            target = _socket(bsdf.inputs, "Coat Weight", "Coat")
+            if texture is not None and target is not None:
+                tree.links.new(self._to_value(tree, texture, x - 480, y - 740), target)
+
+        coat_roughness_link = enabled_link(
+            "Coat Roughness",
+            "Coat Roughness Map",
+            "Coating Roughness",
+            "Coating Roughness Map",
+        )
+        if coat_roughness_link is not None:
+            texture = self._texture_output(
+                tree, coat_roughness_link.ref, "data", stack, x - 700, y - 880
+            )
+            target = _socket(bsdf.inputs, "Coat Roughness")
+            if texture is not None and target is not None:
+                value = self._to_value(tree, texture, x - 500, y - 880)
+                if bool(parameters.get("coat_roughness_inv", False)):
+                    value = self._invert_value(tree, value, x - 300, y - 880)
+                tree.links.new(value, target)
+
+        bump_link = enabled_link("Bump", "Bump Map")
+        normal_input = _socket(bsdf.inputs, "Normal")
+        if bump_link is not None and normal_input is not None:
+            normal = self._normal_output(
+                tree,
+                bump_link.ref,
+                max(0.0, scalar(parameters, "bump_map_amt", 0.3)),
+                stack,
+                x - 660,
+                y - 1020,
+            )
+            if normal is not None:
+                tree.links.new(normal, normal_input)
+
+        cutout_link = enabled_link("Cutout", "Cutout Map")
+        alpha_input = _socket(bsdf.inputs, "Alpha")
+        if cutout_link is not None and alpha_input is not None:
+            texture = self._texture_output(
+                tree, cutout_link.ref, "data", stack, x - 700, y - 1160
+            )
+            if texture is not None:
+                tree.links.new(self._to_value(tree, texture, x - 480, y - 1160), alpha_input)
+                _configure_alpha(material)
+
+        return bsdf.outputs[0]
 
     def _build_vray_mtl(
         self,

@@ -4,6 +4,46 @@ This file records user-visible changes to the 3ds Max exporter/cleanup and the
 Blender importer. BlendMax is still alpha software; host-tested baselines are
 called out separately from automated coverage.
 
+## Blender Importer 0.1.4 — 2026-08-26
+
+### Fixed
+
+- Removes synthetic or otherwise undeclared objects created by Blender's FBX
+  importer instead of retaining them inside the imported asset.
+- Removes the discarded object's orphaned mesh/curve data where applicable.
+
+### Host evidence
+
+- Importer 0.1.3 eliminated all 27 unsupported-PhysicalMaterial warnings from
+  the Ring-Light package and reconstructed 26 materials.
+- That pass exposed one undeclared `Untitled` FBX object; the 0.1.4 correction
+  removed the object and its large cube during the Blender 5.2 retest.
+- Ring-Light completed with 26 objects, 26 native materials, no warnings or
+  errors, visible packaged textures, and intact hierarchy/world-origin
+  placement.
+- All 99 automated project tests pass.
+
+## Blender Importer 0.1.3 — 2026-08-26
+
+### Added
+
+- Translates 3ds Max `PhysicalMaterial` graphs to native Principled BSDF
+  shaders instead of magenta fallbacks.
+- Maps base color/weight, reflectivity, roughness and its invert state,
+  metalness, transparency, IOR, thin-wall state, emission, coat, sheen,
+  anisotropy, SSS weight, thin film, bump, and cutout values.
+- Resolves exported Physical Material map-enable controls and wires supported
+  base-color, weight, reflectivity, roughness, metalness, transparency,
+  emission, coat, bump, and cutout maps.
+
+### Automated validation
+
+- Parsed the production Ring-Light package: 26 Physical Materials and two
+  packaged Bitmaptexture base-color links enter the native translation path
+  without fallback warnings.
+- All 97 automated project tests pass. Blender 5.2 host validation remains
+  pending.
+
 ## Max Exporter 0.1.0-alpha.4.1.0 — 2026-08-25
 
 ### Added

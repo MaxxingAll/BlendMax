@@ -23,7 +23,7 @@ class BlenderExtensionBuildTests(unittest.TestCase):
             self.assertIn("addon.py", names)
             self.assertNotIn("blendmax_blender/__init__.py", names)
             self.assertEqual(metadata["id"], "blendmax_importer")
-            self.assertEqual(metadata["version"], "0.1.2")
+            self.assertEqual(metadata["version"], "0.1.4")
             self.assertEqual(metadata["blender_version_min"], "4.2.0")
 
     def test_build_is_reproducible(self):

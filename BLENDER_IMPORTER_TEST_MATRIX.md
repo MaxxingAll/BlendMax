@@ -1,4 +1,4 @@
-# BlendMax Blender Importer 0.1.2 Test Matrix
+# BlendMax Blender Importer 0.1.4 Test Matrix
 
 ## Scope
 
@@ -12,7 +12,7 @@ one FBX operator call, and indexed O(n) manifest/graph processing.
 
 ## Automated status
 
-All 92 project tests pass under ordinary Python. Twenty-two importer-specific
+All 99 project tests pass under ordinary Python. Twenty-nine importer-specific
 tests cover:
 
 - Blender extension metadata and root ZIP layout;
@@ -23,10 +23,14 @@ tests cover:
 - texture-slot normalization;
 - V-Ray map enable and multiplier interpretation;
 - glossiness-to-roughness conversion;
+- Physical Material class dispatch, map-enable interpretation, and roughness
+  inversion;
+- Physical Material Principled defaults and base-color map wiring;
 - color normalization;
 - world-origin footprint centering and ground-level anchoring;
 - nested-group descendant bounds and hierarchy-cycle rejection;
 - direct FBX-root translation without moving nested children twice;
+- separation and removal of FBX objects that have no manifest record;
 - selective archive extraction;
 - traversal rejection;
 - missing packaged-texture rejection; and
@@ -40,13 +44,15 @@ import pipeline; it is not a substitute for Blender runtime rendering checks.
 Manual status: Basketball material reconstruction and direct world-origin
 placement passed. Four potted plants passed its object/image counts, procedural
 bump, Multi/Sub, VRay2Sided, direct world-origin placement, and reconstructed
-pivot checks.
+pivot checks. Ring-Light passed 26-object/26-material Physical Material
+translation, packaged Base Color maps, strict removal of undeclared FBX data,
+hierarchy, and direct world-origin placement without warnings or errors.
 
 ## Verified Blender 5.2 manual passes
 
 ### A. Basketball
 
-1. Install `blendmax_importer-0.1.2.zip` from disk.
+1. Install `blendmax_importer-0.1.4.zip` from disk.
 2. Import `Basketbalv2l.blendmax`.
 3. Confirm one mesh appears in its own collection under a `[BlendMax]`
    controller.
@@ -71,6 +77,26 @@ pivot checks.
    shader mix.
 6. Confirm repeated package images are reused per color-space role and packed.
 7. Confirm the procedural pot bump receives a Blender Noise Texture fallback.
+
+### C. Ring-Light Physical Materials
+
+1. Install `blendmax_importer-0.1.4.zip` and import `RingLight.blendmax` into a
+   clean scene.
+2. Confirm the completion message reports 26 objects and 26 materials without
+   the previous 27 unsupported-PhysicalMaterial warnings.
+3. Confirm none of the materials use the magenta fallback shader.
+4. Confirm the `*` and `[Metal Corrugated Shiny]1` materials load, wire, and
+   pack their Base Color Map images in sRGB.
+5. Confirm materials exported with `roughness=0` and `roughness_inv=true`
+   receive Principled Roughness 1.0.
+6. Confirm `vidro` receives Transmission Weight 0.8, IOR 1.52, and Thin Wall
+   enabled.
+7. Confirm the undeclared `Untitled` FBX object and its large cube are absent.
+
+Result: passed in Blender 5.2. All 26 objects and 26 native materials imported
+without warnings or errors; the two mapped materials displayed their packaged
+images, the hierarchy and world-origin placement remained intact, and the
+undeclared `Untitled` cube was absent.
 
 ## Pass criteria
 

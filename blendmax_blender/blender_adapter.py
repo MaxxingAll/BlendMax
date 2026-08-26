@@ -200,13 +200,16 @@ class BlenderAdapter:
             _link_only_to(obj, collection)
 
         generated_group_heads: Set[str] = set()
-        mapped = self._map_objects(
+        mapped, undeclared = self._map_objects(
             imported,
             manifest.objects,
             collection,
             warnings,
             generated_group_heads,
         )
+        undeclared_set = set(undeclared)
+        imported = [obj for obj in imported if obj not in undeclared_set]
+        self._discard_undeclared_fbx_objects(undeclared)
         self._rebase_imported_roots(imported, mapped)
         self.context.view_layer.update()
         self._position_generated_group_heads(
@@ -262,7 +265,7 @@ class BlenderAdapter:
         collection,
         warnings: List[str],
         generated_group_heads: Set[str],
-    ) -> Dict[str, object]:
+    ) -> Tuple[Dict[str, object], Tuple[object, ...]]:
         available = list(imported)
         mapped: Dict[str, object] = {}
         for record in records:
@@ -291,13 +294,26 @@ class BlenderAdapter:
             match.name = record.original_name or record.fbx_name
             mapped[record.object_id] = match
 
-        for extra in available:
-            warnings.append(
-                "FBX object {0} has no manifest record and was kept unchanged.".format(
-                    extra.name
-                )
-            )
-        return mapped
+        return mapped, tuple(available)
+
+    @staticmethod
+    def _discard_undeclared_fbx_objects(objects: Iterable[object]) -> None:
+        data_collection_names = {
+            "MESH": "meshes",
+            "CURVE": "curves",
+            "SURFACE": "curves",
+            "FONT": "curves",
+            "ARMATURE": "armatures",
+            "CAMERA": "cameras",
+            "LIGHT": "lights",
+        }
+        for obj in tuple(objects):
+            data = getattr(obj, "data", None)
+            collection_name = data_collection_names.get(getattr(obj, "type", ""))
+            bpy.data.objects.remove(obj, do_unlink=True)
+            if data is None or collection_name is None or getattr(data, "users", 0) != 0:
+                continue
+            getattr(bpy.data, collection_name).remove(data)
 
     @staticmethod
     def _rebase_imported_roots(

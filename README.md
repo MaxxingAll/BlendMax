@@ -21,9 +21,9 @@ created automatically by Python.
 | Component | Version | Status |
 | --- | --- | --- |
 | 3ds Max exporter and cleanup | `0.1.0-alpha.4.1.0` | Host verified in 3ds Max 2025.3 |
-| Blender importer | `0.1.2` | Basketball and four-potted-plants manual passes completed in Blender 5.2 |
+| Blender importer | `0.1.4` | Ring-Light Physical Material pass completed in Blender 5.2 |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
-| Automated suite | 92 tests | Passing |
+| Automated suite | 99 tests | Passing |
 
 See [CHANGELOG.md](CHANGELOG.md) for release history,
 [TEST_MATRIX.md](TEST_MATRIX.md) for Max evidence, and
@@ -126,7 +126,7 @@ an updated exporter or cleanup action cannot continue running stale code.
 
 ## Install the Blender importer
 
-Build or download `blendmax_importer-0.1.2.zip`, then in Blender:
+Build or download `blendmax_importer-0.1.4.zip`, then in Blender:
 
 1. Open **Edit > Preferences > Get Extensions**.
 2. Open the menu in the top-right and choose **Install from Disk**.
@@ -152,15 +152,21 @@ created by that attempt.
 It currently:
 
 - restores original object names and manifest parent relationships;
+- removes FBX-created objects that have no manifest record, including synthetic
+  scene-root geometry/helpers;
 - places the asset in its own collection under one `[BlendMax]` controller;
 - directly centers imported FBX geometry at world origin, grounds its lowest
   point at Z=0, and keeps reconstructed group pivots close to their own meshes;
 - preserves FBX polygon material indices and reconstructs Multi/Sub slots;
-- converts `VRayMtl` to native Principled BSDF nodes;
+- converts `VRayMtl` and 3ds Max `PhysicalMaterial` to native Principled BSDF
+  nodes;
 - recursively handles `VRay2SidedMtl`, `Bitmaptexture`, `VRayBitmap`,
   `Normal_Bump`, `VRayColor`, and basic `Noise`;
-- maps Diffuse, Reflection, Roughness/Glossiness, Metalness, Fresnel IOR,
+- maps V-Ray Diffuse, Reflection, Roughness/Glossiness, Metalness, Fresnel IOR,
   Refraction, Opacity, Self-Illumination, Bump, and tangent normal maps;
+- maps Physical Material base color/weight, reflectivity, roughness inversion,
+  metalness, transparency, IOR, thin-wall state, emission, coat, sheen,
+  anisotropy, SSS weight, thin film, bump, cutout, and their supported maps;
 - honors exported map enable states and multipliers; and
 - packs loaded images into Blender so temporary extraction files can be
   deleted safely.
@@ -218,6 +224,10 @@ original assignments, and 141 Shape/segment objects were deleted. The
 Alpha.3.6 export baseline, persistent menu, and nine core `VRayMtl` features
 remain verified. Blender importer 0.1.2 completed its Basketball and
 four-potted-plants material, hierarchy, and world-origin placement passes.
+Importer 0.1.4 completed the Ring-Light Blender 5.2 pass with 26 objects and 26
+native materials, no warnings or errors, both packaged base-color images wired,
+and the hierarchy and world-origin placement intact. The undeclared `Untitled`
+FBX object exposed by 0.1.3 is removed together with its orphaned geometry.
 
 Full V-Ray-to-Blender material interpretation is **not claimed complete**.
 Advanced compound materials such as `VRayBlendMtl` remain deferred.
@@ -230,14 +240,14 @@ From the extracted project folder, using ordinary Python:
 python -m unittest discover -s tests -v
 ```
 
-The 92 tests cover scene and visibility-preflight rules, cleanup planning,
+The 99 tests cover scene and visibility-preflight rules, cleanup planning,
 Multi/Sub ID lookup, compact face selections, the 30-object boundary, exact and fallback
 bounds, size policy, texture ownership and collisions,
 group isolation and restoration, archive creation, FBX state restoration,
 AppBundle construction, installation, hot-reloading after an in-session ZIP
 update, ZIP update safety, duplicate-name material fingerprints, Physical
 Material property and nested-map comparison, merge approval/refusal, Blender manifest
-parsing, secure extraction, material interpretation, legacy schema fallback,
+parsing, secure extraction, V-Ray and Physical Material interpretation, legacy schema fallback,
 origin placement, nested-group anchoring, and reproducible extension packaging.
 Actual `pymxs`, `bpy`, FBX, and host UI
 behavior must be tested inside 3ds Max and Blender.

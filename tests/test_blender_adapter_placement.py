@@ -7,6 +7,8 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
+from blendmax_blender.models import ObjectRecord
+
 
 class FakeVector:
     def __init__(self, values):
@@ -64,6 +66,28 @@ class FakeMeshObject:
             location = location - self.parent.matrix_world.translation
         self.location = FakeVector(location)
         self.world_assignments += 1
+
+
+class FakeImportedObject:
+    def __init__(self, name, object_type="MESH", data=None):
+        self.name = name
+        self.type = object_type
+        self.data = data
+        self.properties = {}
+
+    def __setitem__(self, key, value):
+        self.properties[key] = value
+
+
+class FakeRemoveCollection:
+    def __init__(self, clear_users=False):
+        self.clear_users = clear_users
+        self.removed = []
+
+    def remove(self, item, **_kwargs):
+        self.removed.append(item)
+        if self.clear_users and getattr(item, "data", None) is not None:
+            item.data.users = 0
 
 
 def load_adapter():
@@ -170,6 +194,47 @@ class BlenderAdapterPlacementTests(unittest.TestCase):
         )
         for before, after in zip(before_spacing, after_spacing):
             self.assertAlmostEqual(before, after)
+
+    def test_object_mapping_returns_undeclared_fbx_objects_separately(self):
+        matched = FakeImportedObject("BM_declared")
+        undeclared = FakeImportedObject("Untitled")
+        record = ObjectRecord(
+            object_id="mesh_1",
+            fbx_name="BM_declared",
+            original_name="Declared mesh",
+            node_type="Editable_Poly",
+            superclass="GeometryClass",
+        )
+
+        mapped, extras = self.adapter.BlenderAdapter._map_objects(
+            (matched, undeclared),
+            (record,),
+            None,
+            [],
+            set(),
+        )
+
+        self.assertIs(mapped["mesh_1"], matched)
+        self.assertEqual(extras, (undeclared,))
+        self.assertEqual(matched.name, "Declared mesh")
+
+    def test_undeclared_fbx_mesh_and_orphan_data_are_removed(self):
+        mesh = SimpleNamespace(users=1)
+        undeclared = FakeImportedObject("Untitled", data=mesh)
+        objects = FakeRemoveCollection(clear_users=True)
+        meshes = FakeRemoveCollection()
+        previous_data = getattr(self.adapter.bpy, "data", None)
+        self.adapter.bpy.data = SimpleNamespace(objects=objects, meshes=meshes)
+        try:
+            self.adapter.BlenderAdapter._discard_undeclared_fbx_objects((undeclared,))
+        finally:
+            if previous_data is None:
+                del self.adapter.bpy.data
+            else:
+                self.adapter.bpy.data = previous_data
+
+        self.assertEqual(objects.removed, [undeclared])
+        self.assertEqual(meshes.removed, [mesh])
 
 
 if __name__ == "__main__":
