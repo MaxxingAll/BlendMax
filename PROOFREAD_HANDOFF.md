@@ -12,12 +12,13 @@ point was addressed.**
 ## 0. Working state
 
 - Branch: `arena/01a05c3d-blendmax` (off `main` @ `b8572c5`).
-- One commit: `619006c` "Harden VRayMtl import and map anisotropy, sheen,
-  thin film, coat" (pushed). A second commit for the review-round fixes
-  (safer canonicalization + doc updates) follows.
+- Three commits ahead of `main`, all pushed:
+  1. `619006c` — "Harden VRayMtl import and map anisotropy, sheen, thin film, coat"
+  2. `3659464` — "Tighten parameter canonicalization after review"
+  3. this commit — name-contract regression tests + round-2 handoff updates
 - **Version strings NOT bumped.** `blendmax_blender/__init__.py` and
   `blendmax_blender/blender_manifest.toml` still read `0.1.4`.
-- Tests: **122 passing** (started at 99).
+- Tests: **124 passing** (started at 99).
 - No `max_adapter.py` / exporter-side changes. All changes are on the Blender
   importer side + its tests + docs.
 
@@ -264,9 +265,9 @@ Matches the pre-existing IOR-lock tolerance. Cosmetic, but consistent.
 | tests/test_blender_package.py | 4 |
 | tests/test_blender_physical_material.py | 3 |
 | tests/test_blender_placement.py | 5 |
-| tests/test_blender_vray_material.py | 9 |
-| **Importer-specific subtotal** | **52** |
-| **Full suite (discover -s tests)** | **122** |
+| tests/test_blender_vray_material.py | 11 |
+| **Importer-specific subtotal** | **54** |
+| **Full suite (discover -s tests)** | **124** |
 
 ---
 
@@ -276,7 +277,12 @@ Matches the pre-existing IOR-lock tolerance. Cosmetic, but consistent.
    Max vs the imported Blender result — confirm the quarter-turn direction.
 2. **Host A/B: sheen.** White / saturated / equal-luminance sheen swatches —
    confirm `luminance(sheen_color)` is the right weight model.
-3. (Optional) Confirm `thinfilm_on` and `refraction_thinwalled` property names
+3. **Host confirmation of exported parameter casing** (soft, mostly retired —
+   see §10): a single real `VRayMtl` export's `manifest.json` `parameters`
+   keys should be diffed against the importer lookups. The static
+   whitelist-based check already passes (§10); this is the final empirical
+   confirmation that `getPropNames` casing matches the whitelist spelling.
+4. (Optional) Confirm `thinfilm_on` and `refraction_thinwalled` property names
    against Chaos MaxScript docs (F12 / I3, MEDIUM confidence).
 
 ---
@@ -308,3 +314,43 @@ items. Responses, all applied in the follow-up commit:
 
 "Unmapped-parameter diagnostics stay" and "no Max exporter change needed" were
 both affirmed by the reviewer; no action taken.
+
+---
+
+## 10. Review round 2 → responses
+
+The second review accepted the code direction and flagged two items. Both are
+addressed in this commit:
+
+1. **"The alias table is empty — verify the actual Max-exported parameter
+   names against the current lookup names."**
+   → Verified statically and locked in with regression tests. The exporter can
+   only store VRayMtl properties listed in `VRAY_MTL_PROPERTIES` (plus
+   `texmap_*` map controls for connected slots), so the importer's vocabulary
+   was extracted from source (`ast`-based) and diffed against that whitelist.
+   Result: 27 of 28 literal lookups casefold-match a whitelist name; the 28th
+   (`texmap_bump_multiplier`) is a map control, which the exporter emits
+   separately. The reviewer's five names all resolve:
+     - `reflection_glossiness` → whitelist `reflection_glossiness` ✓
+     - `reflectionGlossiness` → not a *property* name; the property is
+       `reflection_glossiness` (snake). The camel spelling appears only inside
+       `texmap_reflectionGlossiness_*` map-control keys, matching the
+       exporter's `_MAP_CONTROL_NAMES`. No alias needed. ✓
+     - `refraction_glossiness` → ✓
+     - `brdf_useRoughness` → casefold-matches `brdf_useroughness` ✓
+     - `selfIllumination` → casefold-matches `selfillumination` ✓
+   Two permanent tests now encode this: `test_every_vray_parameter_lookup_is_
+   exporter_reachable` (ast-extracts the importer's lookups and asserts each is
+   whitelist- or `texmap_`-reachable, with a non-empty sanity guard) and
+   `test_full_whitelist_reads_expected_parameters` (feeds all 65 whitelist
+   names and asserts the mapped set is consumed and the unmapped set is
+   reported). A future exporter or importer name change that breaks the
+   contract fails these tests.
+   Residual host step: one real `VRayMtl` export to confirm `getPropNames`
+   casing equals the whitelist spelling (the whitelist is the best available
+   proxy; it is presumed to reflect real MaxScript property names).
+
+2. **"The handoff document is slightly stale."**
+   → FIXED in this commit. §0 now lists all three commits (with the third
+   described as "this commit" to avoid re-staling), and §10 (this section)
+   records the round-2 state. Test counts updated to 124 / 54.

@@ -23,7 +23,7 @@ created automatically by Python.
 | 3ds Max exporter and cleanup | `0.1.0-alpha.4.1.0` | Host verified in 3ds Max 2025.3 |
 | Blender importer | `0.1.4` | Ring-Light Physical Material pass completed in Blender 5.2 |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
-| Automated suite | 122 tests | Passing |
+| Automated suite | 124 tests | Passing |
 
 See [CHANGELOG.md](CHANGELOG.md) for release history,
 [TEST_MATRIX.md](TEST_MATRIX.md) for Max evidence, and
@@ -271,7 +271,7 @@ From the extracted project folder, using ordinary Python:
 python -m unittest discover -s tests -v
 ```
 
-The 122 tests cover scene and visibility-preflight rules, cleanup planning,
+The 124 tests cover scene and visibility-preflight rules, cleanup planning,
 Multi/Sub ID lookup, compact face selections, the 30-object boundary, exact and fallback
 bounds, size policy, texture ownership and collisions,
 group isolation and restoration, archive creation, FBX state restoration,
@@ -281,8 +281,10 @@ Material property and nested-map comparison, merge approval/refusal, Blender man
 parsing, secure extraction, V-Ray and Physical Material interpretation, legacy schema fallback,
 origin placement, nested-group anchoring, reproducible extension packaging,
 case-insensitive parameter resolution with spelling preservation and explicit
-aliases, unmapped-VRayMtl-parameter diagnostics, and V-Ray anisotropy, sheen,
+aliases, unmapped-VRayMtl-parameter diagnostics, V-Ray anisotropy, sheen,
 thin-film, coat, diffuse-roughness, thin-walled refraction, and
-refraction-glossiness interpretation.
+refraction-glossiness interpretation, and the importer/exporter parameter-name
+contract (every VRayMtl parameter the importer reads must be reachable from the
+exporter's property whitelist).
 Actual `pymxs`, `bpy`, FBX, and host UI
 behavior must be tested inside 3ds Max and Blender.

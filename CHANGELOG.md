@@ -37,6 +37,11 @@ called out separately from automated coverage.
   an approximation. V-Ray keeps refraction as glossiness even when "Use
   roughness" is enabled, so the comparison always inverts refraction
   glossiness to roughness first.
+- Adds an importer/exporter parameter-name contract test: every literal
+  VRayMtl parameter the importer reads is checked against the exporter's
+  `VRAY_MTL_PROPERTIES` whitelist (map controls aside), and the full whitelist
+  is verified to map or report every property. This locks the name spellings
+  that were previously an implicit assumption.
 
 ### Host evidence
 

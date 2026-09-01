@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import os
 import sys
 import unittest
@@ -11,6 +12,64 @@ from blendmax_blender.models import GraphNode
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fakes import FakeTree, load_materials_module
+
+
+def extract_vray_parameter_lookups():
+    """Collect every literal parameter key the VRayMtl path can read.
+
+    Walks `_build_vray_mtl` and the four `vray_*` helper functions and
+    returns the set of string keys passed to `parameters.get(...)`,
+    `scalar(parameters, ...)`, or `parameters[...]`. Slot/map lookups that
+    take a dynamic key (e.g. `map_amount(parameters, link.slot)`) are not
+    literals and are therefore intentionally excluded.
+    """
+    repo = Path(__file__).resolve().parents[1]
+
+    def collect(path, func_names):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        found = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name in func_names:
+                for sub in ast.walk(node):
+                    if isinstance(sub, ast.Call):
+                        func = sub.func
+                        if (
+                            isinstance(func, ast.Name)
+                            and func.id == "scalar"
+                            and len(sub.args) >= 2
+                        ):
+                            arg = sub.args[1]
+                            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                                found.add(arg.value)
+                        elif (
+                            isinstance(func, ast.Attribute)
+                            and func.attr == "get"
+                            and isinstance(func.value, ast.Name)
+                            and func.value.id == "parameters"
+                            and sub.args
+                        ):
+                            arg = sub.args[0]
+                            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                                found.add(arg.value)
+                    if isinstance(sub, ast.Subscript):
+                        if (
+                            isinstance(sub.value, ast.Name)
+                            and sub.value.id == "parameters"
+                            and isinstance(sub.slice, ast.Constant)
+                            and isinstance(sub.slice.value, str)
+                        ):
+                            found.add(sub.slice.value)
+        return found
+
+    keys = collect(
+        repo / "blendmax_blender" / "blender_materials.py",
+        {"_build_vray_mtl"},
+    )
+    keys |= collect(
+        repo / "blendmax_blender" / "material_graph.py",
+        {"vray_roughness", "vray_anisotropy", "vray_sheen_roughness", "vray_thin_film"},
+    )
+    return keys
 
 
 class BlenderVRayMtlTests(unittest.TestCase):
@@ -240,6 +299,108 @@ class BlenderVRayMtlTests(unittest.TestCase):
             message for message in warnings if "anisotropy_axis" in message
         ]
         self.assertEqual(len(anisotropy_warnings), 1)
+
+
+class VRayExporterContractTests(unittest.TestCase):
+    """Cross-check the importer's parameter vocabulary against the exporter's.
+
+    The exporter only stores VRayMtl properties that are listed in
+    `VRAY_MTL_PROPERTIES` (plus `texmap_*` map controls for connected slots),
+    so these tests guard both directions of the name contract without needing
+    a running 3ds Max or Blender.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.materials = load_materials_module()
+        from blendmax_max.max_adapter import VRAY_MTL_PROPERTIES
+
+        cls.VRAY_MTL_PROPERTIES = VRAY_MTL_PROPERTIES
+
+    def build(self, graph_node):
+        warnings = []
+        builder = self.materials.MaterialBuilder(
+            SimpleNamespace(node=lambda ref: graph_node if ref == graph_node.node_id else None),
+            Path("."),
+            warnings,
+        )
+        builder._build_shader(FakeTree(), graph_node.node_id, SimpleNamespace(), (), 0.0, 0.0)
+        return warnings
+
+    def test_every_vray_parameter_lookup_is_exporter_reachable(self):
+        keys = extract_vray_parameter_lookups()
+        # Sanity: the extractor must actually find the known lookups, so a
+        # refactor that renames a function cannot silently empty the set.
+        self.assertGreater(len(keys), 20)
+        self.assertIn("reflection_glossiness", keys)
+
+        whitelist = {name.casefold() for name in self.VRAY_MTL_PROPERTIES}
+        for key in sorted(keys):
+            folded = key.casefold()
+            self.assertTrue(
+                folded in whitelist or folded.startswith("texmap_"),
+                "Importer lookup {0!r} is not reachable from the exporter.".format(key),
+            )
+
+    def test_full_whitelist_reads_expected_parameters(self):
+        graph_node = GraphNode(
+            node_id="mat_full",
+            kind="material",
+            class_name="VRayMtl",
+            name="Full whitelist",
+            parameters={name: None for name in self.VRAY_MTL_PROPERTIES},
+        )
+        warnings = self.build(graph_node)
+
+        mapped = {
+            "Diffuse",
+            "Reflection",
+            "Refraction",
+            "selfIllumination",
+            "selfIllumination_multiplier",
+            "reflection_metalness",
+            "reflection_glossiness",
+            "reflection_IOR",
+            "refraction_ior",
+            "reflection_weight",
+            "reflection_lockIOR",
+            "coat_amount",
+            "coat_color",
+            "coat_glossiness",
+            "coat_ior",
+            "diffuse_roughness",
+            "refraction_thinwalled",
+            "anisotropy",
+            "anisotropy_rotation",
+            "sheen_color",
+            "sheen_glossiness",
+            "thinfilm_on",
+            "thinfilm_ior",
+            "thinfilm_thickness_min",
+            "thinfilm_thickness_max",
+            "brdf_useRoughness",
+            "refraction_glossiness",
+        }
+        for name in mapped:
+            self.assertFalse(
+                any("'{0}'".format(name.casefold()) in message for message in warnings),
+                "{0} should be mapped but was reported unmapped".format(name),
+            )
+
+        unmapped = {
+            "anisotropy_axis",
+            "coat_darkening",
+            "option_cutoff",
+            "reflection_fresnel",
+            "refraction_dispersion",
+            "selfillumination_gi",
+            "translucency_amount",
+        }
+        for name in unmapped:
+            self.assertTrue(
+                any("'{0}'".format(name.casefold()) in message for message in warnings),
+                "{0} should be reported unmapped".format(name),
+            )
 
 
 if __name__ == "__main__":

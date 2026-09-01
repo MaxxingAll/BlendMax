@@ -12,7 +12,7 @@ one FBX operator call, and indexed O(n) manifest/graph processing.
 
 ## Automated status
 
-All 122 project tests pass under ordinary Python. Fifty-two
+All 124 project tests pass under ordinary Python. Fifty-four
 importer-specific tests cover:
 
 - Blender extension metadata and root ZIP layout;
@@ -35,6 +35,10 @@ importer-specific tests cover:
 - VRayMtl anisotropy, sheen, and thin-film Principled defaults;
 - VRayMtl coat tint, diffuse roughness, and thin-walled refraction defaults;
 - refraction-glossiness divergence reporting and its matching no-warning case;
+- the importer/exporter parameter-name contract: every literal VRayMtl
+  parameter the importer reads must exist in the exporter's
+  `VRAY_MTL_PROPERTIES` whitelist (or be a `texmap_*` map control), and the
+  full whitelist must map or report every property;
 - Physical Material class dispatch, map-enable interpretation, and roughness
   inversion;
 - Physical Material Principled defaults and base-color map wiring;
