@@ -4,6 +4,42 @@ This file records user-visible changes to the 3ds Max exporter/cleanup and the
 Blender importer. BlendMax is still alpha software; host-tested baselines are
 called out separately from automated coverage.
 
+## Blender Importer (unreleased)
+
+### Added
+
+- Resolves manifest parameter names case-insensitively so V-Ray/Max casing or
+  spelling variations can no longer silently fall back to default values.
+- Reports every captured `VRayMtl` parameter that has no Blender shader mapping
+  as a warning, deduplicated per parameter name. Connected-texture map controls
+  are excluded because they are already interpreted through the generic slot
+  handling. This surfaces untested parameter aliases during the production
+  audit instead of discarding them quietly.
+- Maps V-Ray `VRayMtl` anisotropy, sheen, and thin film to native Principled
+  BSDF inputs. Anisotropy magnitude becomes Blender's Anisotropic input, with a
+  quarter turn added for negative (perpendicular) V-Ray values and the 0..1
+  rotation passed through as Blender's 0..1 full-circle Anisotropic Rotation.
+  Sheen color's luminance drives Sheen Weight (V-Ray has no separate sheen
+  weight), its glossiness is inverted to Sheen Roughness, and its color maps to
+  Sheen Tint. Thin-film IOR maps directly, and thickness collapses the V-Ray
+  min/max range to the minimum (matching V-Ray's no-blend-map behavior), with a
+  disabled thin film mapping to zero thickness.
+- Maps V-Ray coat color to Coat Tint, `diffuse_roughness` to Diffuse Roughness,
+  and thin-walled refraction to Blender's Thin Wall flag. V-Ray's separate
+  coat-darkening effect has no Blender equivalent and remains reported as
+  unmapped.
+- Reports a material whose refraction glossiness diverges from its reflection
+  glossiness: Blender's Principled shader exposes one roughness for both, so
+  the reflection roughness is used and the refraction roughness is flagged as
+  an approximation. V-Ray keeps refraction as glossiness even when "Use
+  roughness" is enabled, so the comparison always inverts refraction
+  glossiness to roughness first.
+
+### Host evidence
+
+- Pending Blender 5.2 verification of the new anisotropy, sheen, and thin-film
+  mappings against a real `VRayMtl` asset.
+
 ## Blender Importer 0.1.4 — 2026-08-26
 
 ### Fixed

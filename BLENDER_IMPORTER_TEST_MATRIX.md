@@ -12,8 +12,8 @@ one FBX operator call, and indexed O(n) manifest/graph processing.
 
 ## Automated status
 
-All 99 project tests pass under ordinary Python. Twenty-nine importer-specific
-tests cover:
+All 119 project tests pass under ordinary Python. Forty-nine
+importer-specific tests cover:
 
 - Blender extension metadata and root ZIP layout;
 - reproducible extension builds;
@@ -23,6 +23,16 @@ tests cover:
 - texture-slot normalization;
 - V-Ray map enable and multiplier interpretation;
 - glossiness-to-roughness conversion;
+- case-insensitive manifest parameter lookup and access tracking;
+- VRayMtl dispatch, mixed-casing parameter mapping, and unmapped-parameter
+  diagnostics (deduplicated per parameter);
+- V-Ray anisotropy magnitude/rotation, negative-sign quarter-turn, and
+  rotation wrapping;
+- V-Ray sheen glossiness inversion;
+- V-Ray thin-film min-thickness selection and off-to-zero mapping;
+- VRayMtl anisotropy, sheen, and thin-film Principled defaults;
+- VRayMtl coat tint, diffuse roughness, and thin-walled refraction defaults;
+- refraction-glossiness divergence reporting and its matching no-warning case;
 - Physical Material class dispatch, map-enable interpretation, and roughness
   inversion;
 - Physical Material Principled defaults and base-color map wiring;

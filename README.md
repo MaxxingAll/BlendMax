@@ -23,7 +23,7 @@ created automatically by Python.
 | 3ds Max exporter and cleanup | `0.1.0-alpha.4.1.0` | Host verified in 3ds Max 2025.3 |
 | Blender importer | `0.1.4` | Ring-Light Physical Material pass completed in Blender 5.2 |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
-| Automated suite | 99 tests | Passing |
+| Automated suite | 119 tests | Passing |
 
 See [CHANGELOG.md](CHANGELOG.md) for release history,
 [TEST_MATRIX.md](TEST_MATRIX.md) for Max evidence, and
@@ -163,18 +163,26 @@ It currently:
 - recursively handles `VRay2SidedMtl`, `Bitmaptexture`, `VRayBitmap`,
   `Normal_Bump`, `VRayColor`, and basic `Noise`;
 - maps V-Ray Diffuse, Reflection, Roughness/Glossiness, Metalness, Fresnel IOR,
-  Refraction, Opacity, Self-Illumination, Bump, and tangent normal maps;
+  Refraction, Opacity, Self-Illumination, Anisotropy (magnitude and rotation),
+  Sheen (color-derived weight, glossiness, tint), Thin Film (IOR and thickness),
+  Coat (amount, glossiness, IOR, tint), Diffuse Roughness, thin-walled
+  refraction, Bump, and tangent normal maps;
 - maps Physical Material base color/weight, reflectivity, roughness inversion,
   metalness, transparency, IOR, thin-wall state, emission, coat, sheen,
   anisotropy, SSS weight, thin film, bump, cutout, and their supported maps;
-- honors exported map enable states and multipliers; and
+- honors exported map enable states and multipliers;
+- resolves manifest parameter names case-insensitively, so V-Ray/Max casing
+  or spelling variations cannot silently fall back to defaults; and
 - packs loaded images into Blender so temporary extraction files can be
   deleted safely.
 
 The complete original `manifest.json` is also stored as a Blender Text data
 block and referenced by the asset collection/controller. Parameters that do not
 yet have a native Blender equivalent therefore remain available for later
-converter improvements instead of being discarded.
+converter improvements instead of being discarded. During a `VRayMtl` import,
+any manifest parameter the importer does not map to a Blender shader input is
+reported as a warning (once per parameter name), so untested aliases and
+parameters surface instead of being silently ignored.
 
 Unsupported graph classes receive a visible magenta fallback and a warning
 instead of aborting the whole asset.
@@ -209,9 +217,23 @@ keeps relative paths and duplicate filenames unambiguous for the Blender
 importer.
 
 Verified `VRayMtl` coverage currently includes Diffuse, Reflection Roughness,
-Bump/Normal, Metalness, Fresnel IOR, Refraction, Opacity, and
-Self-Illumination. Release-by-release material and workflow changes are recorded
-in [CHANGELOG.md](CHANGELOG.md).
+Bump/Normal, Metalness, Fresnel IOR, Refraction, Opacity, Self-Illumination,
+Anisotropy, Sheen, Coat, Diffuse Roughness, thin-walled refraction, and Thin
+Film. V-Ray anisotropy is stored as -1..1 (the sign flips the elongation axis)
+and `anisotropy_rotation` as 0..1 for one full turn; the importer maps the
+magnitude to Blender's Anisotropic input and adds a quarter turn for negative
+values, matching Blender's 0..1 full-circle Anisotropic Rotation. Sheen color
+doubles as the sheen amount in V-Ray, so its luminance drives Blender's Sheen
+Weight and its glossiness is inverted to Sheen Roughness. V-Ray thin-film
+thickness is a min/max range that collapses to the minimum when no
+thickness-blend map is connected, matching V-Ray's own behavior; a disabled
+thin film maps to zero thickness. Coat color maps to Coat Tint; V-Ray's
+separate coat-darkening effect has no Blender equivalent and remains flagged.
+Blender's Principled shader uses one roughness for reflection and refraction,
+so a V-Ray material whose refraction glossiness diverges from its reflection
+glossiness is imported using the reflection roughness and reported as an
+approximation. Release-by-release material and workflow changes are recorded in
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Verified environment
 
@@ -240,7 +262,7 @@ From the extracted project folder, using ordinary Python:
 python -m unittest discover -s tests -v
 ```
 
-The 99 tests cover scene and visibility-preflight rules, cleanup planning,
+The 119 tests cover scene and visibility-preflight rules, cleanup planning,
 Multi/Sub ID lookup, compact face selections, the 30-object boundary, exact and fallback
 bounds, size policy, texture ownership and collisions,
 group isolation and restoration, archive creation, FBX state restoration,
@@ -248,6 +270,9 @@ AppBundle construction, installation, hot-reloading after an in-session ZIP
 update, ZIP update safety, duplicate-name material fingerprints, Physical
 Material property and nested-map comparison, merge approval/refusal, Blender manifest
 parsing, secure extraction, V-Ray and Physical Material interpretation, legacy schema fallback,
-origin placement, nested-group anchoring, and reproducible extension packaging.
+origin placement, nested-group anchoring, reproducible extension packaging,
+case-insensitive parameter resolution, unmapped-VRayMtl-parameter diagnostics,
+and V-Ray anisotropy, sheen, thin-film, coat, diffuse-roughness, thin-walled
+refraction, and refraction-glossiness interpretation.
 Actual `pymxs`, `bpy`, FBX, and host UI
 behavior must be tested inside 3ds Max and Blender.
