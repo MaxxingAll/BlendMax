@@ -8,8 +8,11 @@ called out separately from automated coverage.
 
 ### Added
 
-- Resolves manifest parameter names case-insensitively so V-Ray/Max casing or
-  spelling variations can no longer silently fall back to default values.
+- Resolves manifest parameter names case-insensitively while preserving their
+  exact spelling, so casing variations can no longer silently fall back to
+  default values and distinct property names cannot collapse into one another.
+  Known cross-release spellings can be registered in an explicit alias table
+  instead of relying on implicit punctuation stripping.
 - Reports every captured `VRayMtl` parameter that has no Blender shader mapping
   as a warning, deduplicated per parameter name. Connected-texture map controls
   are excluded because they are already interpreted through the generic slot
@@ -37,8 +40,13 @@ called out separately from automated coverage.
 
 ### Host evidence
 
-- Pending Blender 5.2 verification of the new anisotropy, sheen, and thin-film
-  mappings against a real `VRayMtl` asset.
+- Pending Blender 5.2 verification of the new anisotropy, sheen, thin-film,
+  coat, diffuse-roughness, and thin-walled-refraction mappings against a real
+  `VRayMtl` asset.
+- The negative-anisotropy quarter-turn and sheen-luminance-as-weight
+  conversions are treated as unsettled inferences: unit-tested, but requiring a
+  brushed-metal anisotropy A/B and a white/saturated/equal-luminance sheen A/B
+  in Max and Blender before they are considered verified.
 
 ## Blender Importer 0.1.4 — 2026-08-26
 

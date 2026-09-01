@@ -4,17 +4,20 @@ Purpose: a single self-contained document for a second AI (or human) to audit
 everything changed in the `arena/01a05c3d-blendmax` session, verify the facts
 each change relies on, and spot mistakes. It lists the exact files, the new
 behavior, the source-backed facts, the *inferences* that carry risk, and how to
-reproduce the results.
+reproduce the results. **§9 records the previous review round and how each
+point was addressed.**
 
 ---
 
 ## 0. Working state
 
 - Branch: `arena/01a05c3d-blendmax` (off `main` @ `b8572c5`).
-- **Nothing committed.** All work is uncommitted changes + two untracked files.
+- One commit: `619006c` "Harden VRayMtl import and map anisotropy, sheen,
+  thin film, coat" (pushed). A second commit for the review-round fixes
+  (safer canonicalization + doc updates) follows.
 - **Version strings NOT bumped.** `blendmax_blender/__init__.py` and
   `blendmax_blender/blender_manifest.toml` still read `0.1.4`.
-- Tests: **119 passing** (started at 99).
+- Tests: **122 passing** (started at 99).
 - No `max_adapter.py` / exporter-side changes. All changes are on the Blender
   importer side + its tests + docs.
 
@@ -29,14 +32,20 @@ or 3ds Max needed).
 
 Added:
 
-1. `class ParameterView(MappingABC)` — a case-insensitive, access-recording
-   view over a graph node's `parameters` dict.
-2. `vray_anisotropy(parameters) -> (magnitude, rotation)`
-3. `vray_sheen_roughness(parameters) -> float`
-4. `vray_thin_film(parameters) -> (ior, thickness_nm)`
+1. `parameter_key(value)` — normalizes a material *parameter* name by
+   casefold only (`str(value).strip().casefold()`), preserving punctuation.
+2. `_PARAMETER_ALIASES: Dict[str, str]` — explicit alias table (alias →
+   canonical, both normalized). Currently empty by design; the escape hatch
+   for cross-release spellings.
+3. `class ParameterView(MappingABC)` — case-insensitive, access-recording view
+   keyed on `parameter_key`, with explicit-alias fallback.
+4. `vray_anisotropy(parameters) -> (magnitude, rotation)`
+5. `vray_sheen_roughness(parameters) -> float`
+6. `vray_thin_film(parameters) -> (ior, thickness_nm)`
 
-Imports changed: added `from collections.abc import Mapping as MappingABC`
-and `Dict`, `Set` typing imports.
+`canonical_name()` is unchanged and still used for **slot/class** matching
+(where punctuation-insensitivity is intentional). Its docstring now spells out
+the split: slots/classes use `canonical_name`, parameters use `parameter_key`.
 
 ### `blendmax_blender/blender_materials.py` (node-building, uses `bpy`)
 
@@ -51,67 +60,56 @@ and `Dict`, `Set` typing imports.
 4. `_build_vray_mtl` gained an end-of-function diagnostic loop that warns about
    every parameter key never read (skipping `texmap`-prefixed keys).
 
-### `tests/fakes.py` (NEW, untracked)
+### `tests/fakes.py` (NEW)
 
 Extracted from `test_blender_physical_material.py`: `FakeSocket`, `FakeSockets`,
-`FakeNode`, `FakeNodes`, `FakeLinks`, `FakeTree`, and `load_materials_module()`
-(imports `blender_materials.py` under a stub `bpy`). `FakeNode.PRINCIPLED_INPUTS`
-lists the socket names the fake exposes.
+`FakeNode`, `FakeNodes`, `FakeLinks`, `FakeTree`, and `load_materials_module()`.
 
 ### `tests/test_blender_physical_material.py`
 
-Refactored to import `FakeSocket`, `FakeTree`, `load_materials_module` from
-`fakes.py` (with a `sys.path` shim so it also runs as a direct module). Test
-logic unchanged.
+Refactored to import fakes from `fakes.py`. Test logic unchanged.
 
-### `tests/test_blender_vray_material.py` (NEW, untracked)
+### `tests/test_blender_vray_material.py` (NEW)
 
-9 tests for the VRayMtl builder: mixed-casing mapping, unmapped diagnostics
-(+ dedup), texmap exclusion, surface-param defaults, thin-film-off behavior,
-coat-tint/diffuse-roughness/thin-wall direct mapping, refraction-glossiness
-divergence warn + matching no-warn.
+9 tests for the VRayMtl builder (see §7).
 
 ### `tests/test_blender_material_graph.py`
 
-Added `ParameterViewTests` (5 tests) and 6 pure-helper tests for the new
+Added `ParameterViewTests` (8 tests) and 6 pure-helper tests for the new
 `vray_*` functions.
 
 ### Docs
 
-- `README.md` — status-table count, bullet lists, "Material status" prose.
-- `BLENDER_IMPORTER_TEST_MATRIX.md` — counts + coverage bullets.
-- `CHANGELOG.md` — new "Blender Importer (unreleased)" section.
+- `README.md`, `BLENDER_IMPORTER_TEST_MATRIX.md`, `CHANGELOG.md` updated.
 
 ---
 
 ## 2. New behavior (what the importer now does differently)
 
-### 2a. Case-insensitive parameter resolution
+### 2a. Case-insensitive parameter resolution (spelling-preserving)
 
-Every parameter lookup in the material builder now goes through
-`ParameterView`, which keys on `canonical_name(key)` =
-`re.sub(r"[^a-z0-9]+", "", key.casefold())`.
+Every parameter lookup goes through `ParameterView`, keyed on
+`parameter_key(key)` = casefold only. So `Diffuse`, `DIFFUSE`, `diffuse` all
+resolve; but `reflection glossiness` does **not** resolve to
+`reflection_glossiness` (spaces/underscores are not collapsed). Known
+cross-release spellings must be listed in `_PARAMETER_ALIASES` explicitly.
 
-Effect: `Diffuse`, `DIFFUSE`, `diffuse`, `Reflection-Glossiness`,
-`reflectionglossiness` all resolve to the same stored value. This removes the
-previous dependence on exact MaxScript property casing (the exporter stores
-keys with their original `getPropNames` casing, and the old code did
-`parameters.get("Diffuse")` vs `parameters.get("reflection_glossiness")` — a
-silent-fallback hazard if a V-Ray patch/locale changed casing).
+Rationale (from review round 1): punctuation-stripping universal
+canonicalization could silently collapse two distinct property names; the
+stricter spelling-sensitive key plus an explicit alias table removes that
+hazard.
 
 ### 2b. Unmapped-parameter diagnostics (VRayMtl only)
 
-At the end of `_build_vray_mtl`, every canonical key in the manifest that was
+At the end of `_build_vray_mtl`, every normalized key in the manifest that was
 never read produces:
 
 > `VRayMtl parameter '<key>' has no Blender mapping yet; its value remains in the stored manifest.`
 
-- `texmap_*` keys are skipped (they are map controls, already interpreted by
-  `map_is_enabled`/`map_amount`).
-- Deduplicated via the existing `_warn` set (per unique message string).
-- Only VRayMtl, **not** Physical Material — the exporter captures Physical
-  properties unfiltered, so warning there would flood the verified
-  "no warnings" Ring-Light pass with noise. (Judgment call — see §6.)
+- `texmap_*` keys are skipped (map controls, already interpreted).
+- Deduplicated via the existing `_warn` set.
+- Only VRayMtl, not Physical Material (exporter captures Physical unfiltered;
+  flagging it would flood the verified Ring-Light pass).
 
 ### 2c. New VRayMtl mappings
 
@@ -124,7 +122,7 @@ never read produces:
 | `sheen_glossiness` | `Sheen Roughness` | `1 - glossiness` clamped 0..1 |
 | `thinfilm_ior` | `Thin Film IOR` | `max(1.0, value)` |
 | `thinfilm_thickness_min` | `Thin Film Thickness` | min if `thinfilm_on` else 0 |
-| `thinfilm_thickness_max` | (read only) | touched to keep it out of unmapped diagnostics; not wired |
+| `thinfilm_thickness_max` | (read only) | NOT used; read to suppress the unmapped diagnostic |
 | `coat_color` | `Coat Tint` | pass-through rgba |
 | `diffuse_roughness` | `Diffuse Roughness` | pass-through 0..1 |
 | `refraction_thinwalled` | `Thin Wall` | bool |
@@ -138,8 +136,7 @@ converted to roughness (> 0.0001 delta):
 > `{name} has separate reflection and refraction glossiness values; Blender's Principled shader uses a single roughness for both, so the refraction roughness is approximated.`
 
 Blender's Principled has one `Roughness` for both reflection and transmission,
-so only the reflection roughness is applied and the divergence is reported
-(same philosophy as the pre-existing separate-IOR warning).
+so only the reflection roughness is applied and the divergence is reported.
 
 ---
 
@@ -169,50 +166,44 @@ reused (not newly introduced).
 
 ## 4. Inferences / judgment calls — highest review priority
 
-These are the places where I made a decision rather than copied a spec. A
-proofreader should challenge each:
-
 **I1 — Sheen Weight = `luminance(sheen_color)`.**
 V-Ray 3ds Max has no separate sheen *amount*; intensity comes from the sheen
 color. I used Rec.709 luminance as the weight and passed the color through as
 tint. Risks: (a) V-Ray's internal mapping of sheen-color brightness to sheen
-intensity may not be linear luminance (could be max-channel, could be a
-sqrt/gamma relationship); (b) Blender's Sheen Weight applies to a fixed tint,
-so setting both weight and tint from the same color could double-apply the
-darkening. **Recommend a host A/B test: a saturated red sheen vs a white sheen
-at same luminance.** Maya's VRayMtl has a separate Sheen "Amount" (Chaos VMAYA
-docs) — worth double-checking 3ds Max truly lacks it.
+intensity may not be linear luminance; (b) Blender's Sheen Weight applies to a
+fixed tint, so setting both weight and tint from the same color could
+double-apply the darkening. **Requires a 3-material host A/B** (white sheen,
+saturated sheen, equal-luminance variant). Maya's VRayMtl has a separate Sheen
+"Amount" (Chaos VMAYA docs) — worth double-checking 3ds Max truly lacks it.
 
 **I2 — Negative `anisotropy` → +0.25 (90°) rotation.**
 V-Ray's negative sign flips the elongation axis (perpendicular). Blender only
 has a non-negative magnitude plus a rotation, so I encode the flip as a quarter
-turn. This is a standard equivalence but the exact ±90° convention (and whether
-it should be +0.25 or −0.25) was **not** verified against a render. **Needs a
-visual check with a brushed-metal test asset.**
+turn. The exact ±90° convention was **not** verified against a render.
+**Requires a brushed-metal host A/B** to confirm the rotation direction.
 
 **I3 — Thin-film "on" flag is `thinfilm_on`.**
 Name taken from the repo's own `VRAY_MTL_PROPERTIES` whitelist, not
-independently verified against Chaos MaxScript docs. Low risk (it's the only
+independently verified against Chaos MaxScript docs. Low risk (only
 `thinfilm_*` enable-style property in the whitelist), but worth a 30-second
 confirm.
 
 **I4 — Unmapped diagnostics fire for VRayMtl only.**
 Physical Material capture is unfiltered on the exporter side, so flagging
-Physical would flood the verified Ring-Light "no warnings" pass. This is a
-deliberate scope decision; if you later add Physical capture filtering, extend
-the diagnostic there too.
+Physical would flood the verified Ring-Light "no warnings" pass. Deliberate
+scope decision; extend the diagnostic if Physical capture is ever filtered.
 
 **I5 — `thinfilm_thickness_max` is read-but-ignored.**
 It only applies with a thickness-blend map, which isn't wired. Reading it keeps
-it out of the unmapped diagnostics. If a blend map is ever wired, this helper
-must start consuming `max` too.
+it out of the unmapped diagnostics. The code comment now explicitly states this
+(see §9). If a blend map is ever wired, this helper must start consuming `max`.
 
-**I6 — `canonical_name` collisions.**
-`ParameterView` dedups by canonical key with first-wins `setdefault`. Two
-distinct keys that canonicalize identically (e.g. hypothetical `brdf_type` vs
-`brdftype`) would silently shadow. Rare for real MaxScript names, but the
-proofreader should confirm none of the `VRAY_MTL_PROPERTIES` names collide
-after stripping punctuation/case.
+**I6 — `canonical_name` collisions (RESOLVED in round 1).**
+Previously `ParameterView` keyed on punctuation-stripping `canonical_name`,
+which could collapse distinct names. Now keyed on `parameter_key` (casefold
+only, spelling preserved), so collisions require two names that differ only by
+case — which is the intended equivalence. `canonical_name` remains only for
+slot/class matching, where collisions are benign and fuzziness is desired.
 
 **I7 — Refraction divergence threshold 0.0001.**
 Matches the pre-existing IOR-lock tolerance. Cosmetic, but consistent.
@@ -223,23 +214,23 @@ Matches the pre-existing IOR-lock tolerance. Cosmetic, but consistent.
 
 1. Re-read `blendmax_blender/material_graph.py` and
    `blendmax_blender/blender_materials.py` diffs for logic errors (esp. the
-   refraction-glossiness comparison and the `unmapped_keys` loop).
+   `ParameterView._resolve` alias fallback, the refraction-glossiness
+   comparison, and the `unmapped_keys` loop).
 2. Confirm each fact in §3 against its source URL (especially F12, F13).
 3. Confirm the property *names* used in the new mappings exist in the repo's
-   `VRAY_MTL_PROPERTIES` whitelist in `blendmax_max/max_adapter.py` (they were
-   chosen from that list, not retyped).
-4. Sanity-check `ParameterView` semantics: `get` records access only on hit;
-   `__getitem__` records then raises on miss; `unmapped_keys()` is
-   sorted(keys − accessed).
-5. Confirm no Physical-Material path emits the new unmapped warning (grep:
-   the loop exists only in `_build_vray_mtl`).
-6. Confirm the fake `PRINCIPLED_INPUTS` list in `tests/fakes.py` is not
-   relied on by production code (it is test-only; production uses
-   `_socket`/`_set_default` with canonical-name fallback).
-7. Run `python -m unittest discover -s tests` (expect 119 OK) and
+   `VRAY_MTL_PROPERTIES` whitelist in `blendmax_max/max_adapter.py`.
+4. Sanity-check `ParameterView`: `get` records access only on hit (direct or
+   alias); `__getitem__` records then raises on miss; `__contains__` does not
+   record; `unmapped_keys()` is sorted(keys − accessed); alias is single-hop.
+5. Confirm no Physical-Material path emits the new unmapped warning (the loop
+   exists only in `_build_vray_mtl`).
+6. Confirm `_PARAMETER_ALIASES` is empty and unused in production (the alias
+   path is only exercised by tests) — or, if populated, that every entry maps
+   to a real stored key.
+7. Run `python -m unittest discover -s tests` (expect 122 OK) and
    `python -m unittest tests.test_blender_vray_material -v` (expect 9 OK).
-8. Confirm the two doc test counts are consistent: README "119 tests",
-   matrix "Forty-nine importer-specific tests".
+8. Confirm doc counts are consistent: README "122 tests", matrix
+   "Fifty-two importer-specific tests".
 
 ---
 
@@ -248,20 +239,17 @@ Matches the pre-existing IOR-lock tolerance. Cosmetic, but consistent.
 - **No exporter-side changes.** `VRAY_MTL_PROPERTIES` still captures
   renderer-internal properties (`option_*`, `reflection_dimdistance_*`,
   `refraction_fog*`, `*_maxdepth`, `*_affectalpha`, `selfillumination_gi`,
-  `anisotropy_axis`/`_channel`/`_derivation`, `brdf_type`). These will now show
-  up as unmapped warnings — by design, to surface them for a later
-  "exclude from capture" pass. That pass is future work, not part of this
-  change set.
+  `anisotropy_axis`/`_channel`/`_derivation`, `brdf_type`). These now surface
+  as unmapped warnings — by design, for a later "exclude from capture" pass.
 - **No `refraction_dispersion` → Transmission Dispersion** (needs a V-Ray
   Abbe-number scale check against Blender's 9–91 clamp).
 - **No `translucency_*` → Subsurface** (deferred per the roadmap's
   "specialized materials later").
 - **No new material classes** (VRayLightMtl / VRayBlendMtl / VRayOverrideMtl
   are still next-up roadmap items).
-- **No version bump, no commit, no push.**
+- **No version bump.**
 - **Host verification pending** in Blender 5.2 with a real `VRayMtl` asset
-  (anisotropy/sheen/thin-film/coat visuals; warning output). The tests use a
-  fake `bpy`, so they validate mapping logic, not render output.
+  (anisotropy/sheen A/B cases are the explicit blockers — see §9).
 
 ---
 
@@ -272,10 +260,51 @@ Matches the pre-existing IOR-lock tolerance. Cosmetic, but consistent.
 | tests/test_blender_adapter_placement.py | 4 |
 | tests/test_blender_extension_build.py | 2 |
 | tests/test_blender_manifest.py | 4 |
-| tests/test_blender_material_graph.py | 18 |
+| tests/test_blender_material_graph.py | 21 |
 | tests/test_blender_package.py | 4 |
 | tests/test_blender_physical_material.py | 3 |
 | tests/test_blender_placement.py | 5 |
 | tests/test_blender_vray_material.py | 9 |
-| **Importer-specific subtotal** | **49** |
-| **Full suite (discover -s tests)** | **119** |
+| **Importer-specific subtotal** | **52** |
+| **Full suite (discover -s tests)** | **122** |
+
+---
+
+## 8. Open blockers before merge
+
+1. **Host A/B: anisotropy sign.** Brushed-metal asset, `anisotropy = -0.6` in
+   Max vs the imported Blender result — confirm the quarter-turn direction.
+2. **Host A/B: sheen.** White / saturated / equal-luminance sheen swatches —
+   confirm `luminance(sheen_color)` is the right weight model.
+3. (Optional) Confirm `thinfilm_on` and `refraction_thinwalled` property names
+   against Chaos MaxScript docs (F12 / I3, MEDIUM confidence).
+
+---
+
+## 9. Review round 1 → responses
+
+The previous review found the work "good and worth keeping" but flagged four
+items. Responses, all applied in the follow-up commit:
+
+1. **"`canonical_name` is more aggressive than case-insensitive."**
+   → FIXED. Added `parameter_key` (casefold only) for parameter lookups,
+   preserved punctuation, and added an explicit `_PARAMETER_ALIASES` table as
+   the escape hatch. `ParameterView` no longer strips punctuation. Tests were
+   updated to assert both that punctuation variants are rejected and that
+   explicit aliases resolve. (See §2a, I6.)
+2. **"Anisotropy sign conversion needs a real render test."**
+   → Agreed; cannot be settled without a host. Added the A/B case to
+   `BLENDER_IMPORTER_TEST_MATRIX.md` "Pending host validation", the README
+   "Material status" caveat, the CHANGELOG "Host evidence", and §8 here. Left
+   the code as-is (arithmetic is unit-tested; direction is the open question).
+3. **"Sheen luminance derivation should not merge blindly."**
+   → Same treatment as #2: documented as an unsettled inference with the exact
+   3-material A/B to run, in all three docs + §8.
+4. **"Thin-film max thickness looks like it was handled."**
+   → FIXED. `vray_thin_film` docstring and inline comment now explicitly state
+   the limitation ("Supported when no thickness-blend map exists", "max is
+   intentionally NOT used"), and it is listed under "Known Alpha.1 limits" in
+   the test matrix.
+
+"Unmapped-parameter diagnostics stay" and "no Max exporter change needed" were
+both affirmed by the reviewer; no action taken.

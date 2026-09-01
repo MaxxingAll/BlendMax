@@ -80,9 +80,9 @@ class BlenderVRayMtlTests(unittest.TestCase):
         self.assertEqual(
             warnings,
             [
-                "VRayMtl parameter 'anisotropyaxis' has no Blender mapping yet; "
+                "VRayMtl parameter 'anisotropy_axis' has no Blender mapping yet; "
                 "its value remains in the stored manifest.",
-                "VRayMtl parameter 'coatdarkening' has no Blender mapping yet; "
+                "VRayMtl parameter 'coat_darkening' has no Blender mapping yet; "
                 "its value remains in the stored manifest.",
             ],
         )
@@ -237,7 +237,7 @@ class BlenderVRayMtlTests(unittest.TestCase):
             builder._build_shader(FakeTree(), ref, SimpleNamespace(), (), 0.0, 0.0)
 
         anisotropy_warnings = [
-            message for message in warnings if "anisotropyaxis" in message
+            message for message in warnings if "anisotropy_axis" in message
         ]
         self.assertEqual(len(anisotropy_warnings), 1)
 

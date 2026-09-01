@@ -81,53 +81,102 @@ _PHYSICAL_MAP_CONTROL_NAMES = {
 
 
 def canonical_name(value: str) -> str:
+    """Normalize for slot/class matching: lowercase and strip punctuation.
+
+    Used where MaxScript slot and class names legitimately vary in spacing
+    and punctuation (e.g. "Reflection roughness" vs "ReflectionGlossiness").
+    Material *parameter* lookups use parameter_key() instead, which preserves
+    punctuation so distinct property names cannot silently collapse.
+    """
     return _NON_ALNUM.sub("", str(value).casefold())
+
+
+def parameter_key(value: str) -> str:
+    """Normalize a material parameter name for lookup: casefold, keep spelling.
+
+    Unlike canonical_name(), this preserves underscores and punctuation so a
+    lookup must match the exact property spelling apart from case. Known
+    cross-release spellings belong in _PARAMETER_ALIASES rather than in
+    implicit punctuation stripping.
+    """
+    return str(value).strip().casefold()
+
+
+_PARAMETER_ALIASES: Dict[str, str] = {}
+"""Explicit material-parameter aliases for the Blender importer.
+
+Maps a normalized (casefolded) alias key to the normalized canonical key.
+Parameter lookups fall back to this table only after a direct
+case-insensitive match fails. Populate it as cross-release V-Ray/Max
+property spellings are discovered; nothing is treated as equivalent beyond
+its exact casefolded spelling unless it is listed here.
+"""
 
 
 class ParameterView(MappingABC):
     """Case-insensitive, access-recording view over a node's parameters.
 
-    MaxScript property names can differ in casing and punctuation between
-    V-Ray releases and locales, so every lookup is keyed on the canonical
-    (lowercase, punctuation-stripped) name. The view also records which keys
-    were read, so a converter can report manifest parameters that nothing
-    consumed instead of letting them silently fall back to defaults.
+    Lookups are keyed on parameter_key() (casefolded, punctuation preserved)
+    so a lookup must match the exact property spelling apart from case. Known
+    cross-release spellings can be registered in the alias table. The view
+    records which keys were read so a converter can report manifest
+    parameters that nothing consumed instead of letting them silently fall
+    back to defaults.
     """
 
-    def __init__(self, parameters: Mapping[str, Any]) -> None:
-        self._by_canonical: Dict[str, Any] = {}
+    def __init__(
+        self,
+        parameters: Mapping[str, Any],
+        aliases: Optional[Mapping[str, str]] = None,
+    ) -> None:
+        self._by_key: Dict[str, Any] = {}
         self._original_keys: Dict[str, str] = {}
         for key, value in parameters.items():
-            canonical = canonical_name(str(key))
-            self._by_canonical.setdefault(canonical, value)
-            self._original_keys.setdefault(canonical, str(key))
+            normalized = parameter_key(key)
+            self._by_key.setdefault(normalized, value)
+            self._original_keys.setdefault(normalized, str(key))
+        self._aliases = aliases if aliases is not None else _PARAMETER_ALIASES
         self.accessed: Set[str] = set()
 
+    def _resolve(self, key: str) -> Optional[str]:
+        normalized = parameter_key(key)
+        if normalized in self._by_key:
+            return normalized
+        target = self._aliases.get(normalized)
+        if target is not None and target in self._by_key:
+            return target
+        return None
+
     def __getitem__(self, key: str) -> Any:
-        canonical = canonical_name(str(key))
-        self.accessed.add(canonical)
-        return self._by_canonical[canonical]
+        resolved = self._resolve(key)
+        if resolved is None:
+            raise KeyError(key)
+        self.accessed.add(resolved)
+        return self._by_key[resolved]
 
     def __iter__(self):
-        return iter(self._by_canonical)
+        return iter(self._by_key)
 
     def __len__(self) -> int:
-        return len(self._by_canonical)
+        return len(self._by_key)
+
+    def __contains__(self, key: object) -> bool:
+        return isinstance(key, str) and self._resolve(key) is not None
 
     def get(self, key: str, default: Any = None) -> Any:
-        canonical = canonical_name(str(key))
-        if canonical not in self._by_canonical:
+        resolved = self._resolve(key)
+        if resolved is None:
             return default
-        self.accessed.add(canonical)
-        return self._by_canonical[canonical]
+        self.accessed.add(resolved)
+        return self._by_key[resolved]
 
-    def original_key(self, canonical: str) -> str:
-        """The first manifest key (original casing) for a canonical name."""
-        return self._original_keys.get(canonical, canonical)
+    def original_key(self, key: str) -> str:
+        """The first manifest key (original casing) for a normalized name."""
+        return self._original_keys.get(parameter_key(key), key)
 
     def unmapped_keys(self) -> Tuple[str, ...]:
-        """Canonical keys present in the manifest but never read."""
-        return tuple(sorted(self._by_canonical.keys() - self.accessed))
+        """Normalized keys present in the manifest but never read."""
+        return tuple(sorted(self._by_key.keys() - self.accessed))
 
 
 def find_texture_link(node: GraphNode, *slot_names: str) -> Optional[GraphLink]:
@@ -233,16 +282,20 @@ def vray_sheen_roughness(parameters: Mapping[str, Any]) -> float:
 def vray_thin_film(parameters: Mapping[str, Any]) -> Tuple[float, float]:
     """Return (ior, thickness_nm) for Blender's Principled thin film.
 
-    V-Ray's thin-film thickness is a min/max range; without a connected
-    thickness-blend map only the minimum is used, matching V-Ray's own
-    behavior. Blender has a single thickness value and treats 0 as off, so a
-    disabled V-Ray thin film maps to 0.
+    Supported when no thickness-blend map exists. V-Ray's thickness is a
+    min/max range, but the maximum is only used when a thickness-blend
+    texture is connected; BlendMax does not interpret that map yet, so only
+    the minimum reaches Blender (matching V-Ray's own no-blend-map behavior).
+    Blender treats thickness 0 as disabled, so a disabled V-Ray thin film
+    maps to 0.
     """
     enabled = bool(parameters.get("thinfilm_on", False))
     ior = max(1.0, scalar(parameters, "thinfilm_ior", 1.5))
     minimum = max(0.0, scalar(parameters, "thinfilm_thickness_min", 0.0))
-    # thickness_max only applies with a thickness-blend map (not yet wired);
-    # reading it here keeps it out of the unmapped-parameter diagnostics.
+    # thickness_max is intentionally NOT used: it only applies with a
+    # thickness-blend map, which is not interpreted yet. Reading it here
+    # merely keeps it out of the unmapped-parameter diagnostics; its value
+    # remains available in the stored manifest.
     _ = parameters.get("thinfilm_thickness_max")
     return ior, minimum if enabled else 0.0
 

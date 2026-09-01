@@ -128,11 +128,30 @@ class BlenderMaterialGraphTests(unittest.TestCase):
 
 
 class ParameterViewTests(unittest.TestCase):
-    def test_lookup_ignores_casing_and_punctuation(self):
-        view = ParameterView({"Reflection Glossiness": 0.3})
+    def test_lookup_is_case_insensitive_but_spelling_sensitive(self):
+        view = ParameterView({"Reflection_Glossiness": 0.3})
         self.assertEqual(view.get("reflection_glossiness"), 0.3)
-        self.assertEqual(view.get("REFLECTION-GLOSSINESS"), 0.3)
-        self.assertEqual(view["reflectionglossiness"], 0.3)
+        self.assertEqual(view.get("REFLECTION_GLOSSINESS"), 0.3)
+        self.assertEqual(view["Reflection_Glossiness"], 0.3)
+
+    def test_punctuation_variants_are_not_silently_matched(self):
+        view = ParameterView({"Reflection_Glossiness": 0.3})
+        self.assertIsNone(view.get("reflection glossiness"))
+        self.assertIsNone(view.get("reflection-glossiness"))
+        self.assertIsNone(view.get("reflectionglossiness"))
+
+    def test_explicit_alias_resolves_known_spelling_variants(self):
+        view = ParameterView(
+            {"Diffuse": [0.5, 0.5, 0.5, 1.0]},
+            aliases={"diffuse color": "diffuse"},
+        )
+        self.assertEqual(view.get("Diffuse Color"), [0.5, 0.5, 0.5, 1.0])
+        self.assertEqual(view.accessed, {"diffuse"})
+
+    def test_alias_does_not_record_access_for_a_missing_target(self):
+        view = ParameterView({}, aliases={"diffuse color": "diffuse"})
+        self.assertIsNone(view.get("Diffuse Color"))
+        self.assertFalse(view.accessed)
 
     def test_missing_key_returns_default_without_recording_access(self):
         view = ParameterView({})
@@ -141,11 +160,15 @@ class ParameterViewTests(unittest.TestCase):
 
     def test_accessed_and_unmapped_track_reads(self):
         view = ParameterView(
-            {"Diffuse": [1.0, 1.0, 1.0, 1.0], "anisotropy": 0.5, "coat_color": [0.0, 0.0, 0.0, 1.0]}
+            {
+                "Diffuse": [1.0, 1.0, 1.0, 1.0],
+                "anisotropy": 0.5,
+                "coat_color": [0.0, 0.0, 0.0, 1.0],
+            }
         )
         self.assertEqual(view.get("diffuse"), [1.0, 1.0, 1.0, 1.0])
         self.assertEqual(view.accessed, {"diffuse"})
-        self.assertEqual(view.unmapped_keys(), ("anisotropy", "coatcolor"))
+        self.assertEqual(view.unmapped_keys(), ("anisotropy", "coat_color"))
 
     def test_unmapped_keys_are_sorted(self):
         view = ParameterView({"b": 1, "a": 2, "c": 3})
@@ -153,7 +176,10 @@ class ParameterViewTests(unittest.TestCase):
 
     def test_original_key_preserves_manifest_casing(self):
         view = ParameterView({"Reflection_Glossiness": 0.3})
-        self.assertEqual(view.original_key("reflectionglossiness"), "Reflection_Glossiness")
+        self.assertEqual(
+            view.original_key("reflection_glossiness"),
+            "Reflection_Glossiness",
+        )
 
 
 if __name__ == "__main__":

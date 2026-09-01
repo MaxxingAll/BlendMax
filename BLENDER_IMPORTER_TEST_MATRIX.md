@@ -12,7 +12,7 @@ one FBX operator call, and indexed O(n) manifest/graph processing.
 
 ## Automated status
 
-All 119 project tests pass under ordinary Python. Forty-nine
+All 122 project tests pass under ordinary Python. Fifty-two
 importer-specific tests cover:
 
 - Blender extension metadata and root ZIP layout;
@@ -23,7 +23,9 @@ importer-specific tests cover:
 - texture-slot normalization;
 - V-Ray map enable and multiplier interpretation;
 - glossiness-to-roughness conversion;
-- case-insensitive manifest parameter lookup and access tracking;
+- case-insensitive manifest parameter lookup that preserves exact spelling,
+  its punctuation-variant rejection, and explicit-alias fallback;
+- access tracking and unmapped-key reporting;
 - VRayMtl dispatch, mixed-casing parameter mapping, and unmapped-parameter
   diagnostics (deduplicated per parameter);
 - V-Ray anisotropy magnitude/rotation, negative-sign quarter-turn, and
@@ -108,6 +110,22 @@ without warnings or errors; the two mapped materials displayed their packaged
 images, the hierarchy and world-origin placement remained intact, and the
 undeclared `Untitled` cube was absent.
 
+## Pending host validation (unsettled inferences)
+
+These conversions are implemented and unit-tested but are treated as
+*unverified* until host A/B passes settle them:
+
+- **Negative V-Ray anisotropy → +0.25 rotation.** The branch maps a negative
+  `anisotropy` sign to a 90° rotation because V-Ray's sign flips the
+  elongation axis while Blender only exposes a non-negative magnitude. Unit
+  tests cover the arithmetic; the ±90° direction needs a brushed-metal asset
+  rendered in both Max and Blender to confirm it is not rotated the wrong way.
+- **Sheen Weight = luminance of `sheen_color`.** V-Ray 3ds Max has no separate
+  sheen amount, so the color's luminance drives Blender's Sheen Weight. This
+  could over- or under-encode intensity (and may double-encode the color via
+  the tint). A three-material A/B — white sheen, saturated sheen, and an
+  equal-luminance variant — is required before this is treated as settled.
+
 ## Pass criteria
 
 - Import completes without a Python traceback.
@@ -129,5 +147,11 @@ undeclared `Untitled` cube was absent.
   applied.
 - Bitmap crop/place controls and advanced V-Ray bitmap color transforms are
   not yet reproduced.
+- V-Ray thin-film thickness uses the minimum only; a connected thickness-blend
+  map is not yet interpreted, so the maximum is ignored (its value remains in
+  the stored manifest).
+- Blender's single Principled roughness approximates V-Ray's separate
+  reflection/refraction roughness; divergent values are reported rather than
+  reproduced.
 - Advanced rendering parity beyond the verified Basketball and four-potted-
   plants baselines remains ongoing.

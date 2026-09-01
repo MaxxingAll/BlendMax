@@ -23,7 +23,7 @@ created automatically by Python.
 | 3ds Max exporter and cleanup | `0.1.0-alpha.4.1.0` | Host verified in 3ds Max 2025.3 |
 | Blender importer | `0.1.4` | Ring-Light Physical Material pass completed in Blender 5.2 |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
-| Automated suite | 119 tests | Passing |
+| Automated suite | 122 tests | Passing |
 
 See [CHANGELOG.md](CHANGELOG.md) for release history,
 [TEST_MATRIX.md](TEST_MATRIX.md) for Max evidence, and
@@ -171,8 +171,10 @@ It currently:
   metalness, transparency, IOR, thin-wall state, emission, coat, sheen,
   anisotropy, SSS weight, thin film, bump, cutout, and their supported maps;
 - honors exported map enable states and multipliers;
-- resolves manifest parameter names case-insensitively, so V-Ray/Max casing
-  or spelling variations cannot silently fall back to defaults; and
+- resolves manifest parameter names case-insensitively while preserving their
+  exact spelling, with an explicit alias table for known cross-release
+  spellings, so casing variations cannot silently fall back to defaults and
+  distinct property names cannot collapse into one another; and
 - packs loaded images into Blender so temporary extraction files can be
   deleted safely.
 
@@ -235,6 +237,13 @@ glossiness is imported using the reflection roughness and reported as an
 approximation. Release-by-release material and workflow changes are recorded in
 [CHANGELOG.md](CHANGELOG.md).
 
+Two of these conversions are pending host verification rather than settled:
+the negative-anisotropy-to-quarter-turn equivalence and the
+sheen-luminance-as-weight model. Both are exercised by unit tests but need a
+visual A/B in Max and Blender (a brushed-metal asset for anisotropy; white,
+saturated, and equal-luminance sheen swatches for sheen) before they are
+treated as verified.
+
 ## Verified environment
 
 The exporter has been tested in Autodesk 3ds Max 2025.3 with V-Ray 7.00.02.
@@ -262,7 +271,7 @@ From the extracted project folder, using ordinary Python:
 python -m unittest discover -s tests -v
 ```
 
-The 119 tests cover scene and visibility-preflight rules, cleanup planning,
+The 122 tests cover scene and visibility-preflight rules, cleanup planning,
 Multi/Sub ID lookup, compact face selections, the 30-object boundary, exact and fallback
 bounds, size policy, texture ownership and collisions,
 group isolation and restoration, archive creation, FBX state restoration,
@@ -271,8 +280,9 @@ update, ZIP update safety, duplicate-name material fingerprints, Physical
 Material property and nested-map comparison, merge approval/refusal, Blender manifest
 parsing, secure extraction, V-Ray and Physical Material interpretation, legacy schema fallback,
 origin placement, nested-group anchoring, reproducible extension packaging,
-case-insensitive parameter resolution, unmapped-VRayMtl-parameter diagnostics,
-and V-Ray anisotropy, sheen, thin-film, coat, diffuse-roughness, thin-walled
-refraction, and refraction-glossiness interpretation.
+case-insensitive parameter resolution with spelling preservation and explicit
+aliases, unmapped-VRayMtl-parameter diagnostics, and V-Ray anisotropy, sheen,
+thin-film, coat, diffuse-roughness, thin-walled refraction, and
+refraction-glossiness interpretation.
 Actual `pymxs`, `bpy`, FBX, and host UI
 behavior must be tested inside 3ds Max and Blender.
