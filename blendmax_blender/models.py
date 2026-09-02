@@ -87,3 +87,4 @@ class ImportSummary:
     material_count: int
     image_count: int
     warnings: Tuple[str, ...] = ()
+    notes: Tuple[str, ...] = ()
