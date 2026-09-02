@@ -1,5 +1,5 @@
 {
-  "schema": {"name": "BlendMax Manifest", "version": "0.1.5"},
+  "schema": {"name": "BlendMax Manifest", "version": "0.1.1"},
   "asset": {"name": "Headless Surface VRayMtl", "mode": "single", "root_id": "obj_surface", "bounds_m": {"minimum": [0,0,0], "maximum": [1,1,1]}, "size_policy": {"recommended_blender_scale": 1.0}},
   "geometry": {"file": "asset_surface.fbx"},
   "objects": [{"id": "obj_surface", "fbx_name": "SurfaceObject", "original_name": "SurfaceObject", "node_type": "Geometry", "superclass": "GeometryClass"}],
