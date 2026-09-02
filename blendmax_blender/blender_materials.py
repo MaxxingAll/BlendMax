@@ -601,7 +601,12 @@ class MaterialBuilder:
         refraction_glossiness = parameters.get("refraction_glossiness")
         if refraction_glossiness is not None:
             try:
-                refraction_roughness = 1.0 - clamp01(float(refraction_glossiness))
+                refraction_value = clamp01(float(refraction_glossiness))
+                refraction_roughness = (
+                    refraction_value
+                    if bool(parameters.get("brdf_useRoughness", False))
+                    else 1.0 - refraction_value
+                )
             except (TypeError, ValueError):
                 refraction_roughness = None
             if (
