@@ -56,6 +56,15 @@ class BLENDMAX_OT_import_asset(bpy.types.Operator, ImportHelper):
                     summary.material_count,
                 ),
             )
+
+        for note in summary.notes:
+            print("BlendMax note: {0}".format(note))
+
+        if summary.notes:
+            self.report(
+                {"INFO"},
+                "BlendMax notes: {0}".format(" | ".join(summary.notes)),
+            )
         return {"FINISHED"}
 
 

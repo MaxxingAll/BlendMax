@@ -20,10 +20,10 @@ created automatically by Python.
 
 | Component | Version | Status |
 | --- | --- | --- |
-| 3ds Max exporter and cleanup | `0.1.0-alpha.4.1.0` | Host verified in 3ds Max 2025.3 |
-| Blender importer | `0.1.4` | Ring-Light Physical Material pass completed in Blender 5.2 |
+| 3ds Max exporter and cleanup | `0.1.0-alpha.4.2.0` | Host verified in 3ds Max 2025.3 |
+| Blender importer | `0.1.5` | VRayMtl hardening and requested parameter-adaptation checks passed |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
-| Automated suite | 99 tests | Passing |
+| Automated suite | See CI | Python 3.11–3.13 |
 
 See [CHANGELOG.md](CHANGELOG.md) for release history,
 [TEST_MATRIX.md](TEST_MATRIX.md) for Max evidence, and
@@ -126,7 +126,7 @@ an updated exporter or cleanup action cannot continue running stale code.
 
 ## Install the Blender importer
 
-Build or download `blendmax_importer-0.1.4.zip`, then in Blender:
+Build or download `blendmax_importer-0.1.5.zip`, then in Blender:
 
 1. Open **Edit > Preferences > Get Extensions**.
 2. Open the menu in the top-right and choose **Install from Disk**.
@@ -163,18 +163,26 @@ It currently:
 - recursively handles `VRay2SidedMtl`, `Bitmaptexture`, `VRayBitmap`,
   `Normal_Bump`, `VRayColor`, and basic `Noise`;
 - maps V-Ray Diffuse, Reflection, Roughness/Glossiness, Metalness, Fresnel IOR,
-  Refraction, Opacity, Self-Illumination, Bump, and tangent normal maps;
+  Refraction, Opacity, Self-Illumination, Anisotropy (magnitude and rotation),
+  Sheen (color-derived weight, glossiness, tint), Thin Film (IOR and thickness),
+  Coat (amount, glossiness, IOR, tint), Diffuse Roughness, thin-walled
+  refraction, Bump, and tangent normal maps;
 - maps Physical Material base color/weight, reflectivity, roughness inversion,
   metalness, transparency, IOR, thin-wall state, emission, coat, sheen,
   anisotropy, SSS weight, thin film, bump, cutout, and their supported maps;
-- honors exported map enable states and multipliers; and
+- honors exported map enable states and multipliers;
+- resolves manifest parameter names case-insensitively while preserving their
+  exact spelling, with an explicit alias table for known cross-release
+  spellings, so casing variations cannot silently fall back to defaults and
+  distinct property names cannot collapse into one another; and
 - packs loaded images into Blender so temporary extraction files can be
   deleted safely.
 
 The complete original `manifest.json` is also stored as a Blender Text data
 block and referenced by the asset collection/controller. Parameters that do not
 yet have a native Blender equivalent therefore remain available for later
-converter improvements instead of being discarded.
+converter improvements instead of being discarded. During a `VRayMtl` import,
+known unsupported fields are grouped into one informational note. Truly unexpected parameters remain warnings, so future exporter additions still surface without flooding normal imports with expected limitations.
 
 Unsupported graph classes receive a visible magenta fallback and a warning
 instead of aborting the whole asset.
@@ -182,7 +190,7 @@ instead of aborting the whole asset.
 ## v0.1 rules
 
 - The scene must contain exactly one grouped asset or one standalone object.
-- A grouped asset may contain at most 30 geometry nodes. Nested group heads and
+- A grouped asset may contain at most 500 geometry nodes. Nested group heads and
   ignored non-geometry nodes do not count toward this limit.
 - Geometry outside the single asset group causes an error.
 - Hidden-in-viewport or frozen scene objects stop export with a clear preflight
@@ -209,16 +217,35 @@ keeps relative paths and duplicate filenames unambiguous for the Blender
 importer.
 
 Verified `VRayMtl` coverage currently includes Diffuse, Reflection Roughness,
-Bump/Normal, Metalness, Fresnel IOR, Refraction, Opacity, and
-Self-Illumination. Release-by-release material and workflow changes are recorded
-in [CHANGELOG.md](CHANGELOG.md).
+Bump/Normal, Metalness, Fresnel IOR, Refraction, Opacity, Self-Illumination,
+Anisotropy, Sheen, Coat, Diffuse Roughness, thin-walled refraction, and Thin
+Film. V-Ray anisotropy is stored as -1..1 (the sign flips the elongation axis)
+and `anisotropy_rotation` as 0..1 for one full turn; the importer maps the
+magnitude to Blender's Anisotropic input and adds a quarter turn for negative
+values, matching Blender's 0..1 full-circle Anisotropic Rotation. Sheen color
+doubles as the sheen amount in V-Ray, so its luminance drives Blender's Sheen
+Weight and its glossiness is inverted to Sheen Roughness. V-Ray thin-film
+thickness is a min/max range that collapses to the minimum when no
+thickness-blend map is connected, matching V-Ray's own behavior; a disabled
+thin film maps to zero thickness. Coat color maps to Coat Tint; V-Ray's
+separate coat-darkening effect has no Blender equivalent and remains flagged.
+Blender's Principled shader uses one roughness for reflection and refraction,
+so a V-Ray material whose refraction glossiness diverges from its reflection
+glossiness is imported using the reflection roughness and reported as an
+approximation. Release-by-release material and workflow changes are recorded in
+[CHANGELOG.md](CHANGELOG.md).
+
+The requested host parameter-adaptation checks are complete: negative
+anisotropy and sheen adaptation passed on the real Max/V-Ray + Blender setup.
+This milestone accepts correct BSDF parameter adaptation; renderer-specific
+visual parity A/B is not part of the acceptance criterion.
 
 ## Verified environment
 
 The exporter has been tested in Autodesk 3ds Max 2025.3 with V-Ray 7.00.02.
 V-Ray release families from 7.00.x through 7.40.x are treated as compatible.
 
-Max exporter Alpha.4.1.0 passed the ring-light cleanup workflow: 74 input
+Max exporter Alpha.4.2.0 retains the Alpha.4.1.0 host baseline and documents the 500-object export limit. Alpha.4.1.0 passed the ring-light cleanup workflow: 74 input
 meshes became 26 material meshes, five identical material sets replaced ten
 original assignments, and 141 Shape/segment objects were deleted. The
 Alpha.3.6 export baseline, persistent menu, and nine core `VRayMtl` features
@@ -240,14 +267,20 @@ From the extracted project folder, using ordinary Python:
 python -m unittest discover -s tests -v
 ```
 
-The 99 tests cover scene and visibility-preflight rules, cleanup planning,
-Multi/Sub ID lookup, compact face selections, the 30-object boundary, exact and fallback
+The automated suite covers scene and visibility-preflight rules, cleanup planning,
+Multi/Sub ID lookup, compact face selections, the 500-object boundary, exact and fallback
 bounds, size policy, texture ownership and collisions,
 group isolation and restoration, archive creation, FBX state restoration,
 AppBundle construction, installation, hot-reloading after an in-session ZIP
 update, ZIP update safety, duplicate-name material fingerprints, Physical
 Material property and nested-map comparison, merge approval/refusal, Blender manifest
 parsing, secure extraction, V-Ray and Physical Material interpretation, legacy schema fallback,
-origin placement, nested-group anchoring, and reproducible extension packaging.
+origin placement, nested-group anchoring, reproducible extension packaging,
+case-insensitive parameter resolution with spelling preservation and explicit
+aliases, unmapped-VRayMtl-parameter diagnostics, V-Ray anisotropy, sheen,
+thin-film, coat, diffuse-roughness, thin-walled refraction, and
+refraction-glossiness interpretation, and the importer/exporter parameter-name
+contract (every VRayMtl parameter the importer reads must be reachable from the
+exporter's property whitelist).
 Actual `pymxs`, `bpy`, FBX, and host UI
 behavior must be tested inside 3ds Max and Blender.

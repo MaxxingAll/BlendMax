@@ -1,4 +1,4 @@
-# BlendMax Blender Importer 0.1.4 Test Matrix
+# BlendMax Blender Importer 0.1.5 Test Matrix
 
 ## Scope
 
@@ -12,47 +12,22 @@ one FBX operator call, and indexed O(n) manifest/graph processing.
 
 ## Automated status
 
-All 99 project tests pass under ordinary Python. Twenty-nine importer-specific
-tests cover:
+The current automated suite contains **133 tests** under ordinary Python.
+GitHub Actions runs the suite on Python 3.11, 3.12, and 3.13. The suite covers
+Blender packaging/manifest behavior, importer translation, V-Ray parameter and
+map contracts, diagnostics grouping, Max cleanup/export validation, and the
+existing installer/update paths.
 
-- Blender extension metadata and root ZIP layout;
-- reproducible extension builds;
-- manifest schema 0.1.0 and 0.1.1 parsing;
-- duplicate object-name and incompatible-schema rejection;
-- legacy texture-to-graph matching by filename;
-- texture-slot normalization;
-- V-Ray map enable and multiplier interpretation;
-- glossiness-to-roughness conversion;
-- Physical Material class dispatch, map-enable interpretation, and roughness
-  inversion;
-- Physical Material Principled defaults and base-color map wiring;
-- color normalization;
-- world-origin footprint centering and ground-level anchoring;
-- nested-group descendant bounds and hierarchy-cycle rejection;
-- direct FBX-root translation without moving nested children twice;
-- separation and removal of FBX objects that have no manifest record;
-- selective archive extraction;
-- traversal rejection;
-- missing packaged-texture rejection; and
-- `.blendmax` file-type validation.
-
-The package reader was also exercised successfully against the current
-Basketball package, the four-potted-plants package, and the older normal-map
-package. This confirms their manifests and declared payloads can enter the
-import pipeline; it is not a substitute for Blender runtime rendering checks.
-
-Manual status: Basketball material reconstruction and direct world-origin
-placement passed. Four potted plants passed its object/image counts, procedural
-bump, Multi/Sub, VRay2Sided, direct world-origin placement, and reconstructed
-pivot checks. Ring-Light passed 26-object/26-material Physical Material
-translation, packaged Base Color maps, strict removal of undeclared FBX data,
-hierarchy, and direct world-origin placement without warnings or errors.
+The headless V-Ray fixtures are deliberately simulated manifests, not claims
+that a running V-Ray host produced those exact values. They provide a fast
+regression layer for the importer pipeline; real Max/V-Ray A/B tests remain the
+ground truth for renderer-specific host behavior.
 
 ## Verified Blender 5.2 manual passes
 
 ### A. Basketball
 
-1. Install `blendmax_importer-0.1.4.zip` from disk.
+1. Install `blendmax_importer-0.1.5.zip` from disk.
 2. Import `Basketbalv2l.blendmax`.
 3. Confirm one mesh appears in its own collection under a `[BlendMax]`
    controller.
@@ -80,7 +55,7 @@ hierarchy, and direct world-origin placement without warnings or errors.
 
 ### C. Ring-Light Physical Materials
 
-1. Install `blendmax_importer-0.1.4.zip` and import `RingLight.blendmax` into a
+1. Install `blendmax_importer-0.1.5.zip` and import `RingLight.blendmax` into a
    clean scene.
 2. Confirm the completion message reports 26 objects and 26 materials without
    the previous 27 unsupported-PhysicalMaterial warnings.
@@ -98,6 +73,51 @@ without warnings or errors; the two mapped materials displayed their packaged
 images, the hierarchy and world-origin placement remained intact, and the
 undeclared `Untitled` cube was absent.
 
+## Verified V-Ray host parameter adaptation
+
+The requested real 3ds Max/V-Ray + Blender checks are complete. The milestone
+acceptance criterion is correct BSDF parameter adaptation; renderer-specific
+visual parity is not required for these three checks.
+
+### 1. Negative V-Ray anisotropy → +0.25 rotation — PASS
+
+A real `VRayMtl` with `anisotropy = -0.5` and
+`anisotropy_rotation = 0.0` imported to Blender with:
+
+- **Anisotropic = 0.5**
+- **Anisotropic Rotation = 0.25**
+
+### 2. Sheen Weight = luminance of `sheen_color` — PASS
+
+Real host checks produced:
+
+- white sheen → Weight `1.000`, white tint
+- saturated red sheen → Weight `0.213`, red tint
+- green `(0, 0.297, 0)` → Weight `0.212`, green tint
+
+### 3. Live Max parameter casing — PASS
+
+Live `getPropNames` confirmed these actual keys and readable values:
+
+- `#reflection_glossiness`
+- `#refraction_glossiness`
+- `#brdf_useRoughness`
+- `#selfIllumination`
+
+## Final runtime gate — PASS
+
+A clean Blender 5.2 re-import of the previously noisy test asset was completed
+against the current `0.1.5` build. Actual operator/console output confirmed:
+
+1. **one genuine warning** for missing packaged image `tex_2140`;
+2. **one grouped note** for known unsupported V-Ray fields;
+3. **one grouped note** for divergent reflection/refraction glossiness across
+   three materials; and
+4. **no per-field** `BlendMax warning: VRayMtl parameter ...` spam.
+
+The FBX import completed successfully. This runtime acceptance check complements
+the ordinary-Python suite.
+
 ## Pass criteria
 
 - Import completes without a Python traceback.
@@ -106,8 +126,8 @@ undeclared `Untitled` cube was absent.
 - No unpacked image points at the importer's temporary directory.
 - The original manifest is present in Blender's Text data and referenced by the
   asset controller.
-- Warnings identify approximations or unsupported nodes without discarding the
-  rest of the asset.
+- Warnings identify real problems; expected unsupported/approximate V-Ray
+  behavior is grouped into informational notes.
 - Undo removes the imported asset as one operator action.
 
 ## Known Alpha.1 limits
@@ -119,5 +139,11 @@ undeclared `Untitled` cube was absent.
   applied.
 - Bitmap crop/place controls and advanced V-Ray bitmap color transforms are
   not yet reproduced.
+- V-Ray thin-film thickness uses the minimum only; a connected thickness-blend
+  map is not yet interpreted, so the maximum is ignored (its value remains in
+  the stored manifest).
+- Blender's single Principled roughness approximates V-Ray's separate
+  reflection/refraction roughness; divergent values are grouped as an
+  informational note rather than reproduced exactly.
 - Advanced rendering parity beyond the verified Basketball and four-potted-
   plants baselines remains ongoing.

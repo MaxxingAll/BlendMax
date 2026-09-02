@@ -9,6 +9,7 @@ import bpy
 
 from .manifest import ManifestIndex
 from .material_graph import (
+    ParameterView,
     canonical_name,
     clamp01,
     find_texture_link,
@@ -21,10 +22,14 @@ from .material_graph import (
     scalar,
     sorted_sub_materials,
     vray_roughness,
+    vray_anisotropy,
+    vray_sheen_roughness,
+    vray_thin_film,
 )
 from .models import GraphLink, GraphNode
 
 
+from .diagnostics import KNOWN_VRAY_UNMAPPED_PARAMETERS as _KNOWN_VRAY_UNMAPPED_PARAMETERS
 def _socket(sockets, *names):
     for name in names:
         found = sockets.get(name)
@@ -249,7 +254,7 @@ class MaterialBuilder:
     ):
         """Translate a 3ds Max Physical Material to a Principled BSDF."""
 
-        parameters = graph_node.parameters
+        parameters = ParameterView(graph_node.parameters)
         bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
         bsdf.label = graph_node.name
         bsdf.location = (x, y)
@@ -518,7 +523,7 @@ class MaterialBuilder:
         x: float,
         y: float,
     ):
-        parameters = graph_node.parameters
+        parameters = ParameterView(graph_node.parameters)
         bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
         bsdf.label = graph_node.name
         bsdf.location = (x, y)
@@ -552,6 +557,34 @@ class MaterialBuilder:
         _set_default(bsdf, ("Coat Weight", "Coat"), clamp01(scalar(parameters, "coat_amount", 0.0)))
         _set_default(bsdf, ("Coat Roughness",), 1.0 - clamp01(scalar(parameters, "coat_glossiness", 1.0)))
         _set_default(bsdf, ("Coat IOR",), max(1.0, scalar(parameters, "coat_ior", 1.5)))
+        _set_default(
+            bsdf,
+            ("Coat Tint",),
+            rgba(parameters.get("coat_color"), (1.0, 1.0, 1.0, 1.0)),
+        )
+        _set_default(
+            bsdf,
+            ("Diffuse Roughness",),
+            clamp01(scalar(parameters, "diffuse_roughness", 0.0)),
+        )
+        _set_default(
+            bsdf,
+            ("Thin Wall",),
+            bool(parameters.get("refraction_thinwalled", False)),
+        )
+
+        anisotropic, anisotropic_rotation = vray_anisotropy(parameters)
+        _set_default(bsdf, ("Anisotropic IOR Level", "Anisotropic"), anisotropic)
+        _set_default(bsdf, ("Anisotropic Rotation",), anisotropic_rotation)
+
+        sheen_color = rgba(parameters.get("sheen_color"), (0.0, 0.0, 0.0, 1.0))
+        _set_default(bsdf, ("Sheen Weight", "Sheen"), luminance(sheen_color))
+        _set_default(bsdf, ("Sheen Roughness",), vray_sheen_roughness(parameters))
+        _set_default(bsdf, ("Sheen Tint",), sheen_color)
+
+        thin_film_ior, thin_film_thickness = vray_thin_film(parameters)
+        _set_default(bsdf, ("Thin Film IOR",), thin_film_ior)
+        _set_default(bsdf, ("Thin Film Thickness",), thin_film_thickness)
 
         reflection_ior = scalar(parameters, "reflection_IOR", 1.5)
         refraction_ior = scalar(parameters, "refraction_ior", reflection_ior)
@@ -564,6 +597,30 @@ class MaterialBuilder:
                 "Principled shader uses the reflection IOR while the original "
                 "values remain in the packed manifest.".format(graph_node.name)
             )
+
+        refraction_glossiness = parameters.get("refraction_glossiness")
+        if refraction_glossiness is not None:
+            try:
+                refraction_value = clamp01(float(refraction_glossiness))
+                refraction_roughness = (
+                    refraction_value
+                    if bool(parameters.get("brdf_useRoughness", False))
+                    else 1.0 - refraction_value
+                )
+            except (TypeError, ValueError):
+                refraction_roughness = None
+            if (
+                refraction_roughness is not None
+                and luminance(refraction) > 0.0
+                and abs(refraction_roughness - vray_roughness(parameters)) > 0.0001
+            ):
+                self._warn(
+                    "{0} has separate reflection and refraction glossiness values; "
+                    "Blender's Principled shader uses a single roughness for both, "
+                    "so the refraction roughness is approximated.".format(
+                        graph_node.name
+                    )
+                )
 
         diffuse_link = find_texture_link(graph_node, "Diffuse")
         if diffuse_link and map_is_enabled(parameters, diffuse_link.slot):
@@ -706,6 +763,16 @@ class MaterialBuilder:
             if normal is not None:
                 tree.links.new(normal, normal_input)
 
+        for key in parameters.unmapped_keys():
+            if key.startswith("texmap"):
+                continue
+            if key.casefold() in _KNOWN_VRAY_UNMAPPED_PARAMETERS:
+                continue
+            self._warn(
+                "VRayMtl parameter '{0}' has no Blender mapping yet; its value "
+                "remains in the stored manifest.".format(key)
+            )
+
         return bsdf.outputs[0]
 
     def _texture_output(
@@ -749,8 +816,9 @@ class MaterialBuilder:
             )
 
         if class_name == "vraycolor":
-            color = list(rgba(graph_node.parameters.get("color"), (0.5, 0.5, 0.5, 1.0)))
-            multiplier = max(0.0, scalar(graph_node.parameters, "rgb_multiplier", 1.0))
+            parameters = ParameterView(graph_node.parameters)
+            color = list(rgba(parameters.get("color"), (0.5, 0.5, 0.5, 1.0)))
+            multiplier = max(0.0, scalar(parameters, "rgb_multiplier", 1.0))
             color[:3] = [min(1.0, value * multiplier) for value in color[:3]]
             rgb_node = tree.nodes.new("ShaderNodeRGB")
             rgb_node.label = graph_node.name
@@ -759,6 +827,7 @@ class MaterialBuilder:
             return rgb_node.outputs[0]
 
         if class_name == "noise":
+            parameters = ParameterView(graph_node.parameters)
             noise = tree.nodes.new("ShaderNodeTexNoise")
             noise.label = graph_node.name
             noise.location = (x, y)
@@ -767,16 +836,16 @@ class MaterialBuilder:
                 "system_units_per_meter",
                 1.0,
             )
-            size = max(0.000001, scalar(graph_node.parameters, "size", 1.0))
+            size = max(0.000001, scalar(parameters, "size", 1.0))
             _set_default(noise, ("Scale",), max(0.000001, units_per_meter / size))
-            _set_default(noise, ("Detail",), max(0.0, scalar(graph_node.parameters, "levels", 2.0)))
+            _set_default(noise, ("Detail",), max(0.0, scalar(parameters, "levels", 2.0)))
             ramp = tree.nodes.new("ShaderNodeValToRGB")
             ramp.location = (x + 190, y)
             ramp.color_ramp.elements[0].color = rgba(
-                graph_node.parameters.get("color1"), (0.0, 0.0, 0.0, 1.0)
+                parameters.get("color1"), (0.0, 0.0, 0.0, 1.0)
             )
             ramp.color_ramp.elements[1].color = rgba(
-                graph_node.parameters.get("color2"), (1.0, 1.0, 1.0, 1.0)
+                parameters.get("color2"), (1.0, 1.0, 1.0, 1.0)
             )
             tree.links.new(_socket(noise.outputs, "Fac"), ramp.inputs[0])
             return ramp.outputs[0]
@@ -801,6 +870,7 @@ class MaterialBuilder:
         if graph_node is None:
             return None
         if canonical_name(graph_node.class_name) == "normalbump":
+            parameters = ParameterView(graph_node.parameters)
             child = find_texture_link(graph_node, "Normal")
             if child is None and graph_node.sub_textures:
                 child = graph_node.sub_textures[0]
@@ -810,7 +880,7 @@ class MaterialBuilder:
             if color is None:
                 return None
             if any(
-                bool(graph_node.parameters.get(name, False))
+                bool(parameters.get(name, False))
                 for name in ("flipgreen", "flipred", "swap_rg")
             ):
                 self._warn(
@@ -823,7 +893,7 @@ class MaterialBuilder:
             normal_map.location = (x, y)
             normal_map.inputs["Strength"].default_value = max(
                 0.0,
-                strength * scalar(graph_node.parameters, "mult_spin", 1.0),
+                strength * scalar(parameters, "mult_spin", 1.0),
             )
             tree.links.new(color, normal_map.inputs["Color"])
             return normal_map.outputs["Normal"]

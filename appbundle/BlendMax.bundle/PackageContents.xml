@@ -5,8 +5,8 @@
     Name="BlendMax"
     Description="Python-first 3ds Max asset exporter for BlendMax."
     DescriptionLong="Exports one isolated 3ds Max asset, material metadata, and textures to a portable .blendmax package."
-    AppVersion="0.1.0.2"
-    FriendlyVersion="0.1.0-alpha.4.1.0"
+    AppVersion="0.1.0.3"
+    FriendlyVersion="0.1.0-alpha.4.2.0"
     ProductType="Application"
     SupportedLocales="Enu"
     AppNameSpace="MaxxingAll.BlendMax"
@@ -30,7 +30,7 @@
             SeriesMax="2025" />
         <ComponentEntry
             AppName="BlendMax"
-            Version="0.1.0.2"
+            Version="0.1.0.3"
             ModuleName="./Contents/macroscripts/BlendMax.mcr"
             AppDescription="BlendMax menu actions" />
     </Components>
@@ -42,7 +42,7 @@
             SeriesMax="2025" />
         <ComponentEntry
             AppName="BlendMax"
-            Version="0.1.0.2"
+            Version="0.1.0.3"
             ModuleName="./Contents/Post-Start-Up_Scripts/BlendMaxMenu2025.ms"
             AppDescription="Register the BlendMax menu" />
     </Components>

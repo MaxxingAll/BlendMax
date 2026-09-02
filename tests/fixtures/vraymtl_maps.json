@@ -1,0 +1,43 @@
+{
+  "schema": {"name": "BlendMax Manifest", "version": "0.1.1"},
+  "asset": {"name": "Headless VRayMtl Maps", "mode": "single", "root_id": "obj_maps", "bounds_m": {"minimum": [0,0,0], "maximum": [1,1,1]}, "size_policy": {"recommended_blender_scale": 1.0}},
+  "geometry": {"file": "asset_maps.fbx"},
+  "objects": [{"id": "obj_maps", "fbx_name": "MappedObject", "original_name": "MappedObject", "node_type": "Geometry", "superclass": "GeometryClass"}],
+  "materials": {"graph": [
+    {"id": "mat_maps", "kind": "material", "class": "VRayMtl", "name": "Mapped Material", "parameters": {
+      "Diffuse": [0.8,0.8,0.8,1],
+      "texmap_diffuse_on": true,
+      "texmap_diffuse_multiplier": 65.0,
+      "Reflection": [0.5,0.5,0.5,1],
+      "texmap_reflection_on": true,
+      "texmap_reflection_multiplier": 25.0,
+      "reflection_glossiness": 0.8,
+      "texmap_reflectionGlossiness_on": true,
+      "texmap_reflectionGlossiness_multiplier": 40.0,
+      "Refraction": [1,1,1,1],
+      "texmap_refraction_on": false,
+      "texmap_refraction_multiplier": 90.0,
+      "texmap_bump_on": true,
+      "texmap_bump_multiplier": 125.0
+    }, "sub_materials": [], "sub_textures": [
+      {"index": 0, "slot": "Diffuse", "ref": "tex_diffuse"},
+      {"index": 1, "slot": "Reflection", "ref": "tex_reflection"},
+      {"index": 2, "slot": "Reflection roughness", "ref": "tex_gloss"},
+      {"index": 3, "slot": "Refraction", "ref": "tex_refraction_disabled"},
+      {"index": 4, "slot": "Bump", "ref": "tex_bump"}
+    ]},
+    {"id": "tex_diffuse", "kind": "texture", "class": "VRayBitmap", "name": "Diffuse Bitmap", "parameters": {"path": "textures/albedo.png"}, "sub_materials": [], "sub_textures": []},
+    {"id": "tex_reflection", "kind": "texture", "class": "VRayBitmap", "name": "Reflection Bitmap", "parameters": {"path": "textures/reflection.png"}, "sub_materials": [], "sub_textures": []},
+    {"id": "tex_gloss", "kind": "texture", "class": "VRayBitmap", "name": "Gloss Bitmap", "parameters": {"path": "textures/gloss.png"}, "sub_materials": [], "sub_textures": []},
+    {"id": "tex_refraction_disabled", "kind": "texture", "class": "VRayBitmap", "name": "Disabled Refraction Bitmap", "parameters": {"path": "textures/refraction.png"}, "sub_materials": [], "sub_textures": []},
+    {"id": "tex_bump", "kind": "texture", "class": "VRayBitmap", "name": "Bump Bitmap", "parameters": {"path": "textures/bump.png"}, "sub_materials": [], "sub_textures": []}
+  ], "assignments": [{"object_id": "obj_maps", "material_ref": "mat_maps"}]},
+  "textures": [
+    {"graph_node_id": "tex_diffuse", "status": "packed", "package_path": "textures/albedo.png", "parameter": "Diffuse", "raw_path": "C:/assets/albedo.png", "source_path": "C:/assets/albedo.png"},
+    {"graph_node_id": "tex_reflection", "status": "packed", "package_path": "textures/reflection.png", "parameter": "Reflection", "raw_path": "C:/assets/reflection.png", "source_path": "C:/assets/reflection.png"},
+    {"graph_node_id": "tex_gloss", "status": "packed", "package_path": "textures/gloss.png", "parameter": "Reflection roughness", "raw_path": "C:/assets/gloss.png", "source_path": "C:/assets/gloss.png"},
+    {"graph_node_id": "tex_refraction_disabled", "status": "packed", "package_path": "textures/refraction.png", "parameter": "Refraction", "raw_path": "C:/assets/refraction.png", "source_path": "C:/assets/refraction.png"},
+    {"graph_node_id": "tex_bump", "status": "packed", "package_path": "textures/bump.png", "parameter": "Bump", "raw_path": "C:/assets/bump.png", "source_path": "C:/assets/bump.png"}
+  ],
+  "warnings": []
+}
