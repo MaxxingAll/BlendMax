@@ -20,10 +20,10 @@ created automatically by Python.
 
 | Component | Version | Status |
 | --- | --- | --- |
-| 3ds Max exporter and cleanup | `0.1.0-alpha.4.1.0` | Host verified in 3ds Max 2025.3 |
-| Blender importer | `0.1.5` | VRayMtl hardening landed; host A/B validation pending |
+| 3ds Max exporter and cleanup | `0.1.0-alpha.4.2.0` | Host verified in 3ds Max 2025.3 |
+| Blender importer | `0.1.5` | VRayMtl hardening and requested parameter-adaptation checks passed |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
-| Automated suite | 124 tests | Passing |
+| Automated suite | See CI | Python 3.11–3.13 |
 
 See [CHANGELOG.md](CHANGELOG.md) for release history,
 [TEST_MATRIX.md](TEST_MATRIX.md) for Max evidence, and
@@ -182,9 +182,7 @@ The complete original `manifest.json` is also stored as a Blender Text data
 block and referenced by the asset collection/controller. Parameters that do not
 yet have a native Blender equivalent therefore remain available for later
 converter improvements instead of being discarded. During a `VRayMtl` import,
-any manifest parameter the importer does not map to a Blender shader input is
-reported as a warning (once per parameter name), so untested aliases and
-parameters surface instead of being silently ignored.
+known unsupported fields are grouped into one informational note. Truly unexpected parameters remain warnings, so future exporter additions still surface without flooding normal imports with expected limitations.
 
 Unsupported graph classes receive a visible magenta fallback and a warning
 instead of aborting the whole asset.
@@ -192,7 +190,7 @@ instead of aborting the whole asset.
 ## v0.1 rules
 
 - The scene must contain exactly one grouped asset or one standalone object.
-- A grouped asset may contain at most 30 geometry nodes. Nested group heads and
+- A grouped asset may contain at most 500 geometry nodes. Nested group heads and
   ignored non-geometry nodes do not count toward this limit.
 - Geometry outside the single asset group causes an error.
 - Hidden-in-viewport or frozen scene objects stop export with a clear preflight
@@ -249,7 +247,7 @@ treated as verified.
 The exporter has been tested in Autodesk 3ds Max 2025.3 with V-Ray 7.00.02.
 V-Ray release families from 7.00.x through 7.40.x are treated as compatible.
 
-Max exporter Alpha.4.1.0 passed the ring-light cleanup workflow: 74 input
+Max exporter Alpha.4.2.0 retains the Alpha.4.1.0 host baseline and documents the 500-object export limit. Alpha.4.1.0 passed the ring-light cleanup workflow: 74 input
 meshes became 26 material meshes, five identical material sets replaced ten
 original assignments, and 141 Shape/segment objects were deleted. The
 Alpha.3.6 export baseline, persistent menu, and nine core `VRayMtl` features
@@ -271,8 +269,8 @@ From the extracted project folder, using ordinary Python:
 python -m unittest discover -s tests -v
 ```
 
-The 124 tests cover scene and visibility-preflight rules, cleanup planning,
-Multi/Sub ID lookup, compact face selections, the 30-object boundary, exact and fallback
+The automated suite covers scene and visibility-preflight rules, cleanup planning,
+Multi/Sub ID lookup, compact face selections, the 500-object boundary, exact and fallback
 bounds, size policy, texture ownership and collisions,
 group isolation and restoration, archive creation, FBX state restoration,
 AppBundle construction, installation, hot-reloading after an in-session ZIP
