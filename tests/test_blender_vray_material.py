@@ -121,12 +121,12 @@ class BlenderVRayMtlTests(unittest.TestCase):
         self.assertAlmostEqual(principled.inputs["IOR"].default_value, 1.6)
         self.assertEqual(warnings, [])
 
-    def test_unmapped_parameters_are_reported_once_each(self):
+    def test_known_unmapped_parameters_are_silent(self):
         graph_node = GraphNode(
-            node_id="mat_unmapped",
+            node_id="mat_known_unmapped",
             kind="material",
             class_name="VRayMtl",
-            name="Unmapped material",
+            name="Known unmapped material",
             parameters={
                 "Diffuse": [0.8, 0.8, 0.8, 1.0],
                 "reflection_glossiness": 0.5,
@@ -135,14 +135,26 @@ class BlenderVRayMtlTests(unittest.TestCase):
             },
         )
         _builder, warnings, _tree, _shader = self.build(graph_node)
+        self.assertEqual(warnings, [])
+
+    def test_unknown_unmapped_parameters_are_still_reported(self):
+        graph_node = GraphNode(
+            node_id="mat_unknown_unmapped",
+            kind="material",
+            class_name="VRayMtl",
+            name="Unknown unmapped material",
+            parameters={
+                "Diffuse": [0.8, 0.8, 0.8, 1.0],
+                "vray_future_parameter": 123,
+            },
+        )
+        _builder, warnings, _tree, _shader = self.build(graph_node)
 
         self.assertEqual(
             warnings,
             [
-                "VRayMtl parameter 'anisotropy_axis' has no Blender mapping yet; "
-                "its value remains in the stored manifest.",
-                "VRayMtl parameter 'coat_darkening' has no Blender mapping yet; "
-                "its value remains in the stored manifest.",
+                "VRayMtl parameter 'vray_future_parameter' has no Blender mapping yet; "
+                "its value remains in the stored manifest."
             ],
         )
 
@@ -267,7 +279,7 @@ class BlenderVRayMtlTests(unittest.TestCase):
         _builder, warnings, _tree, _shader = self.build(graph_node)
         self.assertEqual(warnings, [])
 
-    def test_duplicate_unmapped_parameters_are_deduplicated_across_materials(self):
+    def test_duplicate_unmapped_parameters_are_silent_across_materials(self):
         builder, warnings = self.builder_for(
             GraphNode(node_id="x", kind="material", class_name="VRayMtl", name="x")
         )
@@ -295,10 +307,7 @@ class BlenderVRayMtlTests(unittest.TestCase):
         for ref in ("m1", "m2"):
             builder._build_shader(FakeTree(), ref, SimpleNamespace(), (), 0.0, 0.0)
 
-        anisotropy_warnings = [
-            message for message in warnings if "anisotropy_axis" in message
-        ]
-        self.assertEqual(len(anisotropy_warnings), 1)
+        self.assertEqual(warnings, [])
 
 
 class VRayExporterContractTests(unittest.TestCase):
@@ -387,7 +396,7 @@ class VRayExporterContractTests(unittest.TestCase):
                 "{0} should be mapped but was reported unmapped".format(name),
             )
 
-        unmapped = {
+        known_unmapped = {
             "anisotropy_axis",
             "coat_darkening",
             "option_cutoff",
@@ -396,10 +405,10 @@ class VRayExporterContractTests(unittest.TestCase):
             "selfillumination_gi",
             "translucency_amount",
         }
-        for name in unmapped:
-            self.assertTrue(
+        for name in known_unmapped:
+            self.assertFalse(
                 any("'{0}'".format(name.casefold()) in message for message in warnings),
-                "{0} should be reported unmapped".format(name),
+                "{0} is intentionally unsupported and should stay silent".format(name),
             )
 
 
