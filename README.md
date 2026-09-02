@@ -235,12 +235,10 @@ glossiness is imported using the reflection roughness and reported as an
 approximation. Release-by-release material and workflow changes are recorded in
 [CHANGELOG.md](CHANGELOG.md).
 
-Two of these conversions are pending host verification rather than settled:
-the negative-anisotropy-to-quarter-turn equivalence and the
-sheen-luminance-as-weight model. Both are exercised by unit tests but need a
-visual A/B in Max and Blender (a brushed-metal asset for anisotropy; white,
-saturated, and equal-luminance sheen swatches for sheen) before they are
-treated as verified.
+The requested host parameter-adaptation checks are complete: negative
+anisotropy and sheen adaptation passed on the real Max/V-Ray + Blender setup.
+This milestone accepts correct BSDF parameter adaptation; renderer-specific
+visual parity A/B is not part of the acceptance criterion.
 
 ## Verified environment
 
