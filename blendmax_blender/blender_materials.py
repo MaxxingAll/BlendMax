@@ -29,51 +29,7 @@ from .material_graph import (
 from .models import GraphLink, GraphNode
 
 
-# V-Ray properties intentionally preserved in the manifest but without a direct
-# equivalent in the current Blender Principled BSDF mapping. Keep these
-# separate from unexpected keys so newly added exporter fields still warn.
-_KNOWN_VRAY_UNMAPPED_PARAMETERS = {
-    "anisotropy_axis",
-    "anisotropy_channel",
-    "anisotropy_derivation",
-    "brdf_type",
-    "coat_darkening",
-    "option_cutoff",
-    "option_doublesided",
-    "option_glossyfresnel",
-    "option_opacitymode",
-    "option_openpbrmode",
-    "option_tracediffuse",
-    "option_tracereflection",
-    "option_tracerefraction",
-    "reflection_affectalpha",
-    "reflection_dimdistance",
-    "reflection_dimdistance_falloff",
-    "reflection_dimdistance_on",
-    "reflection_fresnel",
-    "reflection_maxdepth",
-    "refraction_affectalpha",
-    "refraction_affectshadows",
-    "refraction_dispersion",
-    "refraction_dispersion_on",
-    "refraction_fogbias",
-    "refraction_fogcolor",
-    "refraction_fogdepth",
-    "refraction_fogmult",
-    "refraction_fogunitsscale_on",
-    "refraction_maxdepth",
-    "selfillumination_gi",
-    "translucency_amount",
-    "translucency_color",
-    "translucency_fbcoeff",
-    "translucency_multiplier",
-    "translucency_on",
-    "translucency_scattercoeff",
-    "translucency_surfacelighting",
-    "translucency_thickness",
-}
-
-
+from .diagnostics import KNOWN_VRAY_UNMAPPED_PARAMETERS as _KNOWN_VRAY_UNMAPPED_PARAMETERS
 def _socket(sockets, *names):
     for name in names:
         found = sockets.get(name)
