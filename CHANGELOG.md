@@ -4,6 +4,17 @@ This file records user-visible changes to the 3ds Max exporter/cleanup and the
 Blender importer. BlendMax is still alpha software; host-tested baselines are
 called out separately from automated coverage.
 
+## Max Exporter 0.1.0-alpha.4.2.0 — 2026-09-02
+
+### Changed
+
+- Raises the grouped-asset export payload limit from **30 to 500 geometry nodes**.
+- Boundary coverage accepts 500 objects and rejects 501.
+
+### Release metadata
+
+- Bumps the Max exporter and AppBundle version so the user-visible limit change is identifiable in installed builds.
+
 ## Blender Importer 0.1.5 — 2026-09-02
 
 ### Added
