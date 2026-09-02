@@ -264,6 +264,39 @@ class BlenderVRayMtlTests(unittest.TestCase):
         _builder, warnings, _tree, _shader = self.build(graph_node)
         self.assertEqual(warnings, [])
 
+    def test_matching_refraction_values_in_roughness_mode_do_not_warn(self):
+        graph_node = GraphNode(
+            node_id="mat_matching_roughness",
+            kind="material",
+            class_name="VRayMtl",
+            name="Matching roughness glass",
+            parameters={
+                "refraction": [1.0, 1.0, 1.0, 1.0],
+                "reflection_glossiness": 0.8,
+                "refraction_glossiness": 0.8,
+                "brdf_useRoughness": True,
+            },
+        )
+        _builder, warnings, _tree, _shader = self.build(graph_node)
+        self.assertEqual(warnings, [])
+
+    def test_divergent_refraction_values_in_roughness_mode_warn(self):
+        graph_node = GraphNode(
+            node_id="mat_divergent_roughness",
+            kind="material",
+            class_name="VRayMtl",
+            name="Divergent roughness glass",
+            parameters={
+                "refraction": [1.0, 1.0, 1.0, 1.0],
+                "reflection_glossiness": 0.8,
+                "refraction_glossiness": 0.3,
+                "brdf_useRoughness": True,
+            },
+        )
+        _builder, warnings, _tree, _shader = self.build(graph_node)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("refraction roughness is approximated", warnings[0])
+
     def test_texmap_controls_are_not_reported_as_unmapped(self):
         graph_node = GraphNode(
             node_id="mat_texmap_controls",
