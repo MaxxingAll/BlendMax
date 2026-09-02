@@ -4,6 +4,15 @@ This file records user-visible changes to the 3ds Max exporter/cleanup and the
 Blender importer. BlendMax is still alpha software; host-tested baselines are
 called out separately from automated coverage.
 
+### Verification
+
+- Clean Blender 5.2 runtime re-import passed with one genuine missing-texture
+  warning, one grouped unsupported-parameter note, one grouped glossiness note,
+  and no per-field VRayMtl warning spam.
+- Refraction/reflection diagnostics honor `brdf_useRoughness`: equal values in
+  roughness mode stay silent, while divergent values remain grouped as an
+  approximation note.
+
 ## Max Exporter 0.1.0-alpha.4.2.0 — 2026-09-02
 
 ### Changed
