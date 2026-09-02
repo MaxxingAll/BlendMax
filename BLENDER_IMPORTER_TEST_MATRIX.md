@@ -12,8 +12,8 @@ one FBX operator call, and indexed O(n) manifest/graph processing.
 
 ## Automated status
 
-All 124 project tests pass under ordinary Python. Fifty-four
-importer-specific tests cover:
+All 127 project tests pass under ordinary Python. Fifty-seven importer-specific
+tests cover:
 
 - Blender extension metadata and root ZIP layout;
 - reproducible extension builds;
@@ -35,6 +35,8 @@ importer-specific tests cover:
 - VRayMtl anisotropy, sheen, and thin-film Principled defaults;
 - VRayMtl coat tint, diffuse roughness, and thin-walled refraction defaults;
 - refraction-glossiness divergence reporting and its matching no-warning case;
+- simulated 3ds Max/V-Ray manifest -> ManifestIndex -> VRayMtl ->
+  fake-Blender-node integration fixtures;
 - the importer/exporter parameter-name contract: every literal VRayMtl
   parameter the importer reads must exist in the exporter's
   `VRAY_MTL_PROPERTIES` whitelist (or be a `texmap_*` map control), and the
@@ -52,17 +54,15 @@ importer-specific tests cover:
 - missing packaged-texture rejection; and
 - `.blendmax` file-type validation.
 
+The headless V-Ray fixtures are deliberately simulated manifests, not claims
+that a running V-Ray host produced those exact values. They provide a fast
+regression layer for the importer pipeline; real Max/V-Ray A/B tests remain the
+ground truth for renderer-specific visual parity.
+
 The package reader was also exercised successfully against the current
 Basketball package, the four-potted-plants package, and the older normal-map
 package. This confirms their manifests and declared payloads can enter the
 import pipeline; it is not a substitute for Blender runtime rendering checks.
-
-Manual status: Basketball material reconstruction and direct world-origin
-placement passed. Four potted plants passed its object/image counts, procedural
-bump, Multi/Sub, VRay2Sided, direct world-origin placement, and reconstructed
-pivot checks. Ring-Light passed 26-object/26-material Physical Material
-translation, packaged Base Color maps, strict removal of undeclared FBX data,
-hierarchy, and direct world-origin placement without warnings or errors.
 
 ## Verified Blender 5.2 manual passes
 
@@ -124,8 +124,8 @@ screenshots) here or in the PR.
 
 The branch maps a negative `anisotropy` sign to a 90° rotation because V-Ray's
 sign flips the elongation axis while Blender only exposes a non-negative
-magnitude. Unit tests cover the arithmetic; the ±90° direction must be
-confirmed visually.
+magnitude. Unit and headless manifest tests cover the arithmetic; the ±90°
+direction must be confirmed visually.
 
 Procedure: create one brushed-metal `VRayMtl`, then duplicate it:
 
@@ -162,7 +162,8 @@ match the exporter whitelist/contract expectations for at least:
 - `brdf_useRoughness`
 - `selfIllumination`
 
-This is the empirical confirmation behind the static contract tests.
+This is the empirical confirmation behind the static contract and headless
+fixture tests.
 
 ## Pass criteria
 
