@@ -1,0 +1,8 @@
+{
+  "schema": {"name": "BlendMax Manifest", "version": "0.1.5"},
+  "asset": {"name": "Headless Basic VRayMtl", "mode": "single", "root_id": "obj_basic", "bounds_m": {"minimum": [0,0,0], "maximum": [1,1,1]}, "size_policy": {"recommended_blender_scale": 1.0}},
+  "geometry": {"file": "asset_basic.fbx"},
+  "objects": [{"id": "obj_basic", "fbx_name": "BasicObject", "original_name": "BasicObject", "node_type": "Geometry", "superclass": "GeometryClass"}],
+  "materials": {"graph": [{"id": "mat_basic", "kind": "material", "class": "VRayMtl", "name": "Basic Chrome", "parameters": {"DIFFUSE": [0.18,0.2,0.22,1.0], "reflection_metalness": 0.65, "Reflection_Glossiness": 0.35, "Reflection_IOR": 1.62, "reflection_weight": 0.9, "brdf_UseRoughness": true, "Refraction": [0,0,0,1], "selfIllumination": [0,0,0,1]}, "sub_materials": [], "sub_textures": []}], "assignments": [{"object_id": "obj_basic", "material_ref": "mat_basic"}]},
+  "textures": [], "warnings": []
+}
