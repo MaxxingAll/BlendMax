@@ -1,4 +1,4 @@
-# BlendMax Blender Importer 0.1.4 Test Matrix
+# BlendMax Blender Importer 0.1.5 Test Matrix
 
 ## Scope
 
@@ -68,7 +68,7 @@ hierarchy, and direct world-origin placement without warnings or errors.
 
 ### A. Basketball
 
-1. Install `blendmax_importer-0.1.4.zip` from disk.
+1. Install `blendmax_importer-0.1.5.zip` from disk.
 2. Import `Basketbalv2l.blendmax`.
 3. Confirm one mesh appears in its own collection under a `[BlendMax]`
    controller.
@@ -96,7 +96,7 @@ hierarchy, and direct world-origin placement without warnings or errors.
 
 ### C. Ring-Light Physical Materials
 
-1. Install `blendmax_importer-0.1.4.zip` and import `RingLight.blendmax` into a
+1. Install `blendmax_importer-0.1.5.zip` and import `RingLight.blendmax` into a
    clean scene.
 2. Confirm the completion message reports 26 objects and 26 materials without
    the previous 27 unsupported-PhysicalMaterial warnings.
@@ -117,18 +117,52 @@ undeclared `Untitled` cube was absent.
 ## Pending host validation (unsettled inferences)
 
 These conversions are implemented and unit-tested but are treated as
-*unverified* until host A/B passes settle them:
+*unverified* until the host A/B passes below settle them. Record results (with
+screenshots) here or in the PR.
 
-- **Negative V-Ray anisotropy → +0.25 rotation.** The branch maps a negative
-  `anisotropy` sign to a 90° rotation because V-Ray's sign flips the
-  elongation axis while Blender only exposes a non-negative magnitude. Unit
-  tests cover the arithmetic; the ±90° direction needs a brushed-metal asset
-  rendered in both Max and Blender to confirm it is not rotated the wrong way.
-- **Sheen Weight = luminance of `sheen_color`.** V-Ray 3ds Max has no separate
-  sheen amount, so the color's luminance drives Blender's Sheen Weight. This
-  could over- or under-encode intensity (and may double-encode the color via
-  the tint). A three-material A/B — white sheen, saturated sheen, and an
-  equal-luminance variant — is required before this is treated as settled.
+### 1. Negative V-Ray anisotropy → +0.25 rotation
+
+The branch maps a negative `anisotropy` sign to a 90° rotation because V-Ray's
+sign flips the elongation axis while Blender only exposes a non-negative
+magnitude. Unit tests cover the arithmetic; the ±90° direction must be
+confirmed visually.
+
+Procedure: create one brushed-metal `VRayMtl`, then duplicate it:
+
+- A: `anisotropy = +0.5`, `anisotropy_rotation = 0.0`
+- B: `anisotropy = -0.5`, `anisotropy_rotation = 0.0`
+
+Export both through BlendMax, import into Blender, and compare the highlight
+direction/orientation. Confirm the importer's negative-anisotropy handling
+(+0.25 / 90°) matches V-Ray.
+
+### 2. Sheen Weight = luminance of `sheen_color`
+
+V-Ray 3ds Max has no separate sheen amount, so the color's luminance drives
+Blender's Sheen Weight and the color maps to Sheen Tint. This could over- or
+under-encode intensity and may double-encode the color via the tint.
+
+Procedure: create three otherwise-identical `VRayMtl` materials:
+
+- A: white sheen color
+- B: saturated red sheen color
+- C: a different sheen color with approximately the same luminance as A
+
+Export/import and compare Max vs Blender, checking specifically for
+double-encoding of intensity.
+
+### 3. Live Max parameter-casing confirmation
+
+Export one real `VRayMtl` with the current 3ds Max/V-Ray setup and inspect the
+resulting `manifest.json`. Confirm the actual `getPropNames` keys (casefolded)
+match the exporter whitelist/contract expectations for at least:
+
+- `reflection_glossiness`
+- `refraction_glossiness`
+- `brdf_useRoughness`
+- `selfIllumination`
+
+This is the empirical confirmation behind the static contract tests.
 
 ## Pass criteria
 

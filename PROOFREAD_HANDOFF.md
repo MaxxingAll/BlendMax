@@ -12,12 +12,15 @@ point was addressed.**
 ## 0. Working state
 
 - Branch: `arena/01a05c3d-blendmax` (off `main` @ `b8572c5`).
-- Three commits ahead of `main`, all pushed:
+- Four commits ahead of `main`, all pushed:
   1. `619006c` — "Harden VRayMtl import and map anisotropy, sheen, thin film, coat"
   2. `3659464` — "Tighten parameter canonicalization after review"
-  3. this commit — name-contract regression tests + round-2 handoff updates
-- **Version strings NOT bumped.** `blendmax_blender/__init__.py` and
-  `blendmax_blender/blender_manifest.toml` still read `0.1.4`.
+  3. `cbe49d4` — "Lock the VRayMtl parameter-name contract and refresh handoff"
+  4. this commit — bump importer 0.1.4 → 0.1.5 + host-check procedures
+- **Blender importer version bumped 0.1.4 → 0.1.5** in
+  `blendmax_blender/__init__.py` (string + `bl_info`), and
+  `blendmax_blender/blender_manifest.toml`. The build tool names the ZIP from
+  the manifest version, so it will produce `blendmax_importer-0.1.5.zip`.
 - Tests: **124 passing** (started at 99).
 - No `max_adapter.py` / exporter-side changes. All changes are on the Blender
   importer side + its tests + docs.
@@ -273,15 +276,24 @@ Matches the pre-existing IOR-lock tolerance. Cosmetic, but consistent.
 
 ## 8. Open blockers before merge
 
-1. **Host A/B: anisotropy sign.** Brushed-metal asset, `anisotropy = -0.6` in
-   Max vs the imported Blender result — confirm the quarter-turn direction.
-2. **Host A/B: sheen.** White / saturated / equal-luminance sheen swatches —
-   confirm `luminance(sheen_color)` is the right weight model.
-3. **Host confirmation of exported parameter casing** (soft, mostly retired —
-   see §10): a single real `VRayMtl` export's `manifest.json` `parameters`
-   keys should be diffed against the importer lookups. The static
-   whitelist-based check already passes (§10); this is the final empirical
-   confirmation that `getPropNames` casing matches the whitelist spelling.
+These are host checks that cannot run in the automated sandbox — they require
+3ds Max + V-Ray + Blender 5.2. The exact recipes requested by the PR review
+are reproduced here and in `BLENDER_IMPORTER_TEST_MATRIX.md`.
+
+1. **Host A/B: negative anisotropy sign.** Brushed-metal `VRayMtl`, two
+   variants — A: `anisotropy = +0.5`, `rotation = 0.0`; B:
+   `anisotropy = -0.5`, `rotation = 0.0`. Export both, import into Blender,
+   compare highlight direction. Confirms the importer's `+0.25` (90°) mapping
+   matches V-Ray visually.
+2. **Host A/B: sheen.** Three `VRayMtl`s — A: white sheen; B: saturated red
+   sheen; C: different color with ~same luminance as A. Confirms
+   `luminance(sheen_color) → Sheen Weight` + `sheen_color → Sheen Tint` and
+   checks for double-encoding of intensity.
+3. **Live Max parameter-casing confirmation.** Export one real `VRayMtl`,
+   inspect `manifest.json`, confirm `getPropNames` keys (casefolded) for
+   `reflection_glossiness`, `refraction_glossiness`, `brdf_useRoughness`,
+   `selfIllumination` match the whitelist spellings. This is the empirical
+   confirmation behind the static contract tests in §10.
 4. (Optional) Confirm `thinfilm_on` and `refraction_thinwalled` property names
    against Chaos MaxScript docs (F12 / I3, MEDIUM confidence).
 
@@ -354,3 +366,28 @@ addressed in this commit:
    → FIXED in this commit. §0 now lists all three commits (with the third
    described as "this commit" to avoid re-staling), and §10 (this section)
    records the round-2 state. Test counts updated to 124 / 54.
+
+---
+
+## 11. Review round 3 → responses (PR #2 comment)
+
+The PR owner posted on PR #2 ("Host validation before merge"). It requests
+three host checks and a version bump. Responses:
+
+1. **Three host checks** — negative-anisotropy A/B, sheen A/B, and live
+   parameter-casing confirmation. These require 3ds Max + V-Ray + Blender 5.2
+   and therefore cannot be executed in the automated sandbox. They are queued
+   for the host side; the exact recipes are recorded in
+   `BLENDER_IMPORTER_TEST_MATRIX.md` ("Pending host validation") and §8 above
+   so they are reproducible and their results (with screenshots) can be posted
+   to the PR.
+2. **Version bump 0.1.4 → 0.1.5** — DONE in this commit, in
+   `blendmax_blender/__init__.py` (string and `bl_info`) and
+   `blendmax_blender/blender_manifest.toml`; the build tool derives the ZIP
+   name from the manifest version, so it now emits `blendmax_importer-0.1.5.zip`.
+   README status/install references and the test-matrix title were updated;
+   `tests/test_blender_extension_build.py` version assertion updated to 0.1.5.
+   Historical 0.1.4 mentions (e.g. the Ring-Light pass) were left intact as
+   release history.
+
+PR #2 stays open until the three host checks pass and results are recorded.

@@ -21,7 +21,7 @@ created automatically by Python.
 | Component | Version | Status |
 | --- | --- | --- |
 | 3ds Max exporter and cleanup | `0.1.0-alpha.4.1.0` | Host verified in 3ds Max 2025.3 |
-| Blender importer | `0.1.4` | Ring-Light Physical Material pass completed in Blender 5.2 |
+| Blender importer | `0.1.5` | VRayMtl hardening landed; host A/B validation pending |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
 | Automated suite | 124 tests | Passing |
 
@@ -126,7 +126,7 @@ an updated exporter or cleanup action cannot continue running stale code.
 
 ## Install the Blender importer
 
-Build or download `blendmax_importer-0.1.4.zip`, then in Blender:
+Build or download `blendmax_importer-0.1.5.zip`, then in Blender:
 
 1. Open **Edit > Preferences > Get Extensions**.
 2. Open the menu in the top-right and choose **Install from Disk**.
