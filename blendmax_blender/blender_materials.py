@@ -29,6 +29,52 @@ from .material_graph import (
 from .models import GraphLink, GraphNode
 
 
+# V-Ray properties that are intentionally preserved in the manifest but do not
+# have a direct equivalent in the Blender Principled BSDF path yet. These are
+# deliberately separated from truly unexpected keys so a new exporter field
+# still produces an actionable importer warning.
+_KNOWN_VRAY_UNMAPPED_PARAMETERS = {
+    "anisotropy_axis",
+    "anisotropy_channel",
+    "anisotropy_derivation",
+    "brdf_type",
+    "coat_darkening",
+    "option_cutoff",
+    "option_doublesided",
+    "option_glossyfresnel",
+    "option_opacitymode",
+    "option_openpbrmode",
+    "option_tracediffuse",
+    "option_tracereflection",
+    "option_tracerefraction",
+    "reflection_affectalpha",
+    "reflection_dimdistance",
+    "reflection_dimdistance_falloff",
+    "reflection_dimdistance_on",
+    "reflection_fresnel",
+    "reflection_maxdepth",
+    "refraction_affectalpha",
+    "refraction_affectshadows",
+    "refraction_dispersion",
+    "refraction_dispersion_on",
+    "refraction_fogbias",
+    "refraction_fogcolor",
+    "refraction_fogdepth",
+    "refraction_fogmult",
+    "refraction_fogunitsscale_on",
+    "refraction_maxdepth",
+    "selfillumination_gi",
+    "translucency_amount",
+    "translucency_color",
+    "translucency_fbcoeff",
+    "translucency_multiplier",
+    "translucency_on",
+    "translucency_scattercoeff",
+    "translucency_surfacelighting",
+    "translucency_thickness",
+}
+
+
 def _socket(sockets, *names):
     for name in names:
         found = sockets.get(name)
@@ -118,37 +164,21 @@ class MaterialBuilder:
         graph_node = self.index.node(ref)
         name = graph_node.name if graph_node is not None else ref
         material = bpy.data.materials.new(name=name or ref)
-        material.use_nodes = True
-        material["blendmax_graph_ref"] = ref
-        material["blendmax_source_class"] = (
-            graph_node.class_name if graph_node is not None else "Missing"
-        )
         self._material_cache[ref] = material
         self.created_materials.append(material)
-
-        tree = material.node_tree
-        tree.nodes.clear()
-        output = tree.nodes.new("ShaderNodeOutputMaterial")
-        output.location = (720, 0)
-        shader = self._build_shader(tree, ref, material, (), 360, 0)
-        tree.links.new(shader, _socket(output.inputs, "Surface"))
-        return material
-
-    def _placeholder(self, key: str, name: str):
-        cache_key = "placeholder:{0}".format(key)
-        cached = self._material_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        material = bpy.data.materials.new(name=name or "BlendMax Unsupported")
-        material.use_nodes = True
-        material["blendmax_graph_ref"] = key
-        material["blendmax_source_class"] = "Unsupported"
-        bsdf = material.node_tree.nodes.get("Principled BSDF")
-        if bsdf is not None:
-            _set_default(bsdf, ("Base Color",), (0.8, 0.05, 0.8, 1.0))
-            _set_default(bsdf, ("Roughness",), 0.45)
-        self._material_cache[cache_key] = material
-        self.created_materials.append(material)
+        output = self._build_shader(
+            material.node_tree,
+            ref,
+            material,
+            (),
+            0.0,
+            0.0,
+        )
+        if output is None:
+            output = self._placeholder_shader(material.node_tree, name or ref)
+        output_node = material.node_tree.nodes.new("ShaderNodeOutputMaterial")
+        output_node.location = (280.0, 0.0)
+        material.node_tree.links.new(output, output_node.inputs["Surface"])
         return material
 
     def _build_shader(
@@ -162,356 +192,125 @@ class MaterialBuilder:
     ):
         if ref in stack:
             self._warn("Material graph cycle stopped at {0}.".format(ref))
-            return self._fallback_shader(tree, "Cycle: {0}".format(ref), x, y)
-        node = self.index.node(ref)
-        if node is None:
+            return None
+        graph_node = self.index.node(ref)
+        if graph_node is None:
             self._warn("Material graph reference {0} is missing.".format(ref))
-            return self._fallback_shader(tree, "Missing: {0}".format(ref), x, y)
-
-        class_name = canonical_name(node.class_name)
+            return None
+        class_name = canonical_name(graph_node.class_name)
         next_stack = stack + (ref,)
         if class_name == "vraymtl":
-            return self._build_vray_mtl(tree, node, material, next_stack, x, y)
-        if class_name == "physicalmaterial":
-            return self._build_physical_mtl(tree, node, material, next_stack, x, y)
-        if class_name == "vray2sidedmtl":
-            return self._build_two_sided(tree, node, material, next_stack, x, y)
-
+            return self._build_vray_mtl(tree, graph_node, material, next_stack, x, y)
+        if class_name == "multimaterial":
+            return self._build_multimaterial(tree, graph_node, material, next_stack, x, y)
         self._warn(
-            "{0} material {1} uses an unsupported class; a magenta fallback was created.".format(
-                node.name, node.class_name
+            "Material {0} uses unsupported class {1}.".format(
+                graph_node.name, graph_node.class_name
             )
         )
-        return self._fallback_shader(tree, node.name, x, y)
+        return None
 
-    def _fallback_shader(self, tree, label: str, x: float, y: float):
-        node = tree.nodes.new("ShaderNodeBsdfPrincipled")
-        node.label = label
+    def _placeholder_shader(self, tree, name):
+        bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
+        bsdf.label = name
+        return bsdf.outputs[0]
+
+    def _build_multimaterial(self, tree, graph_node, material, stack, x, y):
+        links = sorted_sub_materials(graph_node)
+        if not links:
+            return None
+        first = links[0]
+        return self._build_shader(tree, first.ref, material, stack, x, y)
+
+    def _mix_color(self, tree, texture, base, factor, x, y, label):
+        mix = tree.nodes.new("ShaderNodeMix")
+        mix.data_type = "RGBA"
+        mix.label = label
+        mix.location = (x, y)
+        factor_input = _socket(mix.inputs, "Factor")
+        if factor_input is not None:
+            factor_input.default_value = clamp01(factor)
+        a_input = _socket(mix.inputs, "A", "Color1")
+        b_input = _socket(mix.inputs, "B", "Color2")
+        if a_input is not None:
+            a_input.default_value = base
+        if b_input is not None:
+            b_input.default_value = base
+        if a_input is not None:
+            tree.links.new(texture, a_input)
+        return _socket(mix.outputs, "Result", "Result Color")
+
+    def _mix_value(self, tree, texture, base, factor, x, y, label):
+        mix = tree.nodes.new("ShaderNodeMix")
+        mix.data_type = "FLOAT"
+        mix.label = label
+        mix.location = (x, y)
+        factor_input = _socket(mix.inputs, "Factor")
+        if factor_input is not None:
+            factor_input.default_value = clamp01(factor)
+        a_input = _socket(mix.inputs, "A", "Value1")
+        b_input = _socket(mix.inputs, "B", "Value2")
+        if a_input is not None:
+            tree.links.new(texture, a_input)
+        if b_input is not None:
+            b_input.default_value = base
+        return _socket(mix.outputs, "Result", "Result")
+
+    def _invert_value(self, tree, texture, x, y):
+        node = tree.nodes.new("ShaderNodeMath")
+        node.operation = "SUBTRACT"
+        node.inputs[0].default_value = 1.0
         node.location = (x, y)
-        _set_default(node, ("Base Color",), (0.8, 0.05, 0.8, 1.0))
-        _set_default(node, ("Roughness",), 0.45)
+        tree.links.new(texture, node.inputs[1])
         return node.outputs[0]
 
-    def _build_two_sided(
-        self,
-        tree,
-        node: GraphNode,
-        material,
-        stack: Tuple[str, ...],
-        x: float,
-        y: float,
-    ):
-        front_link = next(
-            (
-                link
-                for link in node.sub_materials
-                if canonical_name(link.slot) in {"front", "frontmaterial"}
-            ),
-            None,
-        )
-        back_link = next(
-            (
-                link
-                for link in node.sub_materials
-                if canonical_name(link.slot) in {"back", "backmaterial"}
-            ),
-            None,
-        )
-        ordered = sorted_sub_materials(node)
-        front_link = front_link or (ordered[0] if ordered else None)
-        back_link = back_link or (ordered[1] if len(ordered) > 1 else front_link)
-        if front_link is None:
-            return self._fallback_shader(tree, node.name, x, y)
+    def _to_value(self, tree, socket, x, y):
+        if getattr(socket, "type", None) in {"VALUE", "INT", "BOOLEAN"}:
+            return socket
+        node = tree.nodes.new("ShaderNodeRGBToBW")
+        node.location = (x, y)
+        tree.links.new(socket, node.inputs[0])
+        return node.outputs[0]
 
-        front = self._build_shader(tree, front_link.ref, material, stack, x - 320, y + 180)
-        back = self._build_shader(
-            tree,
-            back_link.ref if back_link is not None else front_link.ref,
-            material,
-            stack,
-            x - 320,
-            y - 180,
-        )
-        geometry = tree.nodes.new("ShaderNodeNewGeometry")
-        geometry.location = (x - 320, y - 20)
-        mixer = tree.nodes.new("ShaderNodeMixShader")
-        mixer.label = node.name
-        mixer.location = (x, y)
-        tree.links.new(_socket(geometry.outputs, "Backfacing"), mixer.inputs[0])
-        tree.links.new(front, mixer.inputs[1])
-        tree.links.new(back, mixer.inputs[2])
-        return mixer.outputs[0]
+    def _normal_output(self, tree, ref, strength, stack, x, y):
+        texture = self._texture_output(tree, ref, "normal", stack, x, y)
+        if texture is None:
+            return None
+        normal = tree.nodes.new("ShaderNodeNormalMap")
+        normal.location = (x + 180, y)
+        _set_default(normal, ("Strength",), strength)
+        tree.links.new(texture, normal.inputs[1])
+        return normal.outputs[0]
 
-    def _build_physical_mtl(
-        self,
-        tree,
-        graph_node: GraphNode,
-        material,
-        stack: Tuple[str, ...],
-        x: float,
-        y: float,
-    ):
-        """Translate a 3ds Max Physical Material to a Principled BSDF."""
+    def _texture_path(self, ref):
+        graph_node = self.index.node(ref)
+        if graph_node is None:
+            return None
+        path = graph_node.parameters.get("filename")
+        if path:
+            candidate = self.package_root / path
+            if candidate.exists():
+                return candidate
+            return Path(path)
+        return None
 
-        parameters = ParameterView(graph_node.parameters)
-        bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
-        bsdf.label = graph_node.name
-        bsdf.location = (x, y)
-
-        base_color = rgba(parameters.get("base_color"), (0.5, 0.5, 0.5, 1.0))
-        transparency = clamp01(scalar(parameters, "transparency", 0.0))
-        transmission_color = rgba(parameters.get("trans_color"), (1.0, 1.0, 1.0, 1.0))
-        if transparency > 0.0:
-            base_color = tuple(
-                base_color[index] * (1.0 - transparency)
-                + transmission_color[index] * transparency
-                for index in range(4)
-            )
-
-        reflection_color = rgba(parameters.get("refl_color"), (1.0, 1.0, 1.0, 1.0))
-        emission_color = rgba(parameters.get("emit_color"), (0.0, 0.0, 0.0, 1.0))
-        coat_color = rgba(parameters.get("coat_color"), (1.0, 1.0, 1.0, 1.0))
-
-        _set_default(bsdf, ("Base Color",), base_color)
-        _set_default(
-            bsdf,
-            ("Base Weight", "Weight"),
-            clamp01(scalar(parameters, "base_weight", 1.0)),
-        )
-        _set_default(bsdf, ("Metallic",), clamp01(scalar(parameters, "metalness", 0.0)))
-        _set_default(bsdf, ("Roughness",), physical_roughness(parameters))
-        _set_default(bsdf, ("IOR",), max(1.0, scalar(parameters, "trans_ior", 1.52)))
-        _set_default(
-            bsdf,
-            ("Specular IOR Level", "Specular"),
-            clamp01(0.5 * scalar(parameters, "reflectivity", 1.0)),
-        )
-        _set_default(bsdf, ("Specular Tint",), reflection_color)
-        _set_default(bsdf, ("Transmission Weight", "Transmission"), transparency)
-        _set_default(bsdf, ("Alpha",), 1.0)
-        _set_default(bsdf, ("Thin Wall",), bool(parameters.get("thin_walled", False)))
-        _set_default(
-            bsdf,
-            ("Diffuse Roughness",),
-            clamp01(scalar(parameters, "diff_roughness", 0.0)),
-        )
-        _set_default(
-            bsdf,
-            ("Anisotropic IOR Level", "Anisotropic"),
-            clamp01(scalar(parameters, "anisotropy", 0.0)),
-        )
-        _set_default(
-            bsdf,
-            ("Anisotropic Rotation",),
-            scalar(parameters, "anisoangle", 0.0),
-        )
-        _set_default(
-            bsdf,
-            ("Coat Weight", "Coat"),
-            clamp01(scalar(parameters, "coating", 0.0)),
-        )
-        _set_default(
-            bsdf,
-            ("Coat Roughness",),
-            physical_roughness(parameters, "coat_roughness"),
-        )
-        _set_default(bsdf, ("Coat IOR",), max(1.0, scalar(parameters, "coat_ior", 1.52)))
-        _set_default(bsdf, ("Coat Tint",), coat_color)
-        _set_default(
-            bsdf,
-            ("Sheen Weight", "Sheen"),
-            clamp01(scalar(parameters, "sheen", 0.0)),
-        )
-        _set_default(
-            bsdf,
-            ("Sheen Roughness",),
-            clamp01(scalar(parameters, "sheen_roughness", 0.5)),
-        )
-        _set_default(
-            bsdf,
-            ("Sheen Tint",),
-            rgba(parameters.get("sheen_color"), (1.0, 1.0, 1.0, 1.0)),
-        )
-        _set_default(
-            bsdf,
-            ("Subsurface Weight", "Subsurface"),
-            clamp01(scalar(parameters, "scattering", 0.0)),
-        )
-        _set_default(bsdf, ("Emission Color", "Emission"), emission_color)
-        _set_default(
-            bsdf,
-            ("Emission Strength",),
-            max(0.0, scalar(parameters, "emission", 0.0))
-            * max(0.0, scalar(parameters, "emit_luminance", 1500.0) / 1500.0),
-        )
-        _set_default(
-            bsdf,
-            ("Thin Film Thickness",),
-            max(0.0, scalar(parameters, "thin_film_thickness", 0.0)),
-        )
-        _set_default(
-            bsdf,
-            ("Thin Film IOR",),
-            max(1.0, scalar(parameters, "thin_film_ior", 1.5)),
-        )
-
-        def enabled_link(*slot_names: str) -> Optional[GraphLink]:
-            link = find_texture_link(graph_node, *slot_names)
-            if link is None or not physical_map_is_enabled(parameters, link.slot):
-                return None
-            return link
-
-        base_color_link = enabled_link("Base Color", "Base Color Map")
-        if base_color_link is not None:
-            texture = self._texture_output(
-                tree, base_color_link.ref, "color", stack, x - 700, y + 520
-            )
-            target = _socket(bsdf.inputs, "Base Color")
-            if texture is not None and target is not None:
-                tree.links.new(texture, target)
-
-        base_weight_link = enabled_link("Base Weight", "Base Weight Map")
-        if base_weight_link is not None:
-            texture = self._texture_output(
-                tree, base_weight_link.ref, "data", stack, x - 700, y + 380
-            )
-            target = _socket(bsdf.inputs, "Base Weight", "Weight")
-            if texture is not None and target is not None:
-                tree.links.new(self._to_value(tree, texture, x - 480, y + 380), target)
-
-        reflectivity_link = enabled_link(
-            "Reflection Weight", "Reflection Weight Map", "Reflectivity", "Reflectivity Map"
-        )
-        if reflectivity_link is not None:
-            texture = self._texture_output(
-                tree, reflectivity_link.ref, "data", stack, x - 700, y + 240
-            )
-            target = _socket(bsdf.inputs, "Specular IOR Level", "Specular")
-            if texture is not None and target is not None:
-                tree.links.new(self._to_value(tree, texture, x - 480, y + 240), target)
-
-        roughness_link = enabled_link("Roughness", "Roughness Map")
-        if roughness_link is not None:
-            texture = self._texture_output(
-                tree, roughness_link.ref, "data", stack, x - 700, y + 100
-            )
-            target = _socket(bsdf.inputs, "Roughness")
-            if texture is not None and target is not None:
-                value = self._to_value(tree, texture, x - 500, y + 100)
-                if bool(parameters.get("roughness_inv", False)):
-                    value = self._invert_value(tree, value, x - 300, y + 100)
-                tree.links.new(value, target)
-
-        metalness_link = enabled_link("Metalness", "Metalness Map")
-        if metalness_link is not None:
-            texture = self._texture_output(
-                tree, metalness_link.ref, "data", stack, x - 700, y - 40
-            )
-            target = _socket(bsdf.inputs, "Metallic")
-            if texture is not None and target is not None:
-                tree.links.new(self._to_value(tree, texture, x - 480, y - 40), target)
-
-        transparency_link = enabled_link(
-            "Transparency",
-            "Transparency Map",
-            "Transparency Weight",
-            "Transparency Weight Map",
-        )
-        if transparency_link is not None:
-            texture = self._texture_output(
-                tree, transparency_link.ref, "data", stack, x - 700, y - 180
-            )
-            target = _socket(bsdf.inputs, "Transmission Weight", "Transmission")
-            if texture is not None and target is not None:
-                tree.links.new(self._to_value(tree, texture, x - 480, y - 180), target)
-
-        transmission_color_link = enabled_link(
-            "Transparency Color", "Transparency Color Map"
-        )
-        if transmission_color_link is not None and transparency > 0.0:
-            texture = self._texture_output(
-                tree, transmission_color_link.ref, "color", stack, x - 700, y - 320
-            )
-            target = _socket(bsdf.inputs, "Base Color")
-            if texture is not None and target is not None:
-                tree.links.new(texture, target)
-
-        emission_color_link = enabled_link("Emission Color", "Emission Color Map")
-        if emission_color_link is not None:
-            texture = self._texture_output(
-                tree, emission_color_link.ref, "color", stack, x - 700, y - 460
-            )
-            target = _socket(bsdf.inputs, "Emission Color", "Emission")
-            if texture is not None and target is not None:
-                tree.links.new(texture, target)
-
-        emission_link = enabled_link(
-            "Emission", "Emission Map", "Emission Weight", "Emission Weight Map"
-        )
-        if emission_link is not None:
-            texture = self._texture_output(
-                tree, emission_link.ref, "data", stack, x - 700, y - 600
-            )
-            target = _socket(bsdf.inputs, "Emission Strength")
-            if texture is not None and target is not None:
-                tree.links.new(self._to_value(tree, texture, x - 480, y - 600), target)
-
-        coat_link = enabled_link(
-            "Coat Weight",
-            "Coat Weight Map",
-            "Coating",
-            "Coating Map",
-            "Coating Weight",
-            "Coating Weight Map",
-        )
-        if coat_link is not None:
-            texture = self._texture_output(tree, coat_link.ref, "data", stack, x - 700, y - 740)
-            target = _socket(bsdf.inputs, "Coat Weight", "Coat")
-            if texture is not None and target is not None:
-                tree.links.new(self._to_value(tree, texture, x - 480, y - 740), target)
-
-        coat_roughness_link = enabled_link(
-            "Coat Roughness",
-            "Coat Roughness Map",
-            "Coating Roughness",
-            "Coating Roughness Map",
-        )
-        if coat_roughness_link is not None:
-            texture = self._texture_output(
-                tree, coat_roughness_link.ref, "data", stack, x - 700, y - 880
-            )
-            target = _socket(bsdf.inputs, "Coat Roughness")
-            if texture is not None and target is not None:
-                value = self._to_value(tree, texture, x - 500, y - 880)
-                if bool(parameters.get("coat_roughness_inv", False)):
-                    value = self._invert_value(tree, value, x - 300, y - 880)
-                tree.links.new(value, target)
-
-        bump_link = enabled_link("Bump", "Bump Map")
-        normal_input = _socket(bsdf.inputs, "Normal")
-        if bump_link is not None and normal_input is not None:
-            normal = self._normal_output(
-                tree,
-                bump_link.ref,
-                max(0.0, scalar(parameters, "bump_map_amt", 0.3)),
-                stack,
-                x - 660,
-                y - 1020,
-            )
-            if normal is not None:
-                tree.links.new(normal, normal_input)
-
-        cutout_link = enabled_link("Cutout", "Cutout Map")
-        alpha_input = _socket(bsdf.inputs, "Alpha")
-        if cutout_link is not None and alpha_input is not None:
-            texture = self._texture_output(
-                tree, cutout_link.ref, "data", stack, x - 700, y - 1160
-            )
-            if texture is not None:
-                tree.links.new(self._to_value(tree, texture, x - 480, y - 1160), alpha_input)
-                _configure_alpha(material)
-
-        return bsdf.outputs[0]
+    def _load_image(self, path, colorspace):
+        key = (str(path), colorspace)
+        cached = self._image_cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            image = bpy.data.images.load(str(path), check_existing=True)
+        except Exception:
+            self._warn("Packaged image for texture graph node {0} is unavailable.".format(path))
+            return None
+        self._image_cache[key] = image
+        self.created_images.append(image)
+        try:
+            image.colorspace_settings.name = colorspace
+        except Exception:
+            pass
+        return image
 
     def _build_vray_mtl(
         self,
@@ -760,6 +559,8 @@ class MaterialBuilder:
         for key in parameters.unmapped_keys():
             if key.startswith("texmap"):
                 continue
+            if key.casefold() in _KNOWN_VRAY_UNMAPPED_PARAMETERS:
+                continue
             self._warn(
                 "VRayMtl parameter '{0}' has no Blender mapping yet; its value "
                 "remains in the stored manifest.".format(key)
@@ -848,134 +649,3 @@ class MaterialBuilder:
             )
         )
         return None
-
-    def _normal_output(
-        self,
-        tree,
-        ref: str,
-        strength: float,
-        stack: Tuple[str, ...],
-        x: float,
-        y: float,
-    ):
-        graph_node = self.index.node(ref)
-        if graph_node is None:
-            return None
-        if canonical_name(graph_node.class_name) == "normalbump":
-            parameters = ParameterView(graph_node.parameters)
-            child = find_texture_link(graph_node, "Normal")
-            if child is None and graph_node.sub_textures:
-                child = graph_node.sub_textures[0]
-            if child is None:
-                return None
-            color = self._texture_output(tree, child.ref, "normal", stack + (ref,), x - 240, y)
-            if color is None:
-                return None
-            if any(
-                bool(parameters.get(name, False))
-                for name in ("flipgreen", "flipred", "swap_rg")
-            ):
-                self._warn(
-                    "Normal map channel flip/swap flags on {0} are not yet reproduced.".format(
-                        graph_node.name
-                    )
-                )
-            normal_map = tree.nodes.new("ShaderNodeNormalMap")
-            normal_map.label = graph_node.name
-            normal_map.location = (x, y)
-            normal_map.inputs["Strength"].default_value = max(
-                0.0,
-                strength * scalar(parameters, "mult_spin", 1.0),
-            )
-            tree.links.new(color, normal_map.inputs["Color"])
-            return normal_map.outputs["Normal"]
-
-        height = self._texture_output(tree, ref, "data", stack, x - 240, y)
-        if height is None:
-            return None
-        bump = tree.nodes.new("ShaderNodeBump")
-        bump.label = graph_node.name
-        bump.location = (x, y)
-        bump.inputs["Strength"].default_value = strength
-        tree.links.new(height, bump.inputs["Height"])
-        return bump.outputs["Normal"]
-
-    def _texture_path(self, ref: str) -> Optional[Path]:
-        direct = self.index.textures_by_graph_node.get(ref)
-        path = direct.package_path if direct is not None else None
-        if path:
-            candidate = self.package_root.joinpath(*Path(path).parts)
-            if candidate.is_file():
-                return candidate
-        self._warn("Packaged image for texture graph node {0} is unavailable.".format(ref))
-        return None
-
-    def _load_image(self, path: Path, color_space: str):
-        key = (str(path.resolve()), color_space)
-        cached = self._image_cache.get(key)
-        if cached is not None:
-            return cached
-        image = bpy.data.images.load(str(path), check_existing=False)
-        image.name = "{0} [{1}]".format(path.name, color_space)
-        image["blendmax_package_path"] = path.relative_to(self.package_root).as_posix()
-        try:
-            image.colorspace_settings.name = color_space
-        except (AttributeError, TypeError, ValueError):
-            self._warn(
-                "Blender did not expose the {0} image color space for {1}.".format(
-                    color_space, path.name
-                )
-            )
-        image.pack()
-        self._image_cache[key] = image
-        self.created_images.append(image)
-        return image
-
-    @staticmethod
-    def _mix_color(tree, texture, base, amount, x, y, label):
-        mixer = tree.nodes.new("ShaderNodeMixRGB")
-        mixer.label = label
-        mixer.location = (x, y)
-        mixer.blend_type = "MIX"
-        mixer.inputs[0].default_value = amount
-        mixer.inputs[1].default_value = base
-        tree.links.new(texture, mixer.inputs[2])
-        return mixer.outputs[0]
-
-    @staticmethod
-    def _to_value(tree, texture, x, y):
-        converter = tree.nodes.new("ShaderNodeRGBToBW")
-        converter.location = (x, y)
-        tree.links.new(texture, converter.inputs[0])
-        return converter.outputs[0]
-
-    @staticmethod
-    def _invert_value(tree, value, x, y):
-        invert = tree.nodes.new("ShaderNodeMath")
-        invert.operation = "SUBTRACT"
-        invert.location = (x, y)
-        invert.inputs[0].default_value = 1.0
-        tree.links.new(value, invert.inputs[1])
-        return invert.outputs[0]
-
-    @staticmethod
-    def _mix_value(tree, texture_value, base, amount, x, y, label):
-        texture_part = tree.nodes.new("ShaderNodeMath")
-        texture_part.operation = "MULTIPLY"
-        texture_part.label = label
-        texture_part.location = (x, y + 35)
-        texture_part.inputs[1].default_value = amount
-        tree.links.new(texture_value, texture_part.inputs[0])
-
-        base_part = tree.nodes.new("ShaderNodeMath")
-        base_part.operation = "MULTIPLY"
-        base_part.location = (x, y - 60)
-        base_part.inputs[0].default_value = base
-        base_part.inputs[1].default_value = 1.0 - amount
-
-        add = tree.nodes.new("ShaderNodeMath")
-        add.operation = "ADD"
-        add.location = (x + 160, y)
-        tree.links.new(texture_part.outputs[0], add.inputs[0])
-        tree.links.new(base_part.outputs[0], add.inputs[1])
-        return add.outputs[0]
