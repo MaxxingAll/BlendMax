@@ -12,8 +12,8 @@ one FBX operator call, and indexed O(n) manifest/graph processing.
 
 ## Automated status
 
-All 127 project tests pass under ordinary Python. Fifty-seven importer-specific
-tests cover:
+All 128 project tests are expected to pass under ordinary Python after the new
+headless V-Ray map-contract test. Fifty-eight importer-specific tests cover:
 
 - Blender extension metadata and root ZIP layout;
 - reproducible extension builds;
@@ -37,6 +37,9 @@ tests cover:
 - refraction-glossiness divergence reporting and its matching no-warning case;
 - simulated 3ds Max/V-Ray manifest -> ManifestIndex -> VRayMtl ->
   fake-Blender-node integration fixtures;
+- headless VRayMtl bitmap/map fixture coverage for Diffuse, Reflection,
+  Reflection roughness, Refraction, and Bump links, enable state, multipliers,
+  packaged texture records, and slot normalization;
 - the importer/exporter parameter-name contract: every literal VRayMtl
   parameter the importer reads must exist in the exporter's
   `VRAY_MTL_PROPERTIES` whitelist (or be a `texmap_*` map control), and the
