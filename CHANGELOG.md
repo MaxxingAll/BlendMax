@@ -13,45 +13,73 @@ called out separately from automated coverage.
   default values and distinct property names cannot collapse into one another.
   Known cross-release spellings can be registered in an explicit alias table
   instead of relying on implicit punctuation stripping.
-- Reports every captured `VRayMtl` parameter that has no Blender shader mapping
-  as a warning, deduplicated per parameter name. Connected-texture map controls
-  are excluded because they are already interpreted through the generic slot
-  handling. This surfaces untested parameter aliases during the production
-  audit instead of discarding them quietly.
 - Maps V-Ray `VRayMtl` anisotropy, sheen, and thin film to native Principled
   BSDF inputs. Anisotropy magnitude becomes Blender's Anisotropic input, with a
-  quarter turn added for negative (perpendicular) V-Ray values and the 0..1
-  rotation passed through as Blender's 0..1 full-circle Anisotropic Rotation.
-  Sheen color's luminance drives Sheen Weight (V-Ray has no separate sheen
-  weight), its glossiness is inverted to Sheen Roughness, and its color maps to
-  Sheen Tint. Thin-film IOR maps directly, and thickness collapses the V-Ray
-  min/max range to the minimum (matching V-Ray's no-blend-map behavior), with a
-  disabled thin film mapping to zero thickness.
+  quarter turn added for negative V-Ray values and the 0..1 rotation passed
+  through as Blender's 0..1 full-circle Anisotropic Rotation. Sheen color's
+  luminance drives Sheen Weight and the original color maps to Sheen Tint;
+  sheen glossiness is inverted to Sheen Roughness. Thin-film IOR maps directly,
+  and thickness uses the minimum value when no thickness-blend map is active.
 - Maps V-Ray coat color to Coat Tint, `diffuse_roughness` to Diffuse Roughness,
-  and thin-walled refraction to Blender's Thin Wall flag. V-Ray's separate
-  coat-darkening effect has no Blender equivalent and remains reported as
-  unmapped.
-- Reports a material whose refraction glossiness diverges from its reflection
-  glossiness: Blender's Principled shader exposes one roughness for both, so
-  the reflection roughness is used and the refraction roughness is flagged as
-  an approximation. V-Ray keeps refraction as glossiness even when "Use
-  roughness" is enabled, so the comparison always inverts refraction
-  glossiness to roughness first.
-- Adds an importer/exporter parameter-name contract test: every literal
-  VRayMtl parameter the importer reads is checked against the exporter's
-  `VRAY_MTL_PROPERTIES` whitelist (map controls aside), and the full whitelist
-  is verified to map or report every property. This locks the name spellings
-  that were previously an implicit assumption.
+  and thin-walled refraction to Blender's Thin Wall flag.
+- Adds an importer/exporter parameter-name contract test covering every literal
+  VRayMtl parameter lookup and the exporter's `VRAY_MTL_PROPERTIES` whitelist.
+- Adds the `ImportSummary.notes` channel so known limitations can be reported as
+  informational notes instead of warnings.
+
+### Diagnostics
+
+- Known V-Ray properties that are intentionally preserved but do not yet have a
+  direct Principled BSDF mapping are grouped into one note rather than emitted
+  as individual warnings. The note uses the format:
+
+  > `(field/field/field/...) is not supported yet, wait for future BlendMax updates`
+
+- The currently known unsupported group includes V-Ray anisotropy-axis
+  metadata, `brdf_type`, coat darkening, material-option flags, reflection and
+  refraction depth/fog/dispersion controls, self-illumination GI controls, and
+  translucency controls. Their original values remain in the stored manifest
+  for future BlendMax support.
+- Truly unexpected/unrecognized VRayMtl parameters remain warnings using the
+  existing `has no Blender mapping yet` diagnostic. This keeps future exporter
+  additions visible without flooding normal imports with known limitations.
+- Materials with separate reflection and refraction glossiness values are
+  reported once as a grouped note using the affected material names:
+
+  > `(Material A/Material B/...) has separate reflection and refraction glossiness values; Blender's Principled shader uses a single roughness for both, so the refraction roughness is approximated.`
+
+  The importer continues using the reflection roughness for the single
+  Principled Roughness input.
+- Missing packaged texture data remains a genuine warning, for example:
+
+  > `Packaged image for texture graph node tex_2140 is unavailable.`
 
 ### Host evidence
 
-- Pending Blender 5.2 verification of the new anisotropy, sheen, thin-film,
-  coat, diffuse-roughness, and thin-walled-refraction mappings against a real
-  `VRayMtl` asset.
-- The negative-anisotropy quarter-turn and sheen-luminance-as-weight
-  conversions are treated as unsettled inferences: unit-tested, but requiring a
-  brushed-metal anisotropy A/B and a white/saturated/equal-luminance sheen A/B
-  in Max and Blender before they are considered verified.
+The requested real-host validation for the new VRayMtl parameter handling is
+complete:
+
+- **Negative anisotropy — PASS:** a real `VRayMtl` with `anisotropy = -0.5`
+  imported to Blender with `Anisotropic = 0.5` and
+  `Anisotropic Rotation = 0.25`. The milestone acceptance criterion is correct
+  BSDF parameter adaptation, not renderer visual parity.
+- **Sheen — PASS:** white sheen produced Weight `1.000`; saturated red sheen
+  produced Weight `0.213` with red tint; green sheen `(0, 0.297, 0)` produced
+  Weight `0.212` with green tint.
+- **Live Max casing — PASS:** a live V-Ray material was inspected through
+  MaxScript/Python `pymxs`; `#reflection_glossiness`,
+  `#refraction_glossiness`, `#brdf_useRoughness`, and `#selfIllumination` were
+  present and readable.
+
+### Current verification status
+
+- Blender importer version: **0.1.5**.
+- PR #2 is still **open and not merged**.
+- The feature implementation and requested real-host validation are complete.
+- Remaining pre-merge gate: perform one clean Blender 5.2 re-import with the
+  current build and confirm the expected limitations appear as grouped notes,
+  real problems remain warnings, and no warning-count regression is introduced.
+  Then confirm the repository CI/checks before merge.
 
 ## Blender Importer 0.1.4 — 2026-08-26
 
