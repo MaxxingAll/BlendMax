@@ -19,6 +19,7 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from blendmax_blender.manifest import ManifestIndex, parse_manifest
+from blendmax_blender.material_graph import find_texture_link, map_amount, map_is_enabled
 from fakes import FakeTree, load_materials_module
 
 
@@ -81,6 +82,24 @@ class HeadlessVRayPipelineTests(unittest.TestCase):
         self.assertAlmostEqual(principled.inputs["Diffuse Roughness"].default_value, 0.35)
         self.assertTrue(principled.inputs["Thin Wall"].default_value)
         self.assertTrue(any("refraction roughness is approximated" in item for item in warnings))
+
+    def test_map_fixture_parses_links_and_exporter_controls(self):
+        manifest = load_fixture("vraymtl_maps.json")
+        index = ManifestIndex(manifest)
+        material = index.node("mat_maps")
+
+        self.assertEqual(manifest.schema_version, "0.1.1")
+        self.assertEqual(len(material.sub_textures), 5)
+        self.assertEqual(find_texture_link(material, "Diffuse").ref, "tex_diffuse")
+        self.assertEqual(find_texture_link(material, "Reflection roughness").ref, "tex_gloss")
+        self.assertFalse(map_is_enabled(material.parameters, "Refraction"))
+        self.assertTrue(map_is_enabled(material.parameters, "Diffuse"))
+        self.assertAlmostEqual(map_amount(material.parameters, "Diffuse"), 0.65)
+        self.assertAlmostEqual(map_amount(material.parameters, "Reflection"), 0.25)
+        self.assertAlmostEqual(map_amount(material.parameters, "Bump"), 1.0)
+        self.assertEqual(index.node("tex_diffuse").parameters["path"], "textures/albedo.png")
+        self.assertEqual(index.node("tex_bump").parameters["path"], "textures/bump.png")
+        self.assertEqual(index.textures_by_graph_node["tex_gloss"].package_path, "textures/gloss.png")
 
     def test_fixture_preserves_unmapped_parameters_for_diagnostics(self):
         raw = json.loads((FIXTURES / "vraymtl_basic.json").read_text(encoding="utf-8"))
