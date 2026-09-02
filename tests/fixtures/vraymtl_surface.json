@@ -1,0 +1,8 @@
+{
+  "schema": {"name": "BlendMax Manifest", "version": "0.1.5"},
+  "asset": {"name": "Headless Surface VRayMtl", "mode": "single", "root_id": "obj_surface", "bounds_m": {"minimum": [0,0,0], "maximum": [1,1,1]}, "size_policy": {"recommended_blender_scale": 1.0}},
+  "geometry": {"file": "asset_surface.fbx"},
+  "objects": [{"id": "obj_surface", "fbx_name": "SurfaceObject", "original_name": "SurfaceObject", "node_type": "Geometry", "superclass": "GeometryClass"}],
+  "materials": {"graph": [{"id": "mat_surface", "kind": "material", "class": "VRayMtl", "name": "Surface Features", "parameters": {"anisotropy": -0.6, "anisotropy_rotation": 0.5, "sheen_color": [1,0,0,1], "sheen_glossiness": 0.8, "thinfilm_on": true, "thinfilm_ior": 1.4, "thinfilm_thickness_min": 300.0, "thinfilm_thickness_max": 600.0, "coat_color": [0.2,0.4,0.6,1], "diffuse_roughness": 0.35, "refraction": [1,1,1,1], "refraction_thinwalled": true, "reflection_glossiness": 0.9, "refraction_glossiness": 0.3}, "sub_materials": [], "sub_textures": []}], "assignments": [{"object_id": "obj_surface", "material_ref": "mat_surface"}]},
+  "textures": [], "warnings": []
+}
