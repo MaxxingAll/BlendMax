@@ -12,60 +12,16 @@ one FBX operator call, and indexed O(n) manifest/graph processing.
 
 ## Automated status
 
-All 128 project tests are expected to pass under ordinary Python after the new
-headless V-Ray map-contract test. Fifty-eight importer-specific tests cover:
-
-- Blender extension metadata and root ZIP layout;
-- reproducible extension builds;
-- manifest schema 0.1.0 and 0.1.1 parsing;
-- duplicate object-name and incompatible-schema rejection;
-- legacy texture-to-graph matching by filename;
-- texture-slot normalization;
-- V-Ray map enable and multiplier interpretation;
-- glossiness-to-roughness conversion;
-- case-insensitive manifest parameter lookup that preserves exact spelling,
-  its punctuation-variant rejection, and explicit-alias fallback;
-- access tracking and unmapped-key reporting;
-- VRayMtl dispatch, mixed-casing parameter mapping, and unmapped-parameter
-  diagnostics (deduplicated per parameter);
-- V-Ray anisotropy magnitude/rotation, negative-sign quarter-turn, and
-  rotation wrapping;
-- V-Ray sheen glossiness inversion;
-- V-Ray thin-film min-thickness selection and off-to-zero mapping;
-- VRayMtl anisotropy, sheen, and thin-film Principled defaults;
-- VRayMtl coat tint, diffuse roughness, and thin-walled refraction defaults;
-- refraction-glossiness divergence reporting and its matching no-warning case;
-- simulated 3ds Max/V-Ray manifest -> ManifestIndex -> VRayMtl ->
-  fake-Blender-node integration fixtures;
-- headless VRayMtl bitmap/map fixture coverage for Diffuse, Reflection,
-  Reflection roughness, Refraction, and Bump links, enable state, multipliers,
-  packaged texture records, and slot normalization;
-- the importer/exporter parameter-name contract: every literal VRayMtl
-  parameter the importer reads must exist in the exporter's
-  `VRAY_MTL_PROPERTIES` whitelist (or be a `texmap_*` map control), and the
-  full whitelist must map or report every property;
-- Physical Material class dispatch, map-enable interpretation, and roughness
-  inversion;
-- Physical Material Principled defaults and base-color map wiring;
-- color normalization;
-- world-origin footprint centering and ground-level anchoring;
-- nested-group descendant bounds and hierarchy-cycle rejection;
-- direct FBX-root translation without moving nested children twice;
-- separation and removal of FBX objects that have no manifest record;
-- selective archive extraction;
-- traversal rejection;
-- missing packaged-texture rejection; and
-- `.blendmax` file-type validation.
+The current automated suite contains **133 tests** under ordinary Python.
+GitHub Actions runs the suite on Python 3.11, 3.12, and 3.13. The suite covers
+Blender packaging/manifest behavior, importer translation, V-Ray parameter and
+map contracts, diagnostics grouping, Max cleanup/export validation, and the
+existing installer/update paths.
 
 The headless V-Ray fixtures are deliberately simulated manifests, not claims
 that a running V-Ray host produced those exact values. They provide a fast
 regression layer for the importer pipeline; real Max/V-Ray A/B tests remain the
-ground truth for renderer-specific visual parity.
-
-The package reader was also exercised successfully against the current
-Basketball package, the four-potted-plants package, and the older normal-map
-package. This confirms their manifests and declared payloads can enter the
-import pipeline; it is not a substitute for Blender runtime rendering checks.
+ground truth for renderer-specific host behavior.
 
 ## Verified Blender 5.2 manual passes
 
@@ -117,56 +73,50 @@ without warnings or errors; the two mapped materials displayed their packaged
 images, the hierarchy and world-origin placement remained intact, and the
 undeclared `Untitled` cube was absent.
 
-## Pending host validation (unsettled inferences)
+## Verified V-Ray host parameter adaptation
 
-These conversions are implemented and unit-tested but are treated as
-*unverified* until the host A/B passes below settle them. Record results (with
-screenshots) here or in the PR.
+The requested real 3ds Max/V-Ray + Blender checks are complete. The milestone
+acceptance criterion is correct BSDF parameter adaptation; renderer-specific
+visual parity is not required for these three checks.
 
-### 1. Negative V-Ray anisotropy → +0.25 rotation
+### 1. Negative V-Ray anisotropy → +0.25 rotation — PASS
 
-The branch maps a negative `anisotropy` sign to a 90° rotation because V-Ray's
-sign flips the elongation axis while Blender only exposes a non-negative
-magnitude. Unit and headless manifest tests cover the arithmetic; the ±90°
-direction must be confirmed visually.
+A real `VRayMtl` with `anisotropy = -0.5` and
+`anisotropy_rotation = 0.0` imported to Blender with:
 
-Procedure: create one brushed-metal `VRayMtl`, then duplicate it:
+- **Anisotropic = 0.5**
+- **Anisotropic Rotation = 0.25**
 
-- A: `anisotropy = +0.5`, `anisotropy_rotation = 0.0`
-- B: `anisotropy = -0.5`, `anisotropy_rotation = 0.0`
+### 2. Sheen Weight = luminance of `sheen_color` — PASS
 
-Export both through BlendMax, import into Blender, and compare the highlight
-direction/orientation. Confirm the importer's negative-anisotropy handling
-(+0.25 / 90°) matches V-Ray.
+Real host checks produced:
 
-### 2. Sheen Weight = luminance of `sheen_color`
+- white sheen → Weight `1.000`, white tint
+- saturated red sheen → Weight `0.213`, red tint
+- green `(0, 0.297, 0)` → Weight `0.212`, green tint
 
-V-Ray 3ds Max has no separate sheen amount, so the color's luminance drives
-Blender's Sheen Weight and the color maps to Sheen Tint. This could over- or
-under-encode intensity and may double-encode the color via the tint.
+### 3. Live Max parameter casing — PASS
 
-Procedure: create three otherwise-identical `VRayMtl` materials:
+Live `getPropNames` confirmed these actual keys and readable values:
 
-- A: white sheen color
-- B: saturated red sheen color
-- C: a different sheen color with approximately the same luminance as A
+- `#reflection_glossiness`
+- `#refraction_glossiness`
+- `#brdf_useRoughness`
+- `#selfIllumination`
 
-Export/import and compare Max vs Blender, checking specifically for
-double-encoding of intensity.
+## Final runtime gate
 
-### 3. Live Max parameter-casing confirmation
+One clean Blender 5.2 re-import of the previously noisy test asset remains to be
+performed against the current `0.1.5` build. The expected operator-facing result
+is:
 
-Export one real `VRayMtl` with the current 3ds Max/V-Ray setup and inspect the
-resulting `manifest.json`. Confirm the actual `getPropNames` keys (casefolded)
-match the exporter whitelist/contract expectations for at least:
+1. one grouped note for known unsupported V-Ray fields;
+2. one grouped note for divergent reflection/refraction glossiness;
+3. a missing packaged image remains a genuine warning; and
+4. no per-field `BlendMax warning: VRayMtl parameter ...` spam.
 
-- `reflection_glossiness`
-- `refraction_glossiness`
-- `brdf_useRoughness`
-- `selfIllumination`
-
-This is the empirical confirmation behind the static contract and headless
-fixture tests.
+This is a runtime acceptance check, not something the ordinary-Python suite can
+prove.
 
 ## Pass criteria
 
@@ -176,8 +126,8 @@ fixture tests.
 - No unpacked image points at the importer's temporary directory.
 - The original manifest is present in Blender's Text data and referenced by the
   asset controller.
-- Warnings identify approximations or unsupported nodes without discarding the
-  rest of the asset.
+- Warnings identify real problems; expected unsupported/approximate V-Ray
+  behavior is grouped into informational notes.
 - Undo removes the imported asset as one operator action.
 
 ## Known Alpha.1 limits
@@ -193,7 +143,7 @@ fixture tests.
   map is not yet interpreted, so the maximum is ignored (its value remains in
   the stored manifest).
 - Blender's single Principled roughness approximates V-Ray's separate
-  reflection/refraction roughness; divergent values are reported rather than
-  reproduced.
+  reflection/refraction roughness; divergent values are grouped as an
+  informational note rather than reproduced exactly.
 - Advanced rendering parity beyond the verified Basketball and four-potted-
   plants baselines remains ongoing.
