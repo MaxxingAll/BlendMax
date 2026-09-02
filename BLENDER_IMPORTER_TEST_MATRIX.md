@@ -104,19 +104,19 @@ Live `getPropNames` confirmed these actual keys and readable values:
 - `#brdf_useRoughness`
 - `#selfIllumination`
 
-## Final runtime gate
+## Final runtime gate — PASS
 
-One clean Blender 5.2 re-import of the previously noisy test asset remains to be
-performed against the current `0.1.5` build. The expected operator-facing result
-is:
+A clean Blender 5.2 re-import of the previously noisy test asset was completed
+against the current `0.1.5` build. Actual operator/console output confirmed:
 
-1. one grouped note for known unsupported V-Ray fields;
-2. one grouped note for divergent reflection/refraction glossiness;
-3. a missing packaged image remains a genuine warning; and
-4. no per-field `BlendMax warning: VRayMtl parameter ...` spam.
+1. **one genuine warning** for missing packaged image `tex_2140`;
+2. **one grouped note** for known unsupported V-Ray fields;
+3. **one grouped note** for divergent reflection/refraction glossiness across
+   three materials; and
+4. **no per-field** `BlendMax warning: VRayMtl parameter ...` spam.
 
-This is a runtime acceptance check, not something the ordinary-Python suite can
-prove.
+The FBX import completed successfully. This runtime acceptance check complements
+the ordinary-Python suite.
 
 ## Pass criteria
 
