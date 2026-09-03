@@ -69,6 +69,18 @@ class FakeAdapter:
     def _is_undefined(self, value):
         return value is None or value is self.rt.undefined
 
+    def get_class_name(self, value):
+        return self._class_name(value)
+
+    def get_anim_id(self, value):
+        return self._anim_id(value)
+
+    def is_undefined(self, value):
+        return self._is_undefined(value)
+
+    def get_node_by_id(self, node_id):
+        return self._nodes_by_id.get(node_id)
+
     def notify(self, message, title):
         self.notifications.append((message, title))
 
@@ -124,6 +136,48 @@ class AlphaOpacityTests(unittest.TestCase):
             material_uses_alpha_opacity(FakeAdapter({"leaf": material}), material)
         )
 
+    def test_vray_constant_opacity_is_intentionally_not_detected(self):
+        material = FakeMaterial("Leaves", class_name="VRayMtl", opacity=0.5)
+        self.assertFalse(
+            material_uses_alpha_opacity(FakeAdapter({"leaf": material}), material)
+        )
+
+    def test_physical_material_cutout_map_is_detected(self):
+        material = FakeMaterial(
+            "Leaves",
+            class_name="Physical_Material",
+            cutout_map="leaf_cutout.png",
+            cutout_map_on=True,
+        )
+        self.assertTrue(
+            material_uses_alpha_opacity(FakeAdapter({"leaf": material}), material)
+        )
+
+    def test_physical_material_disabled_cutout_map_is_not_detected(self):
+        material = FakeMaterial(
+            "Leaves",
+            class_name="Physical_Material",
+            cutout_map="leaf_cutout.png",
+            cutout_map_on=False,
+        )
+        self.assertFalse(
+            material_uses_alpha_opacity(FakeAdapter({"leaf": material}), material)
+        )
+
+    def test_standard_property_enumeration_failure_is_fail_open(self):
+        material = FakeMaterial(
+            "Leaves",
+            opacityMap="leaf_alpha.png",
+            opacityMapEnable=True,
+        )
+        adapter = FakeAdapter({"leaf": material})
+
+        def failing_prop_names(_value):
+            raise RuntimeError("property enumeration unavailable")
+
+        adapter.rt.getPropNames = failing_prop_names
+        self.assertFalse(material_uses_alpha_opacity(adapter, material))
+
     def test_nested_multisub_opacity_protects_whole_geometry(self):
         multisub = FakeMaterial("TreeMulti", class_name="Multi/Sub")
         bark = FakeMaterial("Bark01", class_name="VRayMtl")
@@ -142,17 +196,6 @@ class AlphaOpacityTests(unittest.TestCase):
         )
 
         self.assertEqual([finding.geometry_id for finding in findings], ["Tree_01"])
-
-    def test_physical_material_cutout_map_is_detected(self):
-        material = FakeMaterial(
-            "Leaves",
-            class_name="Physical_Material",
-            cutout_map="leaf_cutout.png",
-            cutout_map_on=True,
-        )
-        self.assertTrue(
-            material_uses_alpha_opacity(FakeAdapter({"leaf": material}), material)
-        )
 
     def test_case_insensitive_standard_property_name_is_detected(self):
         material = FakeMaterial(
