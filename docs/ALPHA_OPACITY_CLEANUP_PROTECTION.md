@@ -58,6 +58,8 @@ Alpha/opacity detection uses the adapter's public `get_node_by_id()`, `get_anim_
 
 Protected geometry remains intact and is not passed through the join/destructive mesh path. Existing nested-group cleanup still runs on the cleanup plan, so a protected mesh can remain as a separate node while its containing nested-group structure is normalized. This is intentional for this PR: protection applies to geometry/material joining, not group-structure normalization.
 
+**In other words, “protected” applies to the mesh/material join path; it does not preserve the surrounding nested-group hierarchy.**
+
 ## Validation
 
 - `tests/test_alpha_opacity.py` covers Standard/V-Ray map states, Physical Material Cutout, disabled-map behavior, reduced Standard opacity, explicit V-Ray constant-opacity behavior, recursive Multi/Sub detection, case-insensitive property access, `getPropNames()` enumeration failure, prompt failure, and the no-findings decision path.
