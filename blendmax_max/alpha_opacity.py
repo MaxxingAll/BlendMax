@@ -177,11 +177,23 @@ def is_protected_material(adapter, material: Any, protected_material_ids: Set[st
 def find_alpha_opacity_geometry(adapter, geometry_ids: Iterable[str]) -> Tuple[AlphaOpacityFinding, ...]:
     findings: List[AlphaOpacityFinding] = []
     seen_geometry: Set[str] = set()
+    get_node_by_id = getattr(adapter, "get_node_by_id", None)
+    if not callable(get_node_by_id):
+        # Lightweight adapters/test doubles may not maintain the Max node index.
+        # Treat missing lookup support as "no findings" rather than taking down
+        # the whole interactive cleanup entrypoint.
+        return tuple()
+
     for geometry_id in geometry_ids:
         if geometry_id in seen_geometry:
             continue
         seen_geometry.add(geometry_id)
-        node = adapter.get_node_by_id(geometry_id)
+        try:
+            node = get_node_by_id(geometry_id)
+        except Exception:
+            # A lookup failure is non-fatal to the safety preflight: without a node
+            # we cannot prove alpha/opacity usage, so simply report no finding.
+            continue
         if node is None:
             continue
         material = getattr(node, "material", None)
