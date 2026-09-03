@@ -44,30 +44,44 @@ def _is_undefined(adapter, value: Any) -> bool:
         return value is None
 
 
-def _get_property(adapter, value: Any, name: str) -> Tuple[bool, Any]:
-    try:
-        return True, adapter.rt.getProperty(value, name)
-    except Exception:
+def _get_property(adapter, value: Any, name: str, property_names=None) -> Tuple[bool, Any]:
+    """Resolve a Max property without losing the runtime property's original casing."""
+    candidates = [name]
+    if property_names:
+        folded = name.casefold()
+        candidates.extend(
+            actual_name
+            for actual_name in property_names
+            if str(actual_name).casefold() == folded and str(actual_name) not in candidates
+        )
+
+    for candidate in candidates:
         try:
-            return True, getattr(value, name)
+            return True, adapter.rt.getProperty(value, candidate)
         except Exception:
-            return False, None
+            pass
+        try:
+            return True, getattr(value, candidate)
+        except Exception:
+            pass
+    return False, None
 
 
-def _property_names(adapter, value: Any) -> Set[str]:
-    names: Set[str] = set()
+def _property_names(adapter, value: Any) -> Tuple[str, ...]:
+    names: List[str] = []
     try:
         for name in adapter.rt.getPropNames(value):
-            names.add(str(name).casefold())
+            names.append(str(name))
     except Exception:
         pass
-    return names
+    return tuple(names)
 
 
-def _numeric_opacity_hits(adapter, material: Any, names: Set[str]) -> bool:
-    if "opacity" not in names:
+def _numeric_opacity_hits(adapter, material: Any, names: Tuple[str, ...]) -> bool:
+    folded_names = {name.casefold() for name in names}
+    if "opacity" not in folded_names:
         return False
-    ok, value = _get_property(adapter, material, "opacity")
+    ok, value = _get_property(adapter, material, "opacity", names)
     if not ok:
         return False
     try:
@@ -76,18 +90,19 @@ def _numeric_opacity_hits(adapter, material: Any, names: Set[str]) -> bool:
         return False
 
 
-def _enabled_opacity_map_hit(adapter, material: Any, names: Set[str]) -> bool:
+def _enabled_opacity_map_hit(adapter, material: Any, names: Tuple[str, ...]) -> bool:
+    folded_names = {name.casefold() for name in names}
     pairs = (
         ("opacitymap", "opacitymapenable"),
         ("texmap_opacity", "texmap_opacity_on"),
     )
     for map_name, enable_name in pairs:
-        if map_name not in names:
+        if map_name.casefold() not in folded_names:
             continue
-        ok_map, map_value = _get_property(adapter, material, map_name)
+        ok_map, map_value = _get_property(adapter, material, map_name, names)
         if not ok_map or _is_undefined(adapter, map_value) or map_value is None:
             continue
-        ok_enable, enabled = _get_property(adapter, material, enable_name)
+        ok_enable, enabled = _get_property(adapter, material, enable_name, names)
         if not ok_enable:
             # A populated opacity slot with an unreadable enable state is
             # treated conservatively to avoid silently changing appearance.
@@ -145,14 +160,25 @@ def material_uses_alpha_opacity(adapter, material: Any) -> bool:
     return False
 
 
+def is_protected_material(adapter, material: Any, protected_material_ids: Set[str]) -> bool:
+    """Return True when a candidate material belongs to a protected graph."""
+    if not protected_material_ids:
+        return False
+    for graph_node in _walk_material_graph(adapter, material):
+        if _safe_anim_id(adapter, graph_node) in protected_material_ids:
+            return True
+    return False
+
+
 def find_alpha_opacity_geometry(adapter, geometry_ids: Iterable[str]) -> Tuple[AlphaOpacityFinding, ...]:
     findings: List[AlphaOpacityFinding] = []
     seen_geometry: Set[str] = set()
+    nodes_by_id = getattr(adapter, "_nodes_by_id", {})
     for geometry_id in geometry_ids:
         if geometry_id in seen_geometry:
             continue
         seen_geometry.add(geometry_id)
-        node = adapter._nodes_by_id.get(geometry_id)
+        node = nodes_by_id.get(geometry_id)
         if node is None:
             continue
         material = getattr(node, "material", None)
@@ -200,7 +226,9 @@ def confirm_alpha_opacity(adapter, findings: Tuple[AlphaOpacityFinding, ...]) ->
         "may alter their appearance.\n\n"
         "Affected geometry:\n  • {geometry}\n\n"
         "Affected materials:\n  • {materials}\n\n"
-        "Choose Skip Materials to keep the entire affected geometry separate."
+        "Choose Yes to skip these materials and keep the affected geometry separate. "
+        "Choose No to continue to a second prompt where you can explicitly merge "
+        "anyway or cancel the export."
         .format(
             geometry="\n  • ".join(geometry_names),
             materials="\n  • ".join(material_names),
@@ -213,7 +241,16 @@ def confirm_alpha_opacity(adapter, findings: Tuple[AlphaOpacityFinding, ...]) ->
                 title="BlendMax: Alpha / Opacity Materials Detected",
             )
         )
-    except Exception:
+    except Exception as exc:
+        try:
+            adapter.notify(
+                "The Alpha/Opacity protection prompt could not be displayed.\n\n"
+                "Cleanup was canceled to avoid changing appearance.\n\n"
+                "Reason: {0}".format(exc),
+                "BlendMax: Cleanup Canceled",
+            )
+        except Exception:
+            pass
         return AlphaOpacityDecision("CANCEL", (), (), findings)
 
     if skip:
@@ -226,8 +263,8 @@ def confirm_alpha_opacity(adapter, findings: Tuple[AlphaOpacityFinding, ...]) ->
 
     merge_message = (
         "Merge the detected alpha/opacity materials anyway?\n\n"
-        "Choosing Yes allows these objects to enter the existing cleanup path "
-        "and their appearance may change. Choosing No cancels the export."
+        "Yes = Merge Anyway and allow the existing cleanup path.\n"
+        "No = Cancel Export before destructive cleanup begins."
     )
     try:
         merge = bool(
@@ -236,8 +273,17 @@ def confirm_alpha_opacity(adapter, findings: Tuple[AlphaOpacityFinding, ...]) ->
                 title="BlendMax: Merge Alpha / Opacity Materials?",
             )
         )
-    except Exception:
-        merge = False
+    except Exception as exc:
+        try:
+            adapter.notify(
+                "The Alpha/Opacity merge prompt could not be displayed.\n\n"
+                "Cleanup was canceled to avoid changing appearance.\n\n"
+                "Reason: {0}".format(exc),
+                "BlendMax: Cleanup Canceled",
+            )
+        except Exception:
+            pass
+        return AlphaOpacityDecision("CANCEL", (), (), findings)
 
     if merge:
         return AlphaOpacityDecision("MERGE", (), (), findings)
