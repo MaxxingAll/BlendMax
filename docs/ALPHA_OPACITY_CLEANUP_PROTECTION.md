@@ -36,7 +36,7 @@ A present-but-disabled opacity map does not trigger protection by itself. Refrac
 
 The detector recursively walks assigned materials, sub-materials, and sub-textures. If any nested path contains qualifying alpha/opacity behavior, the **entire source geometry node** is flagged.
 
-Example:
+For a Multi/Sub material, whole-node protection is deliberate:
 
 ```text
 Tree_01
@@ -52,28 +52,26 @@ With **Skip Materials**, all of `Tree_01` stays separate. We do not inspect face
 
 When findings exist, one consolidated warning explains that alpha/opacity can control which parts of a mesh are visible and that joining may alter appearance.
 
-The current Max runtime confirmation API is boolean-only, so the three choices are implemented as a deterministic chained flow:
+The current Max runtime confirmation API is boolean-only, so the three choices use a deterministic chained flow:
 
 1. First dialog: **Skip Materials** or continue.
 2. Second dialog: **Merge Anyway** or cancel the export.
 
-A user declining the second dialog cancels the operation; Merge and Cancel are therefore unambiguous.
-
 ### Skip Materials
 
-The affected geometry and its assigned material graph are excluded from this cleanup operation. The source node never enters staging, Multi/Sub detachment, material bucketing, joining, or original-node deletion.
+Exclude the affected geometry and its assigned material graph from this cleanup operation. The source node never enters staging, Multi/Sub detachment, bucketing, joining, or original-node deletion.
 
 ### Merge Anyway
 
-No protection is applied and the existing cleanup path processes the affected geometry.
+No protection is applied; the existing cleanup path processes the affected geometry.
 
 ### Cancel Export
 
-The operation returns before `execute()` is called.
+Return before `execute()` is called.
 
 ## Protection boundary
 
-The implementation deliberately filters the structural plan into a joinable plan before the destructive adapter runs:
+The entry point filters `plan.visible_geometry_ids` into a joinable plan before the destructive adapter runs:
 
 ```text
 plan.visible_geometry_ids
@@ -87,17 +85,15 @@ _pieces_from_node()
 existing staging / Multi/Sub splitting / bucketing / joining
 ```
 
-This means the existing `_pieces_from_node()` Multi/Sub splitter does not need to know about alpha protection.
+The existing `_pieces_from_node()` Multi/Sub splitter therefore remains unchanged.
 
 ## Material merge protection
 
-Duplicate-material analysis runs on the filtered joinable geometry set.
-
-Additionally, candidates containing a protected material-graph ID are rejected from the approved material-merge set. Therefore **Skip** does not allow the detected material graph to be merged into another material during the same operation, including when the material is shared elsewhere.
+Duplicate-material analysis runs on the filtered joinable geometry set. Candidates containing protected material-graph IDs are also rejected from the approved material-merge set, so Skip does not merge the detected material graph into another material during the same operation.
 
 ## All-protected case
 
-If Skip protects every geometry node, BlendMax reports an informational no-op and performs no destructive cleanup. The original geometry and materials remain intact.
+If Skip protects every geometry node, BlendMax reports an informational no-op and performs no destructive cleanup. Original geometry and materials remain intact.
 
 ## Completion summary
 
@@ -124,7 +120,7 @@ Geometry kept separate: N
 
 Autodesk documents Standard material opacity/opacity-map state and Multi/Sub-Object material structure. Chaos documents the V-Ray opacity-map workflow for leaf cutouts.
 
-See `docs/ALPHA_OPACITY_RESEARCH_NOTES.md` for source links.
+See `docs/ALPHA_OPACITY_RESEARCH_NOTES.md` for the source links.
 
 ## Out of scope
 
