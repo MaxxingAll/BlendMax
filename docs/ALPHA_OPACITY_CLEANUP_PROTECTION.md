@@ -2,7 +2,7 @@
 
 Implemented on `feat/alpha-opacity-cleanup-protection`.
 
-The cleanup now performs a non-mutating alpha/opacity preflight before material analysis and execution. Detection uses actual material/map state rather than material names.
+The cleanup performs a non-mutating alpha/opacity preflight before material analysis and execution. Detection uses actual material/map state rather than material names.
 
 ## Rules
 
@@ -57,10 +57,6 @@ Alpha/opacity detection uses the adapter's public `get_node_by_id()`, `get_anim_
 ## Group handling
 
 Protected geometry remains intact and is not passed through the join/destructive mesh path. Existing nested-group cleanup still runs on the cleanup plan, so a protected mesh can remain as a separate node while its containing nested-group structure is normalized. This is intentional for this PR: protection applies to geometry/material joining, not group-structure normalization.
-
-## All-protected case
-
-If all source geometry is protected, cleanup returns a clean informational no-op rather than the previous `No material-bearing mesh faces were available to join` error.
 
 ## Validation
 
