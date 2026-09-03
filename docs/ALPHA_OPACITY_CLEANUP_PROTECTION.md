@@ -1,6 +1,6 @@
 # Alpha/Opacity Cleanup Protection
 
-Implemented on `feat/alpha-opacity-cleanup-protection`.
+Implemented on `main`.
 
 The cleanup performs a non-mutating alpha/opacity preflight before material analysis and execution. Detection uses actual material/map state rather than material names.
 
