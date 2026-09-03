@@ -59,7 +59,7 @@ The current Max runtime confirmation API is boolean-only, so the three choices u
 
 ### Skip Materials
 
-Exclude the affected geometry and its assigned material graph from this cleanup operation. The source node never enters staging, Multi/Sub detachment, bucketing, joining, or original-node deletion.
+The affected geometry and its assigned material graph are excluded from this cleanup operation. The source node never enters staging, Multi/Sub detachment, bucketing, joining, or original-node deletion.
 
 ### Merge Anyway
 
@@ -67,7 +67,7 @@ No protection is applied; the existing cleanup path processes the affected geome
 
 ### Cancel Export
 
-Return before `execute()` is called.
+The operation returns before `execute()` is called.
 
 ## Protection boundary
 
@@ -85,7 +85,7 @@ _pieces_from_node()
 existing staging / Multi/Sub splitting / bucketing / joining
 ```
 
-The existing `_pieces_from_node()` Multi/Sub splitter therefore remains unchanged.
+The existing `_pieces_from_node()` Multi/Sub splitter remains unchanged.
 
 ## Material merge protection
 
@@ -106,15 +106,7 @@ Geometry kept separate: N
 
 ## Tests
 
-`tests/test_alpha_opacity.py` covers:
-
-- Standard enabled opacity map;
-- Standard disabled opacity map;
-- Standard constant opacity below 100;
-- V-Ray enabled opacity map;
-- V-Ray disabled opacity map;
-- nested Multi/Sub opacity detection;
-- no-findings decision behavior.
+`tests/test_alpha_opacity.py` covers the detector's Standard/V-Ray enabled and disabled map cases, constant Standard opacity, recursive Multi/Sub detection, and no-findings behavior.
 
 ## Research basis
 
