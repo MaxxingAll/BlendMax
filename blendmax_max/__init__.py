@@ -1,6 +1,6 @@
 """BlendMax exporter for Autodesk 3ds Max."""
 
-__version__ = "0.1.0-alpha.4.2.0"
+__version__ = "0.1.0-alpha.4.3.0"
 
 TARGET_MAX_VERSION = "2025.3"
 SUPPORTED_VRAY_MIN_RELEASE = (7, 0)
