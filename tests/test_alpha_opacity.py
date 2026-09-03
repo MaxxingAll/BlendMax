@@ -145,7 +145,7 @@ class AlphaOpacityTests(unittest.TestCase):
     def test_physical_material_cutout_map_is_detected(self):
         material = FakeMaterial(
             "Leaves",
-            class_name="Physical_Material",
+            class_name="PhysicalMtl",
             cutout_map="leaf_cutout.png",
             cutout_map_on=True,
         )
@@ -156,7 +156,7 @@ class AlphaOpacityTests(unittest.TestCase):
     def test_physical_material_disabled_cutout_map_is_not_detected(self):
         material = FakeMaterial(
             "Leaves",
-            class_name="Physical_Material",
+            class_name="PhysicalMtl",
             cutout_map="leaf_cutout.png",
             cutout_map_on=False,
         )
