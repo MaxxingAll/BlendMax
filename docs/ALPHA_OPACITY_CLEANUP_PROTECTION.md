@@ -10,7 +10,9 @@ The cleanup now performs a non-mutating alpha/opacity preflight before material 
 - Physical Material: enabled `cutout_map` / `cutout_map_on`.
 - V-Ray: enabled `texmap_opacity` / `texmap_opacity_on` path.
 - Present-but-disabled opacity/cutout maps do not trigger protection by themselves.
-- If an opacity/cutout map enable state cannot be read, detection fails closed and protects the material.
+- If an opacity/cutout map enable state cannot be read after its slot is confirmed populated, detection fails closed and protects the material.
+- If `getPropNames()` itself fails, detection intentionally fails open at the enumeration layer rather than guessing arbitrary renderer-specific slots.
+- V-Ray constant opacity is not inferred as a cutout signal because its numeric scale/semantics differ from Standard/Physical opacity; explicit V-Ray opacity-map state is the supported protection signal in this PR.
 - Refraction alone is not treated as alpha/opacity protection.
 - Detection recursively walks sub-material and sub-texture graphs with cycle/depth protection.
 
@@ -48,6 +50,10 @@ A protected node is therefore never staged, split, bucketed, joined, or recorded
 
 Duplicate-material analysis runs only on joinable geometry. Candidates containing protected material-graph IDs are also rejected from the approved merge set.
 
+## Adapter boundary
+
+Alpha/opacity detection uses the adapter's public `get_node_by_id()`, `get_anim_id()`, `get_class_name()`, and `is_undefined()` accessors rather than reaching into its private state. The adapter remains the single runtime boundary for these operations.
+
 ## Group handling
 
 Protected geometry remains intact and is not passed through the join/destructive mesh path. Existing nested-group cleanup still runs on the cleanup plan, so a protected mesh can remain as a separate node while its containing nested group hierarchy is removed. This is intentional for this PR: protection applies to geometry/material joining, not group-structure normalization.
@@ -58,7 +64,7 @@ If all source geometry is protected, cleanup returns a clean informational no-op
 
 ## Validation
 
-- `tests/test_alpha_opacity.py` covers Standard/V-Ray map states, Physical Material Cutout, constant Standard opacity, recursive Multi/Sub detection, case-insensitive Standard property access, prompt-failure cancellation, and the no-findings decision path.
+- `tests/test_alpha_opacity.py` covers Standard/V-Ray map states, Physical Material Cutout, disabled-map behavior, constant Standard opacity, explicit V-Ray constant-opacity behavior, recursive Multi/Sub detection, case-insensitive Standard property access, `getPropNames()` enumeration failure, prompt-failure cancellation, and the no-findings decision path.
 - `tests/test_cleanup_entrypoint.py` covers the existing merge path plus explicit Merge Anyway, Cancel-before-execute, and mixed-scene filtering boundaries.
 - Full host validation still requires running the cleanup inside the supported 3ds Max/V-Ray environment.
 
@@ -69,11 +75,6 @@ If all source geometry is protected, cleanup returns a clean informational no-op
 - Autodesk Physical Material Cutout workflow: https://help.autodesk.com/cloudhelp/2020/ENU/3DSMax-Lighting-Shading/files/GUID-65AFACA5-59BD-4731-B384-431E166B2B12.htm
 - Autodesk Multi/Sub-Object API: https://help.autodesk.com/cloudhelp/2021/ENU/3DSMax-MAXScript/files/GUID-7ECB1E85-6199-4143-BEDA-3B26DD35E0C3.htm
 - Chaos V-Ray leaf opacity workflow: https://docs.chaos.com/display/VMAX/How%2Bto%2BMake%2BLeaves
-
-## Detection decisions
-
-- V-Ray numeric opacity is intentionally not treated as a cutout signal; protection is keyed to the explicit V-Ray opacity-map state.
-- `getPropNames()` enumeration failure is intentionally fail-open at the property-enumeration layer: the detector does not guess arbitrary properties, while known slots are detected normally when Max exposes them.
 
 ## Out of scope
 
