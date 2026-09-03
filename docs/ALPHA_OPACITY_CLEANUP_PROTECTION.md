@@ -1,118 +1,64 @@
 # Alpha/Opacity Cleanup Protection
 
-## Status
-
 Implemented on `feat/alpha-opacity-cleanup-protection`.
 
-## Purpose
+The cleanup now performs a non-mutating alpha/opacity preflight before material analysis and execution. Detection uses actual material/map state rather than material names.
 
-Prevent **Join Mesh by Material** cleanup from altering the appearance of geometry whose assigned material graph uses alpha/opacity behavior.
+## Rules
 
-When **Skip Materials** is selected, the entire affected source geometry node remains separate. No face-level isolation is attempted.
+- Standard: enabled `opacityMap` (`opacityMapEnable`) or `opacity < 100`.
+- V-Ray: enabled `texmap_opacity` / `texmap_opacity_on` path.
+- Present-but-disabled opacity maps do not trigger protection by themselves.
+- Refraction alone is not treated as alpha/opacity protection.
+- Detection recursively walks sub-material and sub-texture graphs.
 
-## Detection rules
+For Multi/Sub, any nested qualifying alpha/opacity path protects the entire assigned geometry node. No face-level inspection or splitting is introduced.
 
-Detection uses actual material/map state, never material names.
+## User choices
 
-### Standard Material
+One consolidated warning is shown when affected geometry is found:
 
-Flag the assigned geometry when:
+- **Skip Materials** — keep the entire affected source geometry separate and keep its material graph out of destructive material merging for this operation.
+- **Merge Anyway** — use the existing cleanup path.
+- **Cancel Export** — stop before execution.
 
-- `opacityMap` is populated and `opacityMapEnable` is true; or
-- `opacity` is below 100.
+Because the current Max confirmation API is boolean-only, the three-way flow uses two explicit prompts so Merge and Cancel cannot be confused.
 
-A populated but disabled opacity map does not trigger protection by itself. Reduced constant opacity does trigger protection because it changes appearance.
+## Safety boundary
 
-### V-Ray Material
-
-Flag the assigned geometry when the V-Ray material exposes an opacity map that is enabled:
-
-- `texmap_opacity`
-- `texmap_opacity_on`
-
-A present-but-disabled opacity map does not trigger protection by itself. Refraction alone is not classified as alpha/opacity protection.
-
-### Recursive graph / Multi/Sub
-
-The detector recursively walks assigned materials, sub-materials, and sub-textures. If any nested path contains qualifying alpha/opacity behavior, the **entire source geometry node** is flagged.
-
-For a Multi/Sub material, whole-node protection is deliberate:
+Skip filters the cleanup plan before `_pieces_from_node()`:
 
 ```text
-Tree_01
-└─ Multi/Sub
-   ├─ Bark01
-   └─ Leaves01
-      └─ Opacity map
-```
-
-With **Skip Materials**, all of `Tree_01` stays separate. We do not inspect faces or split it to save Bark01.
-
-## User interaction
-
-When findings exist, one consolidated warning explains that alpha/opacity can control which parts of a mesh are visible and that joining may alter appearance.
-
-The current Max runtime confirmation API is boolean-only, so the three choices use a deterministic chained flow:
-
-1. First dialog: **Skip Materials** or continue.
-2. Second dialog: **Merge Anyway** or cancel the export.
-
-### Skip Materials
-
-The affected geometry and its assigned material graph are excluded from this cleanup operation. The source node never enters staging, Multi/Sub detachment, bucketing, joining, or original-node deletion.
-
-### Merge Anyway
-
-No protection is applied; the existing cleanup path processes the affected geometry.
-
-### Cancel Export
-
-The operation returns before `execute()` is called.
-
-## Protection boundary
-
-The entry point filters `plan.visible_geometry_ids` into a joinable plan before the destructive adapter runs:
-
-```text
-plan.visible_geometry_ids
-        ↓
+visible geometry
+    ↓
 alpha/opacity preflight
-        ↓
-protected? ── yes ──> exclude from joinable plan
-        ↓ no
+    ↓
+protected → exclude from joinable plan
+    ↓
 _pieces_from_node()
-        ↓
+    ↓
 existing staging / Multi/Sub splitting / bucketing / joining
 ```
 
-The existing `_pieces_from_node()` Multi/Sub splitter remains unchanged.
+A protected node is therefore never staged, split, bucketed, joined, or recorded for original-node deletion.
 
-## Material merge protection
+## Material merge handling
 
-Duplicate-material analysis runs on the filtered joinable geometry set. Candidates containing protected material-graph IDs are also rejected from the approved material-merge set, so Skip does not merge the detected material graph into another material during the same operation.
+Duplicate-material analysis runs only on joinable geometry. Candidates containing protected material-graph IDs are also rejected from the approved merge set.
 
 ## All-protected case
 
-If Skip protects every geometry node, BlendMax reports an informational no-op and performs no destructive cleanup. Original geometry and materials remain intact.
+If all source geometry is protected, cleanup returns a clean informational no-op rather than the previous `No material-bearing mesh faces were available to join` error.
 
-## Completion summary
+## Validation
 
-Executed cleanup reports:
+`tests/test_alpha_opacity.py` covers Standard/V-Ray map states, constant Standard opacity, recursive Multi/Sub detection, and the no-findings decision path. Full host validation still requires running the cleanup inside the supported 3ds Max/V-Ray environment.
 
-```text
-Alpha/Opacity materials protected: N
-Geometry kept separate: N
-```
+## Research
 
-## Tests
-
-`tests/test_alpha_opacity.py` covers the detector's Standard/V-Ray enabled and disabled map cases, constant Standard opacity, recursive Multi/Sub detection, and no-findings behavior.
-
-## Research basis
-
-Autodesk documents Standard material opacity/opacity-map state and Multi/Sub-Object material structure. Chaos documents the V-Ray opacity-map workflow for leaf cutouts.
-
-See `docs/ALPHA_OPACITY_RESEARCH_NOTES.md` for the source links.
+- Autodesk Standard material opacity/map API: https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Material-MAXWrapper/Material-Types/GUID-57F5EBBA-5F54-4CD4-8993-0B07A3571293.html
+- Autodesk Multi/Sub-Object API: https://help.autodesk.com/cloudhelp/2021/ENU/3DSMax-MAXScript/files/GUID-7ECB1E85-6199-4143-BEDA-3B26DD35E0C3.htm
+- Chaos V-Ray leaf opacity workflow: https://docs.chaos.com/display/VMAX/How%2Bto%2BMake%2BLeaves
 
 ## Out of scope
 
