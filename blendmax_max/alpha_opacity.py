@@ -24,24 +24,15 @@ class AlphaOpacityDecision:
 
 
 def _safe_class_name(adapter, value: Any) -> str:
-    try:
-        return str(adapter._class_name(value))
-    except Exception:
-        return type(value).__name__
+    return str(adapter.get_class_name(value))
 
 
 def _safe_anim_id(adapter, value: Any) -> str:
-    try:
-        return adapter._anim_id(value)
-    except Exception:
-        return "python-{0}".format(id(value))
+    return str(adapter.get_anim_id(value))
 
 
 def _is_undefined(adapter, value: Any) -> bool:
-    try:
-        return bool(adapter._is_undefined(value))
-    except Exception:
-        return value is None
+    return bool(adapter.is_undefined(value))
 
 
 def _get_property(adapter, value: Any, name: str, property_names=None) -> Tuple[bool, Any]:
@@ -74,9 +65,8 @@ def _property_names(adapter, value: Any) -> Tuple[str, ...]:
             names.append(str(name))
     except Exception:
         # Decision: property enumeration failure is fail-open here. The detector
-        # intentionally avoids guessing arbitrary Max properties because doing so
-        # could create renderer-specific false positives. Known material slots are
-        # checked when Max exposes them through getPropNames().
+        # intentionally avoids guessing arbitrary renderer-specific properties.
+        # Known slots are only inspected when Max exposes their names.
         return tuple()
     return tuple(names)
 
@@ -167,9 +157,9 @@ def material_uses_alpha_opacity(adapter, material: Any) -> bool:
             if _numeric_opacity_hits(adapter, graph_node, names):
                 return True
         else:
-            # Decision: V-Ray numeric opacity is not inferred as a cutout signal.
-            # Protection is keyed to V-Ray's explicit opacity-map slot/state so
-            # renderer-specific constant-opacity behavior is not conflated here.
+            # Decision: V-Ray opacity is scaled differently from Standard/Physical
+            # material opacity. Do not infer constant V-Ray opacity as a cutout
+            # signal here; explicit V-Ray opacity-map state is the protected case.
             pass
     return False
 
@@ -187,12 +177,11 @@ def is_protected_material(adapter, material: Any, protected_material_ids: Set[st
 def find_alpha_opacity_geometry(adapter, geometry_ids: Iterable[str]) -> Tuple[AlphaOpacityFinding, ...]:
     findings: List[AlphaOpacityFinding] = []
     seen_geometry: Set[str] = set()
-    nodes_by_id = getattr(adapter, "_nodes_by_id", {})
     for geometry_id in geometry_ids:
         if geometry_id in seen_geometry:
             continue
         seen_geometry.add(geometry_id)
-        node = nodes_by_id.get(geometry_id)
+        node = adapter.get_node_by_id(geometry_id)
         if node is None:
             continue
         material = getattr(node, "material", None)
