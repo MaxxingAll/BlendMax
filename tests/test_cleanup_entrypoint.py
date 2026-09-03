@@ -274,13 +274,14 @@ class CleanupEntrypointTests(unittest.TestCase):
             materials=(object(), object()),
         )
 
-        def snapshot_scene():
-            return [
-                SceneNode("root", "Root", "Dummy", "Helper", is_group_head=True, exportable=False),
-                SceneNode("mesh", "Mesh", "Editable_Poly", "GeometryClass", parent_id="root"),
-            ]
-
-        adapter.snapshot_scene = snapshot_scene
+        adapter.snapshot_scene = lambda: [
+            SceneNode(
+                "root", "Root", "Dummy", "Helper", is_group_head=True, exportable=False
+            ),
+            SceneNode(
+                "mesh", "Mesh", "Editable_Poly", "GeometryClass", parent_id="root"
+            ),
+        ]
         adapter.selected_root_id = lambda: "root"
         adapter.classify_shape_like_geometry = lambda plan: plan
         adapter.analyze_duplicate_materials = lambda _plan: DuplicateMaterialAnalysis((candidate,), ())
@@ -303,16 +304,18 @@ class CleanupEntrypointTests(unittest.TestCase):
         adapter.execute = execute
         adapter.notify = lambda message, title: adapter.notifications.append((message, title))
         pymxs = types.SimpleNamespace(undo=lambda _enabled: nullcontext(), runundo=lambda: None)
-        findings = (object(),)
         decision = types.SimpleNamespace(
             action="MERGE",
             protected_geometry_ids=(),
             protected_material_ids=(),
         )
-        with patch("blendmax_max.cleanup_entrypoint.MaxCleanupAdapter", return_value=adapter), \
-             patch("blendmax_max.cleanup_entrypoint.find_alpha_opacity_geometry", return_value=findings), \
-             patch("blendmax_max.cleanup_entrypoint.confirm_alpha_opacity", return_value=decision), \
-             patch.dict(sys.modules, {"pymxs": pymxs}):
+        with patch(
+            "blendmax_max.cleanup_entrypoint.MaxCleanupAdapter", return_value=adapter
+        ), patch(
+            "blendmax_max.cleanup_entrypoint.find_alpha_opacity_geometry", return_value=(object(),)
+        ), patch(
+            "blendmax_max.cleanup_entrypoint.confirm_alpha_opacity", return_value=decision
+        ), patch.dict(sys.modules, {"pymxs": pymxs}):
             run_interactive()
 
         self.assertTrue(adapter.executed)
@@ -325,8 +328,12 @@ class CleanupEntrypointTests(unittest.TestCase):
         adapter.executed = False
         adapter.notify = lambda _message, _title: None
         adapter.snapshot_scene = lambda: [
-            SceneNode("root", "Root", "Dummy", "Helper", is_group_head=True, exportable=False),
-            SceneNode("mesh", "Mesh", "Editable_Poly", "GeometryClass", parent_id="root"),
+            SceneNode(
+                "root", "Root", "Dummy", "Helper", is_group_head=True, exportable=False
+            ),
+            SceneNode(
+                "mesh", "Mesh", "Editable_Poly", "GeometryClass", parent_id="root"
+            ),
         ]
         adapter.selected_root_id = lambda: "root"
         adapter.classify_shape_like_geometry = lambda plan: plan
@@ -336,24 +343,33 @@ class CleanupEntrypointTests(unittest.TestCase):
             protected_geometry_ids=(),
             protected_material_ids=(),
         )
-        with patch("blendmax_max.cleanup_entrypoint.MaxCleanupAdapter", return_value=adapter), \
-             patch("blendmax_max.cleanup_entrypoint.find_alpha_opacity_geometry", return_value=(object(),)), \
-             patch("blendmax_max.cleanup_entrypoint.confirm_alpha_opacity", return_value=decision):
+        with patch(
+            "blendmax_max.cleanup_entrypoint.MaxCleanupAdapter", return_value=adapter
+        ), patch(
+            "blendmax_max.cleanup_entrypoint.find_alpha_opacity_geometry", return_value=(object(),)
+        ), patch(
+            "blendmax_max.cleanup_entrypoint.confirm_alpha_opacity", return_value=decision
+        ):
             run_interactive()
 
         self.assertFalse(adapter.executed)
 
     def test_mixed_scene_still_joins_normal_geometry(self):
-        candidate_material = object()
         adapter = types.SimpleNamespace()
         adapter.requires_undo = False
         adapter._nodes_by_id = {}
         adapter.notifications = []
         adapter.joined_plan_ids = None
         adapter.snapshot_scene = lambda: [
-            SceneNode("root", "Root", "Dummy", "Helper", is_group_head=True, exportable=False),
-            SceneNode("alpha", "Tree_01", "Editable_Poly", "GeometryClass", parent_id="root"),
-            SceneNode("normal", "Rock_01", "Editable_Poly", "GeometryClass", parent_id="root"),
+            SceneNode(
+                "root", "Root", "Dummy", "Helper", is_group_head=True, exportable=False
+            ),
+            SceneNode(
+                "alpha", "Tree_01", "Editable_Poly", "GeometryClass", parent_id="root"
+            ),
+            SceneNode(
+                "normal", "Rock_01", "Editable_Poly", "GeometryClass", parent_id="root"
+            ),
         ]
         adapter.selected_root_id = lambda: "root"
         adapter.classify_shape_like_geometry = lambda plan: plan
@@ -380,11 +396,15 @@ class CleanupEntrypointTests(unittest.TestCase):
             protected_material_ids=("protected",),
         )
         pymxs = types.SimpleNamespace(undo=lambda _enabled: nullcontext(), runundo=lambda: None)
-        with patch("blendmax_max.cleanup_entrypoint.MaxCleanupAdapter", return_value=adapter), \
-             patch("blendmax_max.cleanup_entrypoint.find_alpha_opacity_geometry", return_value=(object(),)), \
-             patch("blendmax_max.cleanup_entrypoint.confirm_alpha_opacity", return_value=decision), \
-             patch("blendmax_max.cleanup_entrypoint.is_protected_material", return_value=False), \
-             patch.dict(sys.modules, {"pymxs": pymxs}):
+        with patch(
+            "blendmax_max.cleanup_entrypoint.MaxCleanupAdapter", return_value=adapter
+        ), patch(
+            "blendmax_max.cleanup_entrypoint.find_alpha_opacity_geometry", return_value=(object(),)
+        ), patch(
+            "blendmax_max.cleanup_entrypoint.confirm_alpha_opacity", return_value=decision
+        ), patch(
+            "blendmax_max.cleanup_entrypoint.is_protected_material", return_value=False
+        ), patch.dict(sys.modules, {"pymxs": pymxs}):
             run_interactive()
 
         self.assertEqual(adapter.joined_plan_ids, ("normal",))
