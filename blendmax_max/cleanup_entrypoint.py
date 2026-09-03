@@ -5,7 +5,11 @@ from __future__ import annotations
 import traceback
 from dataclasses import replace
 
-from .alpha_opacity import confirm_alpha_opacity, find_alpha_opacity_geometry
+from .alpha_opacity import (
+    confirm_alpha_opacity,
+    find_alpha_opacity_geometry,
+    is_protected_material,
+)
 from .cleanup import build_cleanup_plan
 from .errors import BlendMaxError, CleanupError
 from .max_cleanup_adapter import MaxCleanupAdapter
@@ -61,7 +65,7 @@ def run_interactive() -> None:
             candidate
             for candidate in material_analysis.candidates
             if not any(
-                adapter._anim_id(material) in protected_material_ids
+                is_protected_material(adapter, material, protected_material_ids)
                 for material in candidate.materials
             )
             and adapter.confirm_material_merge(candidate)
