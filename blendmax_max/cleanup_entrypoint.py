@@ -60,7 +60,11 @@ def run_interactive() -> None:
         approved_material_merges = tuple(
             candidate
             for candidate in material_analysis.candidates
-            if adapter.confirm_material_merge(candidate)
+            if not any(
+                adapter._anim_id(material) in protected_material_ids
+                for material in candidate.materials
+            )
+            and adapter.confirm_material_merge(candidate)
         )
         if not adapter.confirm_with_materials(
             joinable_plan,
