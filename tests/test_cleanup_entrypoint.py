@@ -99,7 +99,6 @@ class CleanupEntrypointTests(unittest.TestCase):
             requires_undo = False
 
             def __init__(self):
-                self._nodes_by_id = {}
                 self.confirmed_merges = None
                 self.executed_merges = None
                 self.notifications = []
@@ -131,6 +130,10 @@ class CleanupEntrypointTests(unittest.TestCase):
             @staticmethod
             def classify_shape_like_geometry(plan):
                 return plan
+
+            @staticmethod
+            def get_node_by_id(_node_id):
+                return None
 
             @staticmethod
             def analyze_duplicate_materials(_plan):
@@ -189,7 +192,6 @@ class CleanupEntrypointTests(unittest.TestCase):
             requires_undo = False
 
             def __init__(self):
-                self._nodes_by_id = {}
                 self.executed_merges = None
 
             @staticmethod
@@ -219,6 +221,10 @@ class CleanupEntrypointTests(unittest.TestCase):
             @staticmethod
             def classify_shape_like_geometry(plan):
                 return plan
+
+            @staticmethod
+            def get_node_by_id(_node_id):
+                return None
 
             @staticmethod
             def analyze_duplicate_materials(_plan):
@@ -264,7 +270,6 @@ class CleanupEntrypointTests(unittest.TestCase):
     def test_merge_anyway_reaches_existing_path(self):
         adapter = types.SimpleNamespace()
         adapter.requires_undo = False
-        adapter._nodes_by_id = {}
         adapter.notifications = []
         adapter.executed = False
         candidate = MaterialMergeCandidate(
@@ -324,7 +329,6 @@ class CleanupEntrypointTests(unittest.TestCase):
     def test_alpha_cancel_never_reaches_execute(self):
         adapter = types.SimpleNamespace()
         adapter.requires_undo = False
-        adapter._nodes_by_id = {}
         adapter.executed = False
         adapter.notify = lambda _message, _title: None
         adapter.snapshot_scene = lambda: [
@@ -357,7 +361,6 @@ class CleanupEntrypointTests(unittest.TestCase):
     def test_mixed_scene_still_joins_normal_geometry(self):
         adapter = types.SimpleNamespace()
         adapter.requires_undo = False
-        adapter._nodes_by_id = {}
         adapter.notifications = []
         adapter.joined_plan_ids = None
         adapter.snapshot_scene = lambda: [
