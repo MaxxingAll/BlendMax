@@ -8,3 +8,11 @@ dist/
 *.zip
 .DS_Store
 Thumbs.db
+
+# Scratch files that have been committed to main by accident
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+placeholder*
