@@ -58,7 +58,7 @@ Alpha/opacity detection uses the adapter's public `get_node_by_id()`, `get_anim_
 
 Protected geometry remains intact and is not passed through the join/destructive mesh path. Existing nested-group cleanup still runs on the cleanup plan, so a protected mesh can remain as a separate node while its containing nested-group structure is normalized. This is intentional for this PR: protection applies to geometry/material joining, not group-structure normalization.
 
-**In other words, “protected” applies to the mesh/material join path; it does not preserve the surrounding nested-group hierarchy.**
+**“Protected” does not preserve the surrounding nested-group hierarchy; `_remove_nested_groups()` continues to process the existing `removable_group_ids` cleanup contract.**
 
 ## Validation
 
