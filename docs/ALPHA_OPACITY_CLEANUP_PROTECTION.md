@@ -1,75 +1,54 @@
 # Alpha/Opacity Cleanup Protection
 
+## Status
+
+Implemented on `feat/alpha-opacity-cleanup-protection`.
+
 ## Purpose
 
-Add a conservative cleanup safeguard for geometry whose assigned material depends on alpha/opacity behavior.
+Prevent **Join Mesh by Material** cleanup from altering the appearance of geometry whose assigned material graph uses alpha/opacity behavior.
 
-The goal is to prevent **Join Mesh by Material** from changing the appearance of masked/cutout assets such as foliage, decals, fences, cards, or similar geometry.
+The implementation is intentionally conservative: when the user chooses **Skip Materials**, the entire affected source geometry node remains separate. No face-level isolation is attempted.
 
-This is a cleanup safeguard, not a material conversion feature.
+## Current behavior
 
-## Current cleanup behavior
+The cleanup flow now performs alpha/opacity preflight after shape classification and before duplicate-material analysis/execution.
 
-The cleanup flow currently:
+If no alpha/opacity geometry is found, the existing cleanup path is unchanged.
 
-1. snapshots the scene;
-2. builds a root-scoped cleanup plan;
-3. classifies shape-like geometry;
-4. analyzes duplicate materials;
-5. asks for cleanup confirmation;
-6. stages each geometry node through `_pieces_from_node()`;
-7. splits Multi/Sub faces into material pieces when necessary;
-8. buckets pieces by material;
-9. joins each bucket;
-10. deletes processed originals inside one undoable operation.
+If affected geometry is found, BlendMax presents a consolidated explanation and offers:
 
-The existing adapter already contains recursive material/sub-material/sub-texture inspection for material comparison.
+- **Skip Materials** — exclude the entire affected geometry node from Join Mesh by Material and keep its assigned material graph out of destructive material merging for this operation.
+- **Merge Anyway** — continue with the existing cleanup behavior.
+- **Cancel Export** — stop before destructive execution.
 
-## Proposed behavior
+## Detection rules
 
-Before destructive material/geometry processing, BlendMax performs an alpha/opacity preflight over the geometry in the cleanup plan.
+Detection uses actual material/map state rather than material names.
 
-If no affected geometry is found, cleanup proceeds unchanged.
+### Standard Material
 
-If affected geometry is found, BlendMax shows one consolidated warning explaining that alpha/opacity controls which parts of a mesh are visible and that joining may alter its appearance.
+A source geometry is flagged when its assigned material exposes:
 
-The user chooses one of three actions:
+- an `opacityMap` that is enabled by `opacityMapEnable`; or
+- constant `opacity` below 100.
 
-### Skip Materials
+A populated but disabled opacity map does not trigger protection by itself.
 
-Protect the entire affected source geometry node and its assigned material graph from Join Mesh by Material.
+### V-Ray Material
 
-The protected node:
+A source geometry is flagged when its V-Ray material exposes an opacity texture connection with the corresponding enable state:
 
-- is not passed to `_pieces_from_node()`;
-- is not staged;
-- is not split;
-- is not bucketed;
-- is not joined;
-- is not added to `processed_originals`;
-- is therefore not deleted by the join cleanup.
+- `texmap_opacity`
+- `texmap_opacity_on`
 
-Normal cleanup continues for all non-protected geometry.
+A populated opacity texture whose enable state is false does not trigger protection by itself. Refraction alone is not treated as alpha/opacity protection.
 
-### Merge Anyway
+### Recursive graph / Multi/Sub
 
-Do not add protection. The affected geometry follows the existing cleanup path.
+Material and sub-material/sub-texture traversal is recursive. If any nested material or texture path contains qualifying alpha/opacity behavior, the assigned source geometry node is flagged.
 
-This is an explicit user override acknowledging that its alpha/opacity appearance may change.
-
-### Cancel Export
-
-Abort the cleanup/export flow before destructive execution.
-
-No call to `execute()` should occur after cancellation.
-
-## Multi/Sub-Object rule
-
-We deliberately use **whole-node protection**.
-
-If a geometry node has an assigned Multi/Sub material and any nested part of that material graph uses alpha/opacity, the whole source geometry node is protected when Skip is chosen.
-
-Example:
+For a Multi/Sub material, the rule is deliberately whole-node:
 
 ```text
 Tree_01
@@ -79,174 +58,89 @@ Tree_01
       └─ Opacity map
 ```
 
-Skip protects `Tree_01` as a whole.
+With **Skip Materials**, all of `Tree_01` is left alone. BlendMax does not inspect individual faces and does not split the node to join only Bark01.
 
-We do **not**:
+## Protection boundary
 
-- inspect individual faces to find only the alpha faces;
-- split the source node to preserve Bark01 while joining Leaves01;
-- modify the existing Multi/Sub face-splitting implementation.
-
-This is intentional. It keeps the feature conservative and avoids introducing topology-dependent behavior into cleanup.
-
-## Detection strategy
-
-Detection should inspect actual material/map graph state rather than material names.
-
-The first implementation should concentrate on texture/shader-driven opacity/alpha paths, especially:
-
-- V-Ray material opacity map usage;
-- Standard material opacity map usage where applicable;
-- nested opacity/alpha-related texture connections;
-- nested Multi/Sub material graphs.
-
-Material names such as `Leaves` or `Glass` are not sufficient evidence by themselves.
-
-Likewise, generic refraction alone should not automatically classify a material as an alpha/opacity cleanup case.
-
-## Implementation boundary
-
-### `blendmax_max/cleanup.py`
-
-Keep the structural cleanup planner pure. Do not add 3ds Max material inspection here.
-
-The existing `CleanupPlan` remains the scene-structure plan.
-
-### `blendmax_max/max_cleanup_adapter.py`
-
-Add the Max-side, non-mutating alpha/opacity analysis and return protected geometry/material information.
-
-The adapter already owns material discovery and recursive material/sub-texture inspection, so this is the correct place for the detector.
-
-### `blendmax_max/cleanup_entrypoint.py`
-
-Insert the alpha/opacity decision after shape classification and before destructive execution.
-
-The sequence should remain explicit and easy to follow:
+The important safety boundary is before `_pieces_from_node()`.
 
 ```text
-snapshot
-→ build cleanup plan
-→ classify shape-like geometry
-→ shape confirmation
-→ alpha/opacity analysis
-→ alpha/opacity decision
-→ duplicate material analysis / confirmations
-→ overall cleanup confirmation
-→ execute
+plan.visible_geometry_ids
+        ↓
+alpha/opacity preflight
+        ↓
+protected? ── yes ──> exclude from joinable plan
+        ↓ no
+_pieces_from_node()
+        ↓
+existing staging / Multi/Sub splitting / bucketing / joining
 ```
 
-### `MaxCleanupAdapter.execute()`
+A skipped node therefore:
 
-Accept the protected geometry IDs as an explicit execution input.
+- is never staged;
+- is never split;
+- is never bucketed;
+- is never joined;
+- is never recorded in `processed_originals`;
+- is not deleted by the normal cleanup deletion pass.
 
-The central safety check should happen before `_pieces_from_node()`:
+The existing Multi/Sub face-detach implementation remains unchanged.
 
-```python
-for node_id in plan.visible_geometry_ids:
-    if node_id in protected_geometry_ids:
-        continue
+## Duplicate-material interaction
 
-    source = self._nodes_by_id[node_id]
-    pieces = self._pieces_from_node(...)
-```
+After a Skip decision, duplicate-material analysis runs against the filtered joinable geometry set, so skipped geometry does not create new merge candidates.
 
-This is the key invariant: **a skipped node never enters the existing Multi/Sub splitting and join path.**
+Candidates that reference a protected assigned material are also excluded from the approved merge set. This ensures **Skip** does not merge that material into another material elsewhere in the same operation.
 
-## Why this is safe for the current implementation
+No global post-import deduplication is attempted.
 
-The current execution path only deletes originals that were processed and recorded in `processed_originals`.
+## All-protected case
 
-Therefore a skipped node that never enters `_pieces_from_node()` will also never be recorded as processed and will remain in the scene.
+If Skip protects every source geometry node, the exporter reports an informational no-op and performs no destructive cleanup rather than raising the generic "No material-bearing mesh faces were available to join" error.
 
-The existing Multi/Sub splitting code remains untouched.
+## UI behavior
 
-The existing undo wrapper also remains the safety boundary for operations that do execute.
+The current cleanup confirmation API (`rt.queryBox`) is boolean, so the three-way decision is implemented as an explicit chained flow:
 
-## Interaction with duplicate-material merging
+1. First dialog: choose **Skip Materials** or continue.
+2. Second dialog: choose **Merge Anyway** or cancel the export.
 
-When Skip is chosen, protected geometry and its assigned material graph must not participate in destructive material merging for that cleanup operation.
+The second dialog explicitly explains that choosing No cancels the operation, so Merge and Cancel remain distinguishable.
 
-No attempt should be made in this PR to globally deduplicate or rename the resulting materials.
+## Completion summary
 
-If Blender later shows names such as:
+When cleanup executes with protected geometry, the completion notification includes:
 
 ```text
-Bark01
-Bark01.001
-Bark01.002
+Alpha/Opacity materials protected: N
+Geometry kept separate: N
 ```
 
-that is a separate cleanup/import problem and should be handled by a future PR.
+## Tests added
 
-## User-facing warning
+`tests/test_alpha_opacity.py` covers:
 
-Suggested copy:
+- Standard enabled opacity map;
+- Standard disabled opacity map;
+- Standard constant opacity below 100;
+- V-Ray enabled opacity map;
+- V-Ray disabled opacity map;
+- nested Multi/Sub opacity detection;
+- no-op behavior when no findings exist.
 
-```text
-⚠ Alpha / Opacity Materials Detected
+## Research basis
 
-BlendMax found materials that use alpha/opacity maps.
-These maps control which parts of a mesh are visible, such as
-leaves and other cutout surfaces.
+Autodesk documents Standard material opacity/opacity-map state and Multi/Sub-Object material structure. Chaos documents the V-Ray opacity-map workflow for leaf cutouts.
 
-Joining these objects may alter their appearance.
-
-Affected geometry:
-  • Tree_01
-  • Grass_01
-  • Fence_01
-
-How would you like to proceed?
-
-[ Skip Materials ] [ Merge Anyway ] [ Cancel Export ]
-```
-
-The exact dialog API can follow the existing `queryBox()` pattern used by the cleanup adapter.
-
-## Summary reporting
-
-The cleanup completion summary should report how many geometry nodes were kept separate because of alpha/opacity protection.
-
-Example:
-
-```text
-Alpha/Opacity materials protected: 3
-Geometry kept separate: 4
-```
-
-The summary should describe what actually happened rather than only what was detected.
+See `docs/ALPHA_OPACITY_RESEARCH_NOTES.md` for the source links.
 
 ## Out of scope
 
-This PR should not include:
-
 - face-level alpha isolation;
-- geometry splitting specifically for alpha preservation;
-- Blender-side `.001` material deduplication;
-- material renaming cleanup;
-- alpha shader conversion or rebuilding;
+- splitting a Multi/Sub node specifically to preserve alpha faces;
+- Blender `.001` material deduplication;
+- material rename cleanup;
+- alpha shader conversion/rebuilding;
 - V-Ray material conversion changes;
-- changes to Shapes Purge behavior.
-
-## Validation targets
-
-Minimum test coverage should include:
-
-1. Opaque material only — existing cleanup behavior is unchanged.
-2. Single V-Ray material with opacity map — Skip keeps the entire geometry separate.
-3. Single V-Ray material with opacity map — Merge Anyway follows the existing join path.
-4. Alpha/opacity detection — Cancel prevents execution/export.
-5. Multi/Sub where one nested material contains opacity — Skip keeps the whole geometry node separate.
-6. Multiple alpha/opacity nodes — one consolidated warning, not one dialog per object/material.
-7. Mixed scene — protected geometry remains separate while normal geometry still joins.
-8. Existing Shapes Purge behavior remains unchanged.
-9. Cleanup remains undoable for the operations that are executed.
-
-## Reviewer focus
-
-The primary invariant for review is:
-
-> **Skip means the affected source geometry node never enters Join Mesh by Material.**
-
-The implementation should stay conservative and avoid modifying the existing Multi/Sub face-splitting logic.
+- Shapes Purge changes.
