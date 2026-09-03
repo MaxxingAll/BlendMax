@@ -12,7 +12,7 @@ The cleanup now performs a non-mutating alpha/opacity preflight before material 
 - Present-but-disabled opacity/cutout maps do not trigger protection by themselves.
 - If an opacity/cutout map enable state cannot be read after its slot is confirmed populated, detection fails closed and protects the material.
 - If `getPropNames()` itself fails, detection intentionally fails open at the enumeration layer rather than guessing arbitrary renderer-specific slots.
-- V-Ray constant opacity is not inferred as a cutout signal because its numeric scale/semantics differ from Standard/Physical opacity; explicit V-Ray opacity-map state is the supported protection signal in this PR.
+- V-Ray constant opacity is intentionally not inferred as a cutout signal because V-Ray uses different numeric opacity semantics; this PR protects the explicit V-Ray opacity-map path instead.
 - Refraction alone is not treated as alpha/opacity protection.
 - Detection recursively walks sub-material and sub-texture graphs with cycle/depth protection.
 
@@ -52,11 +52,11 @@ Duplicate-material analysis runs only on joinable geometry. Candidates containin
 
 ## Adapter boundary
 
-Alpha/opacity detection uses the adapter's public `get_node_by_id()`, `get_anim_id()`, `get_class_name()`, and `is_undefined()` accessors rather than reaching into its private state. The adapter remains the single runtime boundary for these operations.
+Alpha/opacity detection uses the adapter's public `get_node_by_id()`, `get_anim_id()`, `get_class_name()`, and `is_undefined()` accessors rather than reaching into private adapter state.
 
 ## Group handling
 
-Protected geometry remains intact and is not passed through the join/destructive mesh path. Existing nested-group cleanup still runs on the cleanup plan, so a protected mesh can remain as a separate node while its containing nested group hierarchy is removed. This is intentional for this PR: protection applies to geometry/material joining, not group-structure normalization.
+Protected geometry remains intact and is not passed through the join/destructive mesh path. Existing nested-group cleanup still runs on the cleanup plan, so a protected mesh can remain as a separate node while its containing nested-group structure is normalized. This is intentional for this PR: protection applies to geometry/material joining, not group-structure normalization.
 
 ## All-protected case
 
@@ -64,17 +64,13 @@ If all source geometry is protected, cleanup returns a clean informational no-op
 
 ## Validation
 
-- `tests/test_alpha_opacity.py` covers Standard/V-Ray map states, Physical Material Cutout, disabled-map behavior, constant Standard opacity, explicit V-Ray constant-opacity behavior, recursive Multi/Sub detection, case-insensitive Standard property access, `getPropNames()` enumeration failure, prompt-failure cancellation, and the no-findings decision path.
-- `tests/test_cleanup_entrypoint.py` covers the existing merge path plus explicit Merge Anyway, Cancel-before-execute, and mixed-scene filtering boundaries.
-- Full host validation still requires running the cleanup inside the supported 3ds Max/V-Ray environment.
+- `tests/test_alpha_opacity.py` covers Standard/V-Ray map states, Physical Material Cutout, disabled-map behavior, reduced Standard opacity, explicit V-Ray constant-opacity behavior, recursive Multi/Sub detection, case-insensitive property access, `getPropNames()` enumeration failure, prompt failure, and the no-findings decision path.
+- `tests/test_cleanup_entrypoint.py` covers the existing merge path plus Merge Anyway, Cancel-before-execute, and mixed-scene filtering boundaries.
+- Full validation still requires repository CI plus live 3ds Max/V-Ray host validation.
 
 ## Research
 
-- Autodesk Standard material opacity/map API: https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Material-MAXWrapper/Material-Types/GUID-57F5EBBA-5F54-4CD4-8993-0B07A3571293.html
-- Autodesk Physical Material Cutout properties: https://help.autodesk.com/cloudhelp/2022/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Material-MAXWrapper/Material-Types/GUID-57562F6A-A8A1-4A28-BAE1-0D4729411214.html
-- Autodesk Physical Material Cutout workflow: https://help.autodesk.com/cloudhelp/2020/ENU/3DSMax-Lighting-Shading/files/GUID-65AFACA5-59BD-4731-B384-431E166B2B12.htm
-- Autodesk Multi/Sub-Object API: https://help.autodesk.com/cloudhelp/2021/ENU/3DSMax-MAXScript/files/GUID-7ECB1E85-6199-4143-BEDA-3B26DD35E0C3.htm
-- Chaos V-Ray leaf opacity workflow: https://docs.chaos.com/display/VMAX/How%2Bto%2BMake%2BLeaves
+See `docs/ALPHA_OPACITY_RESEARCH_NOTES.md` for direct Autodesk and Chaos references, including Physical Material Cutout.
 
 ## Out of scope
 
