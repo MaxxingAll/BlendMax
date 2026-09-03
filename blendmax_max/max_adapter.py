@@ -258,21 +258,633 @@ class MaxRuntimeAdapter:
                     detected_max_version or "Unknown", TARGET_MAX_VERSION
                 )
             )
-        if vray_installed and not vray_matches_target:
+        if not vray_installed:
             compatibility_warnings.append(
-                "Untested V-Ray version detected: {0}; target range is {1}.".format(
-                    detected_vray_version or "Unknown", SUPPORTED_VRAY_RANGE
+                "V-Ray was not detected; supported range is {0}.".format(
+                    SUPPORTED_VRAY_RANGE
                 )
             )
+        elif detected_vray_version and not vray_matches_target:
+            compatibility_warnings.append(
+                "Untested V-Ray version detected: {0}; supported range is {1}.".format(
+                    detected_vray_version, SUPPORTED_VRAY_RANGE
+                )
+            )
+
         return {
-            "scene_name": scene_name,
+            "application": "Autodesk 3ds Max",
+            "max_version_raw": version,
             "max_version": detected_max_version,
+            "scene_file": Path(scene_name).name,
             "display_units": display_units,
-            "units_per_meter": units_per_meter,
-            "renderer_class": renderer_class,
-            "vray_installed": vray_installed,
-            "vray_version": detected_vray_version,
-            "max_matches_target": max_matches_target,
-            "vray_matches_target": vray_matches_target,
-            "compatibility_warnings": compatibility_warnings,
+            "system_units_per_meter": units_per_meter,
+            "renderer": {
+                "current_class": renderer_class,
+            },
+            "vray": {
+                "installed": vray_installed,
+                "version": detected_vray_version,
+                "parsed_version": (
+                    ".".join(
+                        [
+                            str(parsed_vray_version[0]),
+                            "{0:02d}".format(parsed_vray_version[1]),
+                            "{0:02d}".format(parsed_vray_version[2]),
+                        ]
+                    )
+                    if parsed_vray_version is not None
+                    else None
+                ),
+            },
+            "compatibility": {
+                "target_3ds_max": TARGET_MAX_VERSION,
+                "supported_vray_range": SUPPORTED_VRAY_RANGE,
+                "max_matches_target": max_matches_target,
+                "vray_matches_target": vray_matches_target,
+                "warnings": compatibility_warnings,
+            },
         }
+
+    def _parse_vray_version(
+        self,
+        raw_version: Optional[str],
+    ) -> Optional[Tuple[int, int, int]]:
+        if not raw_version:
+            return None
+        match = re.search(
+            r"(?<!\d)(\d+)\.(\d+)(?:\.(\d+))?(?!\d)",
+            str(raw_version),
+        )
+        if not match:
+            return None
+        return (
+            int(match.group(1)),
+            int(match.group(2)),
+            int(match.group(3) or 0),
+        )
+
+    def _parse_max_version(self, raw_version: Iterable[str]) -> Optional[str]:
+        values = [str(value) for value in raw_version]
+        for index, value in enumerate(values):
+            try:
+                year = int(value)
+            except (TypeError, ValueError):
+                continue
+            if not 2000 <= year <= 2100:
+                continue
+            update = ""
+            if index + 1 < len(values):
+                candidate = values[index + 1].strip()
+                if re.fullmatch(r"\.\d+", candidate):
+                    update = candidate
+            return "{0}{1}".format(year, update)
+        return None
+
+    def bounds_in_meters(
+        self,
+        payload_ids: Iterable[str],
+    ) -> Dict[str, List[float]]:
+        minimum = [float("inf"), float("inf"), float("inf")]
+        maximum = [float("-inf"), float("-inf"), float("-inf")]
+        found = False
+
+        for node_id in payload_ids:
+            node = self._nodes_by_id[node_id]
+            try:
+                values_min, values_max = self._evaluated_mesh_bounds(node)
+            except Exception as evaluated_exc:
+                try:
+                    values_min, values_max = self._node_bounds(node)
+                except Exception as node_exc:
+                    raise ExportError(
+                        "Could not calculate the bounding box for {0}: "
+                        "evaluated mesh failed ({1}); node bounds failed ({2})".format(
+                            getattr(node, "name", node_id),
+                            evaluated_exc,
+                            node_exc,
+                        )
+                    )
+            for index in range(3):
+                minimum[index] = min(minimum[index], values_min[index])
+                maximum[index] = max(maximum[index], values_max[index])
+            found = True
+
+        if not found:
+            raise ExportError("No geometry was available for bounds calculation.")
+
+        try:
+            units_per_meter = float(self.rt.units.decodeValue("1m"))
+            if units_per_meter <= 0.0:
+                units_per_meter = 1.0
+        except Exception:
+            units_per_meter = 1.0
+
+        minimum_m = [value / units_per_meter for value in minimum]
+        maximum_m = [value / units_per_meter for value in maximum]
+        dimensions_m = [
+            maximum_m[index] - minimum_m[index]
+            for index in range(3)
+        ]
+        return {
+            "minimum": minimum_m,
+            "maximum": maximum_m,
+            "dimensions": dimensions_m,
+        }
+
+    @staticmethod
+    def _node_bounds(node) -> Tuple[List[float], List[float]]:
+        node_min = node.min
+        node_max = node.max
+        return (
+            [float(node_min.x), float(node_min.y), float(node_min.z)],
+            [float(node_max.x), float(node_max.y), float(node_max.z)],
+        )
+
+    def _evaluated_mesh_bounds(
+        self,
+        node,
+    ) -> Tuple[List[float], List[float]]:
+        mesh = None
+        try:
+            # snapshotAsMesh evaluates the modifier stack and returns world-space
+            # vertices, avoiding the conservative node.min/node.max box produced
+            # by rotated geometry.
+            mesh = self.rt.snapshotAsMesh(node)
+            vertex_count = int(mesh.numverts)
+            if vertex_count <= 0:
+                raise ValueError("evaluated mesh has no vertices")
+
+            minimum = [float("inf"), float("inf"), float("inf")]
+            maximum = [float("-inf"), float("-inf"), float("-inf")]
+            for vertex_index in range(1, vertex_count + 1):
+                vertex = self.rt.getVert(mesh, vertex_index)
+                values = [float(vertex.x), float(vertex.y), float(vertex.z)]
+                for axis in range(3):
+                    minimum[axis] = min(minimum[axis], values[axis])
+                    maximum[axis] = max(maximum[axis], values[axis])
+            return minimum, maximum
+        finally:
+            if mesh is not None:
+                try:
+                    self.rt.delete(mesh)
+                except Exception:
+                    pass
+
+    def _primitive_value(self, value) -> Tuple[bool, Any]:
+        if value is None:
+            return True, None
+        if isinstance(value, (bool, int, float, str)):
+            return True, value
+
+        class_name = self._class_name(value).casefold()
+        if class_name in {"name", "string", "filename"}:
+            return True, str(value)
+        if "color" in class_name:
+            components = []
+            for component in ("r", "g", "b", "a"):
+                if hasattr(value, component):
+                    components.append(float(getattr(value, component)))
+            if len(components) >= 3:
+                if max(abs(component) for component in components) > 1.0:
+                    components = [component / 255.0 for component in components]
+                return True, components
+        if class_name in {"point2", "point3", "point4"}:
+            components = []
+            for component in ("x", "y", "z", "w"):
+                if hasattr(value, component):
+                    components.append(float(getattr(value, component)))
+            if components:
+                return True, components
+        return False, None
+
+    def _primitive_properties(self, animatable) -> Dict[str, Any]:
+        properties: Dict[str, Any] = {}
+        try:
+            names = list(self.rt.getPropNames(animatable))
+        except Exception:
+            return properties
+
+        for property_name in names:
+            key = str(property_name)
+            if key.casefold() in {"name"}:
+                continue
+            try:
+                value = self.rt.getProperty(animatable, property_name)
+                supported, encoded = self._primitive_value(value)
+                if supported:
+                    properties[key] = encoded
+            except Exception:
+                continue
+        return properties
+
+    def _filter_material_properties(
+        self,
+        class_name: str,
+        properties: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if class_name.casefold() != "vraymtl":
+            return properties
+        return {
+            key: value
+            for key, value in properties.items()
+            if key.casefold() in VRAY_MTL_PROPERTIES
+        }
+
+    def _connected_map_controls(
+        self,
+        class_name: str,
+        properties: Dict[str, Any],
+        slot_names: Iterable[str],
+    ) -> Dict[str, Any]:
+        if class_name.casefold() != "vraymtl":
+            return {}
+
+        normalized_slots = set()
+        for slot in slot_names:
+            normalized = re.sub(r"[^a-z0-9]", "", str(slot).casefold())
+            normalized_slots.add(VRAY_MAP_SLOT_ALIASES.get(normalized, normalized))
+        controls = {}
+        for key, value in properties.items():
+            lowered = key.casefold()
+            if not lowered.startswith("texmap_"):
+                continue
+            stem = lowered[len("texmap_") :]
+            for suffix in ("_multiplier", "_on"):
+                if stem.endswith(suffix):
+                    stem = stem[: -len(suffix)]
+                    break
+            normalized_stem = re.sub(r"[^a-z0-9]", "", stem)
+            normalized_stem = VRAY_MAP_SLOT_ALIASES.get(
+                normalized_stem,
+                normalized_stem,
+            )
+            if normalized_stem in normalized_slots:
+                controls[key] = value
+        return controls
+
+    def capture_material_graph(
+        self,
+        payload_ids: Iterable[str],
+    ) -> Dict[str, Any]:
+        graph: Dict[str, Dict[str, Any]] = {}
+
+        def visit(animatable, kind: str) -> Optional[str]:
+            if animatable is None:
+                return None
+            try:
+                if animatable == self.rt.undefined:
+                    return None
+            except Exception:
+                pass
+
+            reference = "{0}_{1}".format(kind[:3], self._anim_id(animatable))
+            if reference in graph:
+                return reference
+
+            class_name = self._class_name(animatable)
+            all_properties = self._primitive_properties(animatable)
+            entry: Dict[str, Any] = {
+                "id": reference,
+                "kind": kind,
+                "name": str(getattr(animatable, "name", reference)),
+                "class": class_name,
+                "parameters": self._filter_material_properties(
+                    class_name,
+                    all_properties,
+                ),
+                "sub_materials": [],
+                "sub_textures": [],
+            }
+            graph[reference] = entry
+
+            try:
+                sub_material_count = int(self.rt.getNumSubMtls(animatable))
+            except Exception:
+                sub_material_count = 0
+            for index in range(1, sub_material_count + 1):
+                try:
+                    child = self.rt.getSubMtl(animatable, index)
+                    child_ref = visit(child, "material")
+                    try:
+                        slot = str(self.rt.getSubMtlSlotName(animatable, index))
+                    except Exception:
+                        slot = str(index)
+                    if child_ref:
+                        entry["sub_materials"].append(
+                            {"index": index, "slot": slot, "ref": child_ref}
+                        )
+                except Exception:
+                    continue
+
+            try:
+                sub_texture_count = int(self.rt.getNumSubTexmaps(animatable))
+            except Exception:
+                sub_texture_count = 0
+            connected_slot_names = []
+            for index in range(1, sub_texture_count + 1):
+                try:
+                    child = self.rt.getSubTexmap(animatable, index)
+                    child_ref = visit(child, "texture")
+                    try:
+                        slot = str(self.rt.getSubTexmapSlotName(animatable, index))
+                    except Exception:
+                        slot = str(index)
+                    if child_ref:
+                        connected_slot_names.append(slot)
+                        entry["sub_textures"].append(
+                            {"index": index, "slot": slot, "ref": child_ref}
+                        )
+                except Exception:
+                    continue
+            entry["parameters"].update(
+                self._connected_map_controls(
+                    class_name,
+                    all_properties,
+                    connected_slot_names,
+                )
+            )
+            entry["parameter_count"] = len(entry["parameters"])
+            return reference
+
+        assignments = []
+        for node_id in payload_ids:
+            node = self._nodes_by_id[node_id]
+            material = getattr(node, "material", None)
+            material_ref = visit(material, "material")
+            assignments.append(
+                {"object_id": node_id, "material_ref": material_ref}
+            )
+
+        return {
+            "serialization": "conversion_relevant_property_snapshot",
+            "color_encoding": "rgba_0_1",
+            "assignments": assignments,
+            "graph": list(graph.values()),
+        }
+
+    def discover_texture_references(
+        self,
+        material_data: Dict[str, Any],
+    ) -> List[Dict[str, str]]:
+        """Return only graph-reachable bitmap references with stable owners."""
+
+        candidates: List[Dict[str, str]] = []
+        likely_path_tokens = ("filename", "file", "path", "mapname", "bitmap")
+        for entry in material_data.get("graph", []):
+            if entry.get("kind") != "texture":
+                continue
+            for key, value in entry.get("parameters", {}).items():
+                if not isinstance(value, str):
+                    continue
+                if any(token in key.casefold() for token in likely_path_tokens):
+                    raw_path = value.strip()
+                    resolved_path = self._resolve_texture_path(raw_path)
+                    if resolved_path:
+                        candidates.append(
+                            {
+                                "graph_node_id": str(entry.get("id", "")),
+                                "parameter": str(key),
+                                "raw_path": raw_path,
+                                "resolved_path": resolved_path,
+                            }
+                        )
+
+        unique: List[Dict[str, str]] = []
+        seen = set()
+        for reference in candidates:
+            key = (
+                reference["graph_node_id"],
+                reference["parameter"].casefold(),
+                reference["resolved_path"].casefold(),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(reference)
+        return unique
+
+    def _resolve_texture_path(self, value: str) -> str:
+        raw = os.path.expandvars(str(value)).strip()
+        if not raw or raw.casefold() in {"none", "undefined"}:
+            return ""
+        if os.path.isabs(raw) and os.path.isfile(raw):
+            return os.path.normpath(raw)
+
+        scene_directory = str(getattr(self.rt, "maxFilePath", ""))
+        if scene_directory:
+            scene_candidate = os.path.join(scene_directory, raw)
+            if os.path.isfile(scene_candidate):
+                return os.path.normpath(scene_candidate)
+
+        try:
+            resolved = str(self.rt.pathConfig.resolvePath(raw))
+            if resolved and os.path.isfile(resolved):
+                return os.path.normpath(resolved)
+        except Exception:
+            pass
+        return os.path.normpath(raw)
+
+    @contextmanager
+    def prepared_export(
+        self,
+        export_ids: Iterable[str],
+        selection_ids: Optional[Iterable[str]] = None,
+    ):
+        ids = list(export_ids)
+        nodes = [self._nodes_by_id[node_id] for node_id in ids]
+        selected_id_list = list(selection_ids) if selection_ids is not None else ids
+        selection_nodes = [self._nodes_by_id[node_id] for node_id in selected_id_list]
+        previous_selection = list(self.rt.selection)
+        renamed: List[Tuple[Any, str]] = []
+        group_states: List[Tuple[Any, bool]] = []
+        export_names: Dict[str, str] = {}
+
+        try:
+            for node in nodes:
+                try:
+                    if not bool(self.rt.isGroupHead(node)):
+                        continue
+                    was_open = bool(self.rt.isOpenGroupHead(node))
+                    group_states.append((node, was_open))
+                    if not was_open:
+                        self.rt.setGroupOpen(node, True)
+                except Exception as exc:
+                    raise ExportError(
+                        "Could not open asset group {0} for an isolated export: {1}".format(
+                            getattr(node, "name", "Unnamed"),
+                            exc,
+                        )
+                    )
+
+            for node_id, node in zip(ids, nodes):
+                original_name = str(node.name)
+                export_name = "BM_{0}".format(uuid.uuid4().hex[:16])
+                renamed.append((node, original_name))
+                node.name = export_name
+                export_names[node_id] = export_name
+
+            self.rt.clearSelection()
+            try:
+                self.rt.select(self.rt.Array(*selection_nodes))
+            except Exception:
+                self.rt.select(selection_nodes)
+
+            expected_ids = set(selected_id_list)
+            selected_nodes = list(self.rt.selection)
+            selected_ids = {self._anim_id(node) for node in selected_nodes}
+            unexpected_nodes = [
+                str(getattr(node, "name", "Unnamed"))
+                for node in selected_nodes
+                if self._anim_id(node) not in expected_ids
+            ]
+            missing_ids = sorted(expected_ids - selected_ids)
+            if unexpected_nodes or missing_ids:
+                details = []
+                if unexpected_nodes:
+                    details.append(
+                        "unexpected nodes: {0}".format(", ".join(unexpected_nodes))
+                    )
+                if missing_ids:
+                    details.append("missing node IDs: {0}".format(", ".join(missing_ids)))
+                raise ExportError(
+                    "3ds Max expanded the BlendMax export selection ({0}).".format(
+                        "; ".join(details)
+                    )
+                )
+            yield export_names
+        finally:
+            for node, original_name in renamed:
+                try:
+                    node.name = original_name
+                except Exception:
+                    pass
+            group_restore_error = None
+            for group_head, was_open in reversed(group_states):
+                try:
+                    current_open = bool(self.rt.isOpenGroupHead(group_head))
+                    if current_open != was_open:
+                        self.rt.setGroupOpen(group_head, was_open)
+                except Exception as exc:
+                    if group_restore_error is None:
+                        group_restore_error = exc
+            try:
+                self.rt.clearSelection()
+                if previous_selection:
+                    try:
+                        self.rt.select(self.rt.Array(*previous_selection))
+                    except Exception:
+                        self.rt.select(previous_selection)
+            except Exception:
+                pass
+            if group_restore_error is not None:
+                raise ExportError(
+                    "BlendMax could not restore the original group state: {0}".format(
+                        group_restore_error
+                    )
+                )
+
+    def export_selected_fbx(self, output_path) -> List[str]:
+        warnings: List[str] = []
+        output = Path(output_path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            self.rt.pluginManager.loadClass(self.rt.FBXEXPORTER)
+        except Exception:
+            pass
+
+        settings_pushed = False
+        try:
+            try:
+                result = self.rt.FBXExporterSetParam("PushSettings")
+                if str(result).casefold() == "unsupplied":
+                    warnings.append(
+                        "The FBX exporter could not preserve the current settings."
+                    )
+                else:
+                    settings_pushed = True
+            except Exception as exc:
+                warnings.append(
+                    "Could not preserve the current FBX settings: {0}".format(exc)
+                )
+
+            try:
+                self.rt.FBXExporterSetParam("ResetExport")
+            except Exception:
+                warnings.append(
+                    "The FBX exporter preset could not be reset; explicit "
+                    "BlendMax settings were still applied."
+                )
+
+            settings = {
+                "Animation": False,
+                "ASCII": False,
+                "Cameras": False,
+                "Lights": False,
+                "EmbedTextures": False,
+                "ConvertUnit": "m",
+                "Preserveinstances": True,
+                "Shape": False,
+                "Skin": False,
+                "ShowWarnings": False,
+                "SmoothingGroups": True,
+                "TangentSpaceExport": True,
+                "Triangulate": False,
+                "UpAxis": "Z",
+            }
+            for key, value in settings.items():
+                try:
+                    result = self.rt.FBXExporterSetParam(key, value)
+                    if str(result).casefold() == "unsupplied":
+                        warnings.append(
+                            "FBX setting was not supported: {0}".format(key)
+                        )
+                except Exception as exc:
+                    warnings.append(
+                        "Could not set FBX option {0}: {1}".format(key, exc)
+                    )
+
+            try:
+                self.rt.exportFile(
+                    str(output),
+                    self.rt.Name("noPrompt"),
+                    selectedOnly=True,
+                    using=self.rt.FBXEXP,
+                )
+            except Exception as exc:
+                raise ExportError("3ds Max FBX export failed: {0}".format(exc))
+        finally:
+            if settings_pushed:
+                try:
+                    self.rt.FBXExporterSetParam("PopSettings")
+                except Exception as exc:
+                    warnings.append(
+                        "Could not restore the previous FBX settings: {0}".format(exc)
+                    )
+
+        if not output.is_file() or output.stat().st_size == 0:
+            raise ExportError("3ds Max did not create a usable FBX file.")
+        return warnings
+
+    def choose_output_path(self) -> Optional[str]:
+        scene_name = str(getattr(self.rt, "maxFileName", ""))
+        stem = Path(scene_name).stem if scene_name else "BlendMax_Asset"
+        directory = str(getattr(self.rt, "maxFilePath", ""))
+        initial = os.path.join(directory, stem + ".blendmax") if directory else stem + ".blendmax"
+        try:
+            result = self.rt.getSaveFileName(
+                caption="Export BlendMax Package",
+                filename=initial,
+                types="BlendMax Package (*.blendmax)|*.blendmax|",
+            )
+        except Exception as exc:
+            raise ExportError("Could not open the save dialog: {0}".format(exc))
+        if not result:
+            return None
+        return str(result)
+
+    def notify(self, message: str, title: str = "BlendMax") -> None:
+        try:
+            self.rt.messageBox(str(message), title=title)
+        except Exception:
+            print("{0}: {1}".format(title, message))
