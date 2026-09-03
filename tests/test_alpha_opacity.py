@@ -54,6 +54,7 @@ class FakeAdapter:
     def __init__(self, materials):
         self.rt = FakeRuntime()
         self.materials = materials
+        self.notifications = []
         self._nodes_by_id = {
             key: type("Node", (), {"name": key, "material": material})()
             for key, material in materials.items()
@@ -68,6 +69,9 @@ class FakeAdapter:
     def _is_undefined(self, value):
         return value is None or value is self.rt.undefined
 
+    def notify(self, message, title):
+        self.notifications.append((message, title))
+
 
 class AlphaOpacityTests(unittest.TestCase):
     def test_standard_enabled_opacity_map_is_detected(self):
@@ -77,7 +81,9 @@ class AlphaOpacityTests(unittest.TestCase):
             opacityMapEnable=True,
             opacity=100,
         )
-        self.assertTrue(material_uses_alpha_opacity(FakeAdapter({"leaf": material}), material))
+        self.assertTrue(
+            material_uses_alpha_opacity(FakeAdapter({"leaf": material}), material)
+        )
 
     def test_standard_disabled_opacity_map_is_not_detected(self):
         material = FakeMaterial(
@@ -86,11 +92,15 @@ class AlphaOpacityTests(unittest.TestCase):
             opacityMapEnable=False,
             opacity=100,
         )
-        self.assertFalse(material_uses_alpha_opacity(FakeAdapter({"leaf": material}), material))
+        self.assertFalse(
+            material_uses_alpha_opacity(FakeAdapter({"leaf": material}), material)
+        )
 
     def test_standard_constant_opacity_below_100_is_detected(self):
         material = FakeMaterial("Leaves", opacity=75)
-        self.assertTrue(material_uses_alpha_opacity(FakeAdapter({"leaf": material}), material))
+        self.assertTrue(
+            material_uses_alpha_opacity(FakeAdapter({"leaf": material}), material)
+        )
 
     def test_vray_enabled_opacity_map_is_detected(self):
         material = FakeMaterial(
@@ -99,7 +109,9 @@ class AlphaOpacityTests(unittest.TestCase):
             texmap_opacity="leaf_alpha.png",
             texmap_opacity_on=True,
         )
-        self.assertTrue(material_uses_alpha_opacity(FakeAdapter({"leaf": material}), material))
+        self.assertTrue(
+            material_uses_alpha_opacity(FakeAdapter({"leaf": material}), material)
+        )
 
     def test_vray_disabled_opacity_map_is_not_detected(self):
         material = FakeMaterial(
@@ -108,7 +120,9 @@ class AlphaOpacityTests(unittest.TestCase):
             texmap_opacity="leaf_alpha.png",
             texmap_opacity_on=False,
         )
-        self.assertFalse(material_uses_alpha_opacity(FakeAdapter({"leaf": material}), material))
+        self.assertFalse(
+            material_uses_alpha_opacity(FakeAdapter({"leaf": material}), material)
+        )
 
     def test_nested_multisub_opacity_protects_whole_geometry(self):
         multisub = FakeMaterial("TreeMulti", class_name="Multi/Sub")
@@ -129,10 +143,50 @@ class AlphaOpacityTests(unittest.TestCase):
 
         self.assertEqual([finding.geometry_id for finding in findings], ["Tree_01"])
 
+    def test_case_insensitive_standard_property_name_is_detected(self):
+        material = FakeMaterial(
+            "Leaves",
+            OpacityMap="leaf_alpha.png",
+            OpacityMapEnable=True,
+            opacity=100,
+        )
+        self.assertTrue(
+            material_uses_alpha_opacity(FakeAdapter({"leaf": material}), material)
+        )
+
     def test_no_findings_does_not_request_user_decision(self):
         adapter = FakeAdapter({})
         decision = confirm_alpha_opacity(adapter, ())
         self.assertEqual(decision.action, "NONE")
+
+    def test_prompt_failure_surfaces_cancel_notification(self):
+        adapter = FakeAdapter({})
+        material = FakeMaterial(
+            "Leaves",
+            opacityMap="leaf_alpha.png",
+            opacityMapEnable=True,
+        )
+        finding = type(
+            "Finding",
+            (),
+            {
+                "geometry_id": "leaf",
+                "geometry_name": "Leaves",
+                "material_name": "Leaves",
+                "material": material,
+                "material_graph_ids": (),
+            },
+        )()
+
+        def failing_query(_message, title=""):
+            raise RuntimeError("dialog unavailable")
+
+        adapter.rt.queryBox = failing_query
+        decision = confirm_alpha_opacity(adapter, (finding,))
+
+        self.assertEqual(decision.action, "CANCEL")
+        self.assertTrue(adapter.notifications)
+        self.assertIn("canceled", adapter.notifications[0][0].lower())
 
 
 if __name__ == "__main__":
