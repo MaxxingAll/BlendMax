@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Iterable, List, Optional, Set, Tuple
 
 
 @dataclass(frozen=True)
@@ -12,6 +12,7 @@ class AlphaOpacityFinding:
     geometry_name: str
     material_name: str
     material: Any
+    material_graph_ids: Tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -20,15 +21,6 @@ class AlphaOpacityDecision:
     protected_geometry_ids: Tuple[str, ...]
     protected_material_ids: Tuple[str, ...]
     findings: Tuple[AlphaOpacityFinding, ...]
-
-
-_ALPHA_PROPERTY_NAMES = {
-    "opacity",
-    "opacitymap",
-    "opacitymapenable",
-    "texmap_opacity",
-    "texmap_opacity_on",
-}
 
 
 def _safe_class_name(adapter, value: Any) -> str:
@@ -73,17 +65,15 @@ def _property_names(adapter, value: Any) -> Set[str]:
 
 
 def _numeric_opacity_hits(adapter, material: Any, names: Set[str]) -> bool:
-    for property_name in ("opacity", "opacityMultiplier"):
-        if property_name.casefold() not in names:
-            continue
-        ok, value = _get_property(adapter, material, property_name)
-        if not ok:
-            continue
-        try:
-            return float(value) < 100.0
-        except Exception:
-            continue
-    return False
+    if "opacity" not in names:
+        return False
+    ok, value = _get_property(adapter, material, "opacity")
+    if not ok:
+        return False
+    try:
+        return float(value) < 100.0
+    except Exception:
+        return False
 
 
 def _enabled_opacity_map_hit(adapter, material: Any, names: Set[str]) -> bool:
@@ -99,8 +89,8 @@ def _enabled_opacity_map_hit(adapter, material: Any, names: Set[str]) -> bool:
             continue
         ok_enable, enabled = _get_property(adapter, material, enable_name)
         if not ok_enable:
-            # A populated explicit opacity slot with no readable enable state is
-            # treated conservatively because cleanup must not silently alter it.
+            # A populated opacity slot with an unreadable enable state is
+            # treated conservatively to avoid silently changing appearance.
             return True
         try:
             if bool(enabled):
@@ -110,52 +100,15 @@ def _enabled_opacity_map_hit(adapter, material: Any, names: Set[str]) -> bool:
     return False
 
 
-def _texture_slot_hit(adapter, value: Any) -> bool:
-    """Detect nested opacity/alpha texture slots without relying on names of materials."""
-    try:
-        count = int(adapter.rt.getNumSubTexmaps(value))
-    except Exception:
-        return False
-    for index in range(1, count + 1):
-        try:
-            child = adapter.rt.getSubTexmap(value, index)
-        except Exception:
-            continue
-        try:
-            slot = str(adapter.rt.getSubTexmapSlotName(value, index)).casefold()
-        except Exception:
-            slot = ""
-        if child is not None and not _is_undefined(adapter, child) and (
-            "opacity" in slot or "alpha" in slot
-        ):
-            return True
-    return False
-
-
-def material_uses_alpha_opacity(adapter, material: Any, seen: Optional[Set[str]] = None, depth: int = 0) -> bool:
-    """Return True when a material graph contains appearance-affecting alpha/opacity state."""
+def _walk_material_graph(adapter, material: Any, seen: Optional[Set[str]] = None, depth: int = 0):
     if _is_undefined(adapter, material) or material is None or depth > 32:
-        return False
+        return
     seen = set() if seen is None else seen
     anim_id = _safe_anim_id(adapter, material)
     if anim_id in seen:
-        return False
+        return
     seen.add(anim_id)
-
-    names = _property_names(adapter, material)
-    class_name = _safe_class_name(adapter, material).casefold()
-
-    if "vraymtl" in class_name:
-        if _enabled_opacity_map_hit(adapter, material, names):
-            return True
-    else:
-        if _enabled_opacity_map_hit(adapter, material, names):
-            return True
-        if _numeric_opacity_hits(adapter, material, names):
-            return True
-
-    if _texture_slot_hit(adapter, material):
-        return True
+    yield material
 
     try:
         sub_count = int(adapter.rt.getNumSubMtls(material))
@@ -166,8 +119,7 @@ def material_uses_alpha_opacity(adapter, material: Any, seen: Optional[Set[str]]
             child = adapter.rt.getSubMtl(material, index)
         except Exception:
             continue
-        if material_uses_alpha_opacity(adapter, child, seen=seen, depth=depth + 1):
-            return True
+        yield from _walk_material_graph(adapter, child, seen=seen, depth=depth + 1)
 
     try:
         texture_count = int(adapter.rt.getNumSubTexmaps(material))
@@ -178,9 +130,18 @@ def material_uses_alpha_opacity(adapter, material: Any, seen: Optional[Set[str]]
             child = adapter.rt.getSubTexmap(material, index)
         except Exception:
             continue
-        if material_uses_alpha_opacity(adapter, child, seen=seen, depth=depth + 1):
-            return True
+        yield from _walk_material_graph(adapter, child, seen=seen, depth=depth + 1)
 
+
+def material_uses_alpha_opacity(adapter, material: Any) -> bool:
+    """Return True when a material graph contains appearance-affecting alpha/opacity state."""
+    for graph_node in _walk_material_graph(adapter, material):
+        names = _property_names(adapter, graph_node)
+        if _enabled_opacity_map_hit(adapter, graph_node, names):
+            return True
+        if "vraymtl" not in _safe_class_name(adapter, graph_node).casefold():
+            if _numeric_opacity_hits(adapter, graph_node, names):
+                return True
     return False
 
 
@@ -198,18 +159,23 @@ def find_alpha_opacity_geometry(adapter, geometry_ids: Iterable[str]) -> Tuple[A
         if _is_undefined(adapter, material) or material is None:
             continue
         if material_uses_alpha_opacity(adapter, material):
+            graph_ids = tuple(
+                _safe_anim_id(adapter, graph_node)
+                for graph_node in _walk_material_graph(adapter, material)
+            )
             findings.append(
                 AlphaOpacityFinding(
                     geometry_id=geometry_id,
                     geometry_name=str(getattr(node, "name", geometry_id)),
                     material_name=str(getattr(material, "name", "Material")),
                     material=material,
+                    material_graph_ids=graph_ids,
                 )
             )
     return tuple(findings)
 
 
-def confirm_alpha_opacity(adapter, findings: Sequence[AlphaOpacityFinding]) -> AlphaOpacityDecision:
+def confirm_alpha_opacity(adapter, findings: Tuple[AlphaOpacityFinding, ...]) -> AlphaOpacityDecision:
     if not findings:
         return AlphaOpacityDecision("NONE", (), (), ())
 
@@ -222,8 +188,7 @@ def confirm_alpha_opacity(adapter, findings: Sequence[AlphaOpacityFinding]) -> A
         if finding.geometry_name not in seen_geometry:
             geometry_names.append(finding.geometry_name)
             seen_geometry.add(finding.geometry_name)
-        material_id = _safe_anim_id(adapter, finding.material)
-        protected_material_ids.add(material_id)
+        protected_material_ids.update(finding.material_graph_ids)
         if finding.material_name not in seen_materials:
             material_names.append(finding.material_name)
             seen_materials.add(finding.material_name)
@@ -249,14 +214,14 @@ def confirm_alpha_opacity(adapter, findings: Sequence[AlphaOpacityFinding]) -> A
             )
         )
     except Exception:
-        return AlphaOpacityDecision("CANCEL", (), (), tuple(findings))
+        return AlphaOpacityDecision("CANCEL", (), (), findings)
 
     if skip:
         return AlphaOpacityDecision(
             "SKIP",
             tuple(f.geometry_id for f in findings),
             tuple(sorted(protected_material_ids)),
-            tuple(findings),
+            findings,
         )
 
     merge_message = (
@@ -275,5 +240,5 @@ def confirm_alpha_opacity(adapter, findings: Sequence[AlphaOpacityFinding]) -> A
         merge = False
 
     if merge:
-        return AlphaOpacityDecision("MERGE", (), (), tuple(findings))
-    return AlphaOpacityDecision("CANCEL", (), (), tuple(findings))
+        return AlphaOpacityDecision("MERGE", (), (), findings)
+    return AlphaOpacityDecision("CANCEL", (), (), findings)
