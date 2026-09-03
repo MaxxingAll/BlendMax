@@ -89,10 +89,8 @@ def _enabled_opacity_map_hit(adapter, material: Any, names: Tuple[str, ...]) -> 
     pairs = [
         ("opacitymap", "opacitymapenable"),
         ("texmap_opacity", "texmap_opacity_on"),
+        ("cutout_map", "cutout_map_on"),
     ]
-    class_name = _safe_class_name(adapter, material).casefold()
-    if "physical_material" in class_name or "physicalmaterial" in class_name:
-        pairs.append(("cutout_map", "cutout_map_on"))
 
     for map_name, enable_name in pairs:
         if map_name.casefold() not in folded_names:
@@ -157,9 +155,8 @@ def material_uses_alpha_opacity(adapter, material: Any) -> bool:
             if _numeric_opacity_hits(adapter, graph_node, names):
                 return True
         else:
-            # Decision: V-Ray opacity is scaled differently from Standard/Physical
-            # material opacity. Do not infer constant V-Ray opacity as a cutout
-            # signal here; explicit V-Ray opacity-map state is the protected case.
+            # V-Ray opacity is scaled differently from Standard/Physical material
+            # opacity; only its explicit opacity-map state is treated as protection.
             pass
     return False
 
@@ -191,8 +188,8 @@ def find_alpha_opacity_geometry(adapter, geometry_ids: Iterable[str]) -> Tuple[A
         try:
             node = get_node_by_id(geometry_id)
         except Exception:
-            # A lookup failure is non-fatal to the safety preflight: without a node
-            # we cannot prove alpha/opacity usage, so simply report no finding.
+            # Without a node we cannot prove alpha/opacity usage, so keep the
+            # preflight non-fatal and report no finding for that geometry.
             continue
         if node is None:
             continue

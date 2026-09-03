@@ -13,6 +13,19 @@ called out separately from automated coverage.
   roughness mode stay silent, while divergent values remain grouped as an
   approximation note.
 
+## Max Exporter 0.1.0-alpha.4.3.0 — 2026-09-03
+
+### Changed
+
+- Adds alpha/opacity protection to the cleanup workflow so affected source geometry can be skipped instead of being joined.
+- Adds recursive Standard, Physical Material Cutout, and V-Ray opacity-map detection with conservative failure handling.
+- Adds cleanup-entrypoint regression coverage for Skip/Merge/Cancel boundaries and mixed protected/unprotected scenes.
+- Detects Physical Material Cutout from the exposed `cutout_map` / `cutout_map_on` slots without relying on a renderer class-name spelling.
+
+### Release metadata
+
+- Bumps the Max exporter and AppBundle version so the alpha/opacity cleanup protection change is identifiable in installed builds.
+
 ## Max Exporter 0.1.0-alpha.4.2.0 — 2026-09-02
 
 ### Changed
