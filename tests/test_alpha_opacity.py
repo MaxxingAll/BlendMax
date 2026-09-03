@@ -143,6 +143,17 @@ class AlphaOpacityTests(unittest.TestCase):
 
         self.assertEqual([finding.geometry_id for finding in findings], ["Tree_01"])
 
+    def test_physical_material_cutout_map_is_detected(self):
+        material = FakeMaterial(
+            "Leaves",
+            class_name="Physical_Material",
+            cutout_map="leaf_cutout.png",
+            cutout_map_on=True,
+        )
+        self.assertTrue(
+            material_uses_alpha_opacity(FakeAdapter({"leaf": material}), material)
+        )
+
     def test_case_insensitive_standard_property_name_is_detected(self):
         material = FakeMaterial(
             "Leaves",
