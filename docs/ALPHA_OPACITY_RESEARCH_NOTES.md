@@ -27,6 +27,10 @@ The detector intentionally recognizes V-Ray's explicit opacity-map slot/state bu
 
 `getPropNames()` is used to discover runtime-exposed property names so the detector can resolve case-insensitive Max property names safely. If property enumeration fails for a graph node, the detector does not guess arbitrary property names and therefore does not create a protection finding from that node. This is a deliberate fail-open choice for the property-enumeration layer; the known-slot checks remain state-based whenever Max exposes those slots.
 
+## Adapter boundary
+
+Alpha/opacity detection uses the adapter's public accessors for node lookup, graph identity, class name, and undefined-state checks. This avoids direct coupling from the cleanup detector to adapter private state.
+
 ## BlendMax implication
 
 Join Mesh by Material currently stages and can split Multi/Sub geometry before joining material buckets. For alpha/opacity assets, the safest Skip behavior is therefore to detect the assigned material graph first and exclude the entire source geometry node before staging/splitting.
