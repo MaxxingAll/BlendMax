@@ -73,7 +73,11 @@ def _property_names(adapter, value: Any) -> Tuple[str, ...]:
         for name in adapter.rt.getPropNames(value):
             names.append(str(name))
     except Exception:
-        pass
+        # Decision: property enumeration failure is fail-open here. The detector
+        # intentionally avoids guessing arbitrary Max properties because doing so
+        # could create renderer-specific false positives. Known material slots are
+        # checked when Max exposes them through getPropNames().
+        return tuple()
     return tuple(names)
 
 
@@ -92,10 +96,14 @@ def _numeric_opacity_hits(adapter, material: Any, names: Tuple[str, ...]) -> boo
 
 def _enabled_opacity_map_hit(adapter, material: Any, names: Tuple[str, ...]) -> bool:
     folded_names = {name.casefold() for name in names}
-    pairs = (
+    pairs = [
         ("opacitymap", "opacitymapenable"),
         ("texmap_opacity", "texmap_opacity_on"),
-    )
+    ]
+    class_name = _safe_class_name(adapter, material).casefold()
+    if "physical_material" in class_name or "physicalmaterial" in class_name:
+        pairs.append(("cutout_map", "cutout_map_on"))
+
     for map_name, enable_name in pairs:
         if map_name.casefold() not in folded_names:
             continue
@@ -104,8 +112,8 @@ def _enabled_opacity_map_hit(adapter, material: Any, names: Tuple[str, ...]) -> 
             continue
         ok_enable, enabled = _get_property(adapter, material, enable_name, names)
         if not ok_enable:
-            # A populated opacity slot with an unreadable enable state is
-            # treated conservatively to avoid silently changing appearance.
+            # A populated opacity/cutout slot with an unreadable enable state is
+            # protected conservatively because the renderer may still use it.
             return True
         try:
             if bool(enabled):
@@ -154,9 +162,15 @@ def material_uses_alpha_opacity(adapter, material: Any) -> bool:
         names = _property_names(adapter, graph_node)
         if _enabled_opacity_map_hit(adapter, graph_node, names):
             return True
-        if "vraymtl" not in _safe_class_name(adapter, graph_node).casefold():
+        class_name = _safe_class_name(adapter, graph_node).casefold()
+        if "vraymtl" not in class_name:
             if _numeric_opacity_hits(adapter, graph_node, names):
                 return True
+        else:
+            # Decision: V-Ray numeric opacity is not inferred as a cutout signal.
+            # Protection is keyed to V-Ray's explicit opacity-map slot/state so
+            # renderer-specific constant-opacity behavior is not conflated here.
+            pass
     return False
 
 
