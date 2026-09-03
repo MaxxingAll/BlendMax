@@ -22,7 +22,7 @@ For Multi/Sub, any nested qualifying alpha/opacity path protects the entire assi
 
 One consolidated warning is shown when affected geometry is found:
 
-- **Skip Materials** — keep the entire affected source geometry separate and keep its material graph out of destructive material merging for this operation.
+- **Skip Materials** — keep the entire affected geometry separate and keep its material graph out of destructive material merging for this operation.
 - **Merge Anyway** — use the existing cleanup path.
 - **Cancel Export** — stop before execution.
 
