@@ -124,6 +124,25 @@ class MaxRuntimeAdapter:
         except Exception:
             return "Unknown"
 
+    def get_node_by_id(self, node_id: str) -> Any:
+        """Return a snapshot node by stable animation id."""
+        return self._nodes_by_id.get(node_id)
+
+    def get_anim_id(self, value: Any) -> str:
+        """Public identity accessor for cleanup helpers."""
+        return self._anim_id(value)
+
+    def get_class_name(self, value: Any) -> str:
+        """Public material/object class-name accessor for cleanup helpers."""
+        return self._class_name(value)
+
+    def is_undefined(self, value: Any) -> bool:
+        """Public Max undefined-value check for cleanup helpers."""
+        try:
+            return value is None or value == self.rt.undefined
+        except Exception:
+            return value is None
+
     def _is_exportable_superclass(self, superclass: str) -> bool:
         lowered = superclass.casefold()
         return "geometryclass" in lowered

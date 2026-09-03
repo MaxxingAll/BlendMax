@@ -132,6 +132,10 @@ class CleanupEntrypointTests(unittest.TestCase):
                 return plan
 
             @staticmethod
+            def get_node_by_id(_node_id):
+                return None
+
+            @staticmethod
             def analyze_duplicate_materials(_plan):
                 return DuplicateMaterialAnalysis((candidate,), ())
 
@@ -219,6 +223,10 @@ class CleanupEntrypointTests(unittest.TestCase):
                 return plan
 
             @staticmethod
+            def get_node_by_id(_node_id):
+                return None
+
+            @staticmethod
             def analyze_duplicate_materials(_plan):
                 return DuplicateMaterialAnalysis((candidate,), ())
 
@@ -258,6 +266,151 @@ class CleanupEntrypointTests(unittest.TestCase):
             run_interactive()
 
         self.assertEqual(adapter.executed_merges, ())
+
+    def test_merge_anyway_reaches_existing_path(self):
+        adapter = types.SimpleNamespace()
+        adapter.requires_undo = False
+        adapter.notifications = []
+        adapter.executed = False
+        candidate = MaterialMergeCandidate(
+            display_name="Leaves",
+            merged_name="Leaves_MERGED",
+            fingerprint="same",
+            materials=(object(), object()),
+        )
+
+        adapter.snapshot_scene = lambda: [
+            SceneNode(
+                "root", "Root", "Dummy", "Helper", is_group_head=True, exportable=False
+            ),
+            SceneNode(
+                "mesh", "Mesh", "Editable_Poly", "GeometryClass", parent_id="root"
+            ),
+        ]
+        adapter.selected_root_id = lambda: "root"
+        adapter.classify_shape_like_geometry = lambda plan: plan
+        adapter.analyze_duplicate_materials = lambda _plan: DuplicateMaterialAnalysis((candidate,), ())
+        adapter.confirm_material_merge = lambda _candidate: True
+        adapter.confirm_with_materials = lambda _plan, merges, _differing: merges == (candidate,)
+
+        def execute(_plan, merges):
+            adapter.executed = True
+            adapter.executed_merges = merges
+            return {
+                "input_mesh_count": 1,
+                "output_mesh_count": 1,
+                "merged_material_set_count": 1,
+                "replaced_material_count": 2,
+                "deleted_shape_count": 0,
+                "removed_group_count": 0,
+                "warnings": [],
+            }
+
+        adapter.execute = execute
+        adapter.notify = lambda message, title: adapter.notifications.append((message, title))
+        pymxs = types.SimpleNamespace(undo=lambda _enabled: nullcontext(), runundo=lambda: None)
+        decision = types.SimpleNamespace(
+            action="MERGE",
+            protected_geometry_ids=(),
+            protected_material_ids=(),
+        )
+        with patch(
+            "blendmax_max.cleanup_entrypoint.MaxCleanupAdapter", return_value=adapter
+        ), patch(
+            "blendmax_max.cleanup_entrypoint.find_alpha_opacity_geometry", return_value=(object(),)
+        ), patch(
+            "blendmax_max.cleanup_entrypoint.confirm_alpha_opacity", return_value=decision
+        ), patch.dict(sys.modules, {"pymxs": pymxs}):
+            run_interactive()
+
+        self.assertTrue(adapter.executed)
+        self.assertEqual(adapter.executed_merges, (candidate,))
+
+    def test_alpha_cancel_never_reaches_execute(self):
+        adapter = types.SimpleNamespace()
+        adapter.requires_undo = False
+        adapter.executed = False
+        adapter.notify = lambda _message, _title: None
+        adapter.snapshot_scene = lambda: [
+            SceneNode(
+                "root", "Root", "Dummy", "Helper", is_group_head=True, exportable=False
+            ),
+            SceneNode(
+                "mesh", "Mesh", "Editable_Poly", "GeometryClass", parent_id="root"
+            ),
+        ]
+        adapter.selected_root_id = lambda: "root"
+        adapter.classify_shape_like_geometry = lambda plan: plan
+        adapter.execute = lambda _plan, _merges: setattr(adapter, "executed", True)
+        decision = types.SimpleNamespace(
+            action="CANCEL",
+            protected_geometry_ids=(),
+            protected_material_ids=(),
+        )
+        with patch(
+            "blendmax_max.cleanup_entrypoint.MaxCleanupAdapter", return_value=adapter
+        ), patch(
+            "blendmax_max.cleanup_entrypoint.find_alpha_opacity_geometry", return_value=(object(),)
+        ), patch(
+            "blendmax_max.cleanup_entrypoint.confirm_alpha_opacity", return_value=decision
+        ):
+            run_interactive()
+
+        self.assertFalse(adapter.executed)
+
+    def test_mixed_scene_still_joins_normal_geometry(self):
+        adapter = types.SimpleNamespace()
+        adapter.requires_undo = False
+        adapter.notifications = []
+        adapter.joined_plan_ids = None
+        adapter.snapshot_scene = lambda: [
+            SceneNode(
+                "root", "Root", "Dummy", "Helper", is_group_head=True, exportable=False
+            ),
+            SceneNode(
+                "alpha", "Tree_01", "Editable_Poly", "GeometryClass", parent_id="root"
+            ),
+            SceneNode(
+                "normal", "Rock_01", "Editable_Poly", "GeometryClass", parent_id="root"
+            ),
+        ]
+        adapter.selected_root_id = lambda: "root"
+        adapter.classify_shape_like_geometry = lambda plan: plan
+        adapter.analyze_duplicate_materials = lambda _plan: DuplicateMaterialAnalysis((), ())
+        adapter.confirm_with_materials = lambda _plan, _merges, _differing: True
+
+        def execute(plan, _merges):
+            adapter.joined_plan_ids = plan.visible_geometry_ids
+            return {
+                "input_mesh_count": len(plan.visible_geometry_ids),
+                "output_mesh_count": 1,
+                "merged_material_set_count": 0,
+                "replaced_material_count": 0,
+                "deleted_shape_count": 0,
+                "removed_group_count": 0,
+                "warnings": [],
+            }
+
+        adapter.execute = execute
+        adapter.notify = lambda message, title: adapter.notifications.append((message, title))
+        decision = types.SimpleNamespace(
+            action="SKIP",
+            protected_geometry_ids=("alpha",),
+            protected_material_ids=("protected",),
+        )
+        pymxs = types.SimpleNamespace(undo=lambda _enabled: nullcontext(), runundo=lambda: None)
+        with patch(
+            "blendmax_max.cleanup_entrypoint.MaxCleanupAdapter", return_value=adapter
+        ), patch(
+            "blendmax_max.cleanup_entrypoint.find_alpha_opacity_geometry", return_value=(object(),)
+        ), patch(
+            "blendmax_max.cleanup_entrypoint.confirm_alpha_opacity", return_value=decision
+        ), patch(
+            "blendmax_max.cleanup_entrypoint.is_protected_material", return_value=False
+        ), patch.dict(sys.modules, {"pymxs": pymxs}):
+            run_interactive()
+
+        self.assertEqual(adapter.joined_plan_ids, ("normal",))
 
 
 if __name__ == "__main__":
