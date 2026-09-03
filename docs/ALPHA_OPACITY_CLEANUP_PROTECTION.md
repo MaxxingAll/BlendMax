@@ -120,8 +120,6 @@ Geometry kept separate: N
 - nested Multi/Sub opacity detection;
 - no-findings decision behavior.
 
-The repository CI workflow should run these tests on the PR branch.
-
 ## Research basis
 
 Autodesk documents Standard material opacity/opacity-map state and Multi/Sub-Object material structure. Chaos documents the V-Ray opacity-map workflow for leaf cutouts.
