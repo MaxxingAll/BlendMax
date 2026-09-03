@@ -20,7 +20,7 @@ created automatically by Python.
 
 | Component | Version | Status |
 | --- | --- | --- |
-| 3ds Max exporter and cleanup | `0.1.0-alpha.4.2.0` | Host verified in 3ds Max 2025.3 |
+| 3ds Max exporter and cleanup | `0.1.0-alpha.4.3.0` | Host verified in 3ds Max 2025.3 |
 | Blender importer | `0.1.5` | VRayMtl hardening and requested parameter-adaptation checks passed |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
 | Automated suite | See CI | Python 3.11–3.13 |
@@ -86,6 +86,13 @@ sets into a copied `<name>_MERGED` material. Refusing keeps the original
 material identities and separate output meshes. Same-name materials with
 different setups are never silently combined.
 
+Alpha/opacity safety is applied before destructive mesh staging. When affected
+geometry uses Standard opacity maps/settings, Physical Material Cutout, or V-Ray
+opacity-map state, BlendMax can skip the whole source geometry node rather than
+joining it. Multi/Sub graphs are inspected recursively, and a qualifying nested
+alpha/opacity path protects the entire assigned geometry node. Users can also
+explicitly merge anyway or cancel before execution.
+
 Safety rules are deliberately simple:
 
 - if any scene object is hidden-in-viewport or frozen, cleanup stops before
@@ -102,8 +109,7 @@ Safety rules are deliberately simple:
 - all nested groups are removed one level at a time after their source meshes
   have been replaced;
 - the selected root is always retained;
-- source geometry is deleted only after every material output has been built;
-  and
+- source geometry is deleted only after every material output has been built; and
 - the confirmed operation is recorded as one 3ds Max undo step.
 
 The command never runs automatically during export. The normal result is the
@@ -245,16 +251,18 @@ visual parity A/B is not part of the acceptance criterion.
 The exporter has been tested in Autodesk 3ds Max 2025.3 with V-Ray 7.00.02.
 V-Ray release families from 7.00.x through 7.40.x are treated as compatible.
 
-Max exporter Alpha.4.2.0 retains the Alpha.4.1.0 host baseline and documents the 500-object export limit. Alpha.4.1.0 passed the ring-light cleanup workflow: 74 input
-meshes became 26 material meshes, five identical material sets replaced ten
-original assignments, and 141 Shape/segment objects were deleted. The
-Alpha.3.6 export baseline, persistent menu, and nine core `VRayMtl` features
-remain verified. Blender importer 0.1.2 completed its Basketball and
-four-potted-plants material, hierarchy, and world-origin placement passes.
-Importer 0.1.4 completed the Ring-Light Blender 5.2 pass with 26 objects and 26
-native materials, no warnings or errors, both packaged base-color images wired,
-and the hierarchy and world-origin placement intact. The undeclared `Untitled`
-FBX object exposed by 0.1.3 is removed together with its orphaned geometry.
+Max exporter Alpha.4.3.0 includes alpha/opacity cleanup protection in addition
+to the Alpha.4.2.0 500-object export limit. Alpha.4.1.0 passed the ring-light
+cleanup workflow: 74 input meshes became 26 material meshes, five identical
+material sets replaced ten original assignments, and 141 Shape/segment objects
+were deleted. The Alpha.3.6 export baseline, persistent menu, and nine core
+`VRayMtl` features remain verified. Blender importer 0.1.2 completed its
+Basketball and four-potted-plants material, hierarchy, and world-origin
+placement passes. Importer 0.1.4 completed the Ring-Light Blender 5.2 pass with
+26 objects and 26 native materials, no warnings or errors, both packaged
+base-color images wired, and the hierarchy and world-origin placement intact.
+The undeclared `Untitled` FBX object exposed by 0.1.3 is removed together with
+its orphaned geometry.
 
 Full V-Ray-to-Blender material interpretation is **not claimed complete**.
 Advanced compound materials such as `VRayBlendMtl` remain deferred.
