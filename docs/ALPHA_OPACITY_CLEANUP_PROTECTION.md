@@ -57,15 +57,13 @@ If all source geometry is protected, cleanup returns a clean informational no-op
 
 ## Validation
 
-- `tests/test_alpha_opacity.py` covers Standard/V-Ray map states, constant Standard opacity, recursive Multi/Sub detection, and the no-findings decision path.
+- `tests/test_alpha_opacity.py` covers Standard/V-Ray map states, constant Standard opacity, recursive Multi/Sub detection, case-insensitive Standard property access, prompt-failure cancellation, and the no-findings decision path.
 - `tests/test_cleanup_entrypoint.py` covers the existing merge path plus explicit Merge Anyway, Cancel-before-execute, and mixed-scene filtering boundaries.
 - Full host validation still requires running the cleanup inside the supported 3ds Max/V-Ray environment.
 
 ## Research
 
-- Autodesk Standard material opacity/map API: https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Material-MAXWrapper/Material-Types/GUID-57F5EBBA-5F54-4CD4-8993-0B07A3571293.html
-- Autodesk Multi/Sub-Object API: https://help.autodesk.com/cloudhelp/2021/ENU/3DSMax-MAXScript/files/GUID-7ECB1E85-6199-4143-BEDA-3B26DD35E0C3.htm
-- Chaos V-Ray leaf opacity workflow: https://docs.chaos.com/display/VMAX/How%2Bto%2BMake%2BLeaves
+See `ALPHA_OPACITY_RESEARCH_NOTES.md` for the Autodesk and Chaos source links and detection policy.
 
 ## Out of scope
 
