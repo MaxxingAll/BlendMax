@@ -9,8 +9,9 @@ The cleanup now performs a non-mutating alpha/opacity preflight before material 
 - Standard: enabled `opacityMap` (`opacityMapEnable`) or `opacity < 100`.
 - V-Ray: enabled `texmap_opacity` / `texmap_opacity_on` path.
 - Present-but-disabled opacity maps do not trigger protection by themselves.
+- If an opacity-map enable state cannot be read, detection fails closed and protects the material.
 - Refraction alone is not treated as alpha/opacity protection.
-- Detection recursively walks sub-material and sub-texture graphs.
+- Detection recursively walks sub-material and sub-texture graphs with cycle/depth protection.
 
 For Multi/Sub, any nested qualifying alpha/opacity path protects the entire assigned geometry node. No face-level inspection or splitting is introduced.
 
@@ -22,7 +23,7 @@ One consolidated warning is shown when affected geometry is found:
 - **Merge Anyway** — use the existing cleanup path.
 - **Cancel Export** — stop before execution.
 
-Because the current Max confirmation API is boolean-only, the three-way flow uses two explicit prompts so Merge and Cancel cannot be confused.
+Because the current Max confirmation API is boolean-only, the three-way flow uses two explicit prompts. The first prompt states that `No` advances to a second prompt where `Yes` means Merge Anyway and `No` means Cancel Export. Prompt failures are also treated as Cancel and surfaced with a notification.
 
 ## Safety boundary
 
@@ -46,13 +47,19 @@ A protected node is therefore never staged, split, bucketed, joined, or recorded
 
 Duplicate-material analysis runs only on joinable geometry. Candidates containing protected material-graph IDs are also rejected from the approved merge set.
 
+## Group handling
+
+Protected geometry remains intact and is not passed through the join/destructive mesh path. Existing nested-group cleanup still runs on the cleanup plan, so a protected mesh can remain as a separate node while its containing nested group hierarchy is removed. This is intentional for this PR: protection applies to geometry/material joining, not group-structure normalization.
+
 ## All-protected case
 
 If all source geometry is protected, cleanup returns a clean informational no-op rather than the previous `No material-bearing mesh faces were available to join` error.
 
 ## Validation
 
-`tests/test_alpha_opacity.py` covers Standard/V-Ray map states, constant Standard opacity, recursive Multi/Sub detection, and the no-findings decision path. Full host validation still requires running the cleanup inside the supported 3ds Max/V-Ray environment.
+- `tests/test_alpha_opacity.py` covers Standard/V-Ray map states, constant Standard opacity, recursive Multi/Sub detection, and the no-findings decision path.
+- `tests/test_cleanup_entrypoint.py` covers the existing merge path plus explicit Merge Anyway, Cancel-before-execute, and mixed-scene filtering boundaries.
+- Full host validation still requires running the cleanup inside the supported 3ds Max/V-Ray environment.
 
 ## Research
 
