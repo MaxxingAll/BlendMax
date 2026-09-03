@@ -11,8 +11,6 @@ Autodesk references:
 - Physical Material Cutout workflow: https://help.autodesk.com/cloudhelp/2020/ENU/3DSMax-Lighting-Shading/files/GUID-65AFACA5-59BD-4731-B384-431E166B2B12.htm
 - Multi/Sub-Object material API: https://help.autodesk.com/cloudhelp/2021/ENU/3DSMax-MAXScript/files/GUID-7ECB1E85-6199-4143-BEDA-3B26DD35E0C3.htm
 
-Autodesk documents the Physical Material `cutout_map` and `cutout_map_on` properties, and describes Cutout as a transparency mechanism suitable for foliage on a flat plane.
-
 ## V-Ray
 
 Chaos documents an opacity-map workflow for leaf cutouts where the opacity map determines which portions of a leaf surface are visible.
