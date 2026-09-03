@@ -7,9 +7,10 @@ The cleanup now performs a non-mutating alpha/opacity preflight before material 
 ## Rules
 
 - Standard: enabled `opacityMap` (`opacityMapEnable`) or `opacity < 100`.
+- Physical Material: enabled `cutout_map` / `cutout_map_on`.
 - V-Ray: enabled `texmap_opacity` / `texmap_opacity_on` path.
-- Present-but-disabled opacity maps do not trigger protection by themselves.
-- If an opacity-map enable state cannot be read, detection fails closed and protects the material.
+- Present-but-disabled opacity/cutout maps do not trigger protection by themselves.
+- If an opacity/cutout map enable state cannot be read, detection fails closed and protects the material.
 - Refraction alone is not treated as alpha/opacity protection.
 - Detection recursively walks sub-material and sub-texture graphs with cycle/depth protection.
 
@@ -57,15 +58,22 @@ If all source geometry is protected, cleanup returns a clean informational no-op
 
 ## Validation
 
-- `tests/test_alpha_opacity.py` covers Standard/V-Ray map states, constant Standard opacity, recursive Multi/Sub detection, case-insensitive Standard property access, prompt-failure cancellation, and the no-findings decision path.
+- `tests/test_alpha_opacity.py` covers Standard/V-Ray map states, Physical Material Cutout, constant Standard opacity, recursive Multi/Sub detection, case-insensitive Standard property access, prompt-failure cancellation, and the no-findings decision path.
 - `tests/test_cleanup_entrypoint.py` covers the existing merge path plus explicit Merge Anyway, Cancel-before-execute, and mixed-scene filtering boundaries.
 - Full host validation still requires running the cleanup inside the supported 3ds Max/V-Ray environment.
 
 ## Research
 
 - Autodesk Standard material opacity/map API: https://help.autodesk.com/cloudhelp/2025/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Material-MAXWrapper/Material-Types/GUID-57F5EBBA-5F54-4CD4-8993-0B07A3571293.html
+- Autodesk Physical Material Cutout properties: https://help.autodesk.com/cloudhelp/2022/ENU/MAXScript-Help/files/3ds-Max-Objects-and-Interfaces/Material-MAXWrapper/Material-Types/GUID-57562F6A-A8A1-4A28-BAE1-0D4729411214.html
+- Autodesk Physical Material Cutout workflow: https://help.autodesk.com/cloudhelp/2020/ENU/3DSMax-Lighting-Shading/files/GUID-65AFACA5-59BD-4731-B384-431E166B2B12.htm
 - Autodesk Multi/Sub-Object API: https://help.autodesk.com/cloudhelp/2021/ENU/3DSMax-MAXScript/files/GUID-7ECB1E85-6199-4143-BEDA-3B26DD35E0C3.htm
 - Chaos V-Ray leaf opacity workflow: https://docs.chaos.com/display/VMAX/How%2Bto%2BMake%2BLeaves
+
+## Detection decisions
+
+- V-Ray numeric opacity is intentionally not treated as a cutout signal; protection is keyed to the explicit V-Ray opacity-map state.
+- `getPropNames()` enumeration failure is intentionally fail-open at the property-enumeration layer: the detector does not guess arbitrary properties, while known slots are detected normally when Max exposes them.
 
 ## Out of scope
 
