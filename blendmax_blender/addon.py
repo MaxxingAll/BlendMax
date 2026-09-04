@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import textwrap
 
 import bpy
 from bpy.props import BoolProperty, StringProperty
@@ -43,6 +44,20 @@ class BLENDMAX_Preferences(bpy.types.AddonPreferences):
             )
         else:
             layout.label(text="BlendMax is ready to use.")
+
+
+def _show_import_summary(summary_json: str):
+    """Open the completion popup after the modal File Browser has closed."""
+    try:
+        bpy.ops.blendmax.import_summary(
+            "INVOKE_DEFAULT",
+            summary_json=summary_json,
+        )
+    except RuntimeError:
+        # If Blender still has the File Browser modal context, retry once from
+        # the next timer tick rather than competing with the active operator.
+        return 0.1
+    return None
 
 
 class BLENDMAX_OT_import_summary(bpy.types.Operator):
@@ -87,17 +102,22 @@ class BLENDMAX_OT_import_summary(bpy.types.Operator):
             box = layout.box()
             box.label(text="Warnings", icon="ERROR")
             for warning in warnings:
-                box.label(text=str(warning), icon="ERROR")
+                for line in textwrap.wrap(str(warning), width=62) or [""]:
+                    box.label(text=line, icon="ERROR")
 
         if notes:
             box = layout.box()
             box.label(text="Compatibility Notes", icon="INFO")
             for note in notes:
-                box.label(text=str(note), icon="INFO")
+                for line in textwrap.wrap(str(note), width=62) or [""]:
+                    box.label(text=line, icon="INFO")
 
         if not warnings and not notes:
             layout.separator()
-            layout.label(text="Import completed without warnings or compatibility notes.", icon="CHECKMARK")
+            layout.label(
+                text="Import completed without warnings or compatibility notes.",
+                icon="CHECKMARK",
+            )
 
     def execute(self, _context):
         return {"FINISHED"}
@@ -154,9 +174,10 @@ class BLENDMAX_OT_import_asset(bpy.types.Operator, ImportHelper):
             print("BlendMax note: {0}".format(note))
 
         view = build_import_summary_view(summary)
-        bpy.ops.blendmax.import_summary(
-            "INVOKE_DEFAULT",
-            summary_json=json.dumps(view, ensure_ascii=False),
+        summary_json = json.dumps(view, ensure_ascii=False)
+        bpy.app.timers.register(
+            lambda: _show_import_summary(summary_json),
+            first_interval=0.1,
         )
         return {"FINISHED"}
 
