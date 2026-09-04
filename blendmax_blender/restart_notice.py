@@ -50,8 +50,7 @@ def restart_notice_required(bpy) -> bool:
     The first registration records the current process ID and shows the notice.
     A later Blender process consumes that state, which makes the notice vanish
     after one full Blender restart while keeping it visible through re-enables
-    in the original process.
-    """
+    in the original process. The state intentionally assumes a typical\n    single-Blender-process workflow; concurrent Blender instances sharing one\n    profile may consume the notice state unpredictably.\n    """
 
     path = _state_path(bpy)
     state = _read_state(path)
