@@ -15,15 +15,18 @@ from unittest.mock import patch
 
 
 class FakeSocket:
-    def __init__(self, name):
+    def __init__(self, name, identifier=None, default_value=None):
         self.name = name
-        self.identifier = name
-        self.default_value = None
+        self.identifier = identifier if identifier is not None else name
+        self.default_value = default_value
 
 
 class FakeSockets:
-    def __init__(self, names):
-        self._items = [FakeSocket(name) for name in names]
+    def __init__(self, sockets):
+        self._items = [
+            socket if isinstance(socket, FakeSocket) else FakeSocket(socket)
+            for socket in sockets
+        ]
 
     def get(self, name):
         return next((item for item in self._items if item.name == name), None)
@@ -42,32 +45,13 @@ class FakeSockets:
 
 class FakeNode:
     PRINCIPLED_INPUTS = (
-        "Base Color",
-        "Base Weight",
-        "Metallic",
-        "Roughness",
-        "IOR",
-        "Specular IOR Level",
-        "Specular Tint",
-        "Transmission Weight",
-        "Alpha",
-        "Thin Wall",
-        "Diffuse Roughness",
-        "Anisotropic IOR Level",
-        "Anisotropic Rotation",
-        "Coat Weight",
-        "Coat Roughness",
-        "Coat IOR",
-        "Coat Tint",
-        "Sheen Weight",
-        "Sheen Roughness",
-        "Sheen Tint",
-        "Subsurface Weight",
-        "Emission Color",
-        "Emission Strength",
-        "Thin Film Thickness",
-        "Thin Film IOR",
-        "Normal",
+        "Base Color", "Base Weight", "Metallic", "Roughness", "IOR",
+        "Specular IOR Level", "Specular Tint", "Transmission Weight", "Alpha",
+        "Thin Wall", "Diffuse Roughness", "Anisotropic IOR Level",
+        "Anisotropic Rotation", "Coat Weight", "Coat Roughness", "Coat IOR",
+        "Coat Tint", "Sheen Weight", "Sheen Roughness", "Sheen Tint",
+        "Subsurface Weight", "Emission Color", "Emission Strength",
+        "Thin Film Thickness", "Thin Film IOR", "Normal",
     )
 
     def __init__(self, node_type):
