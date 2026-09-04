@@ -14,15 +14,30 @@ from .restart_notice import restart_notice_required
 _RESTART_NOTICE_REQUIRED = False
 
 
+class BLENDMAX_OT_restart_blender_notice(bpy.types.Operator):
+    bl_idname = "blendmax.restart_blender_notice"
+    bl_label = "Restart Blender"
+    bl_description = (
+        "Restart Blender to apply recent BlendMax changes. "
+        "This notice disappears automatically after Blender is restarted."
+    )
+
+    def execute(self, _context):
+        self.report({"INFO"}, "Please restart Blender to apply recent BlendMax changes.")
+        return {"FINISHED"}
+
+
 class BLENDMAX_Preferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
     def draw(self, _context):
         layout = self.layout
         if _RESTART_NOTICE_REQUIRED:
-            box = layout.box()
-            box.label(text="Restart Blender to finish loading BlendMax.")
-            box.label(text="This message will disappear after Blender is restarted.")
+            layout.operator(
+                BLENDMAX_OT_restart_blender_notice.bl_idname,
+                text="⚠ Restart Blender",
+                icon="ERROR",
+            )
         else:
             layout.label(text="BlendMax is ready to use.")
 
@@ -92,7 +107,11 @@ def _menu_import(self, _context) -> None:
     )
 
 
-_CLASSES = (BLENDMAX_Preferences, BLENDMAX_OT_import_asset)
+_CLASSES = (
+    BLENDMAX_Preferences,
+    BLENDMAX_OT_restart_blender_notice,
+    BLENDMAX_OT_import_asset,
+)
 
 
 def register() -> None:
