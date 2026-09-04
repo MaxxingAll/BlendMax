@@ -4,6 +4,24 @@ This file records user-visible changes to the 3ds Max exporter/cleanup and the
 Blender importer. BlendMax is still alpha software; host-tested baselines are
 called out separately from automated coverage.
 
+## Blender Importer 0.1.7 — 2026-09-04
+
+### Added
+
+- Adds a structured **BlendMax Import Complete** popup after successful imports.
+- Shows object, material, packaged-texture, warning, and compatibility-note counts in one place.
+- Separates actionable warnings from known compatibility notes while retaining the detailed console output for debugging.
+- Shows an explicit clean-import confirmation when no warnings or notes were generated.
+
+### Release metadata
+
+- Bumps the Blender importer and extension manifest version to **0.1.7**.
+
+### Verification
+
+- Added bpy-free coverage for the UI-neutral summary payload.
+- Existing importer diagnostics and console reporting remain unchanged.
+
 ## Blender Importer 0.1.6 — 2026-09-04
 
 ### Added
@@ -90,7 +108,7 @@ called out separately from automated coverage.
   for future BlendMax support.
 - Truly unexpected/unrecognized VRayMtl parameters remain warnings using the
   existing `has no Blender mapping yet` diagnostic. This keeps future exporter
-  additions visible without flooding normal imports with known limitations.
+  additions visible without flooding normal imports with expected limitations.
 - Materials with separate reflection and refraction glossiness values are
   reported once as a grouped note using the affected material names:
 
@@ -267,8 +285,8 @@ complete:
 ## Max Exporter 0.1.0-alpha.3.4 — 2026-08-19
 
 - Temporarily opens closed groups for isolated FBX selection and restores their
-  original state afterward.
-- Rejects unexpected Max selection expansion before export.
+  original open/closed state afterward.
+- Rejects unexpected Max selection expansion before FBX export.
 
 ## Max Exporter 0.1.0-alpha.3.3 — 2026-08-18
 

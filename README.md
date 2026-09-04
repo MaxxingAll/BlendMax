@@ -21,7 +21,7 @@ created automatically by Python.
 | Component | Version | Status |
 | --- | --- | --- |
 | 3ds Max exporter and cleanup | `0.1.0-alpha.4.3.0` | Host verified in 3ds Max 2025.3 |
-| Blender importer | `0.1.6` | One-restart notice after recent BlendMax changes |
+| Blender importer | `0.1.7` | Structured import summary after successful import |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
 | Automated suite | See CI | Python 3.11–3.13 |
 
@@ -132,7 +132,7 @@ an updated exporter or cleanup action cannot continue running stale code.
 
 ## Install the Blender importer
 
-Build or download `blendmax_importer-0.1.6.zip`, then in Blender:
+Build or download `blendmax_importer-0.1.7.zip`, then in Blender:
 
 1. Open **Edit > Preferences > Get Extensions**.
 2. Open the menu in the top-right and choose **Install from Disk**.
@@ -189,6 +189,8 @@ block and referenced by the asset collection/controller. Parameters that do not
 yet have a native Blender equivalent therefore remain available for later
 converter improvements instead of being discarded. During a `VRayMtl` import,
 known unsupported fields are grouped into one informational note. Truly unexpected parameters remain warnings, so future exporter additions still surface without flooding normal imports with expected limitations.
+
+After a successful `.blendmax` import, BlendMax opens a compact **BlendMax Import Complete** dialog with the asset name and counts for imported objects, materials, packaged textures, warnings, and compatibility notes. Known limitations are grouped under **Compatibility Notes**, while actionable problems remain under **Warnings**. The existing console messages are retained for debugging.
 
 Unsupported graph classes receive a visible magenta fallback and a warning
 instead of aborting the whole asset.
@@ -259,7 +261,7 @@ were deleted. The Alpha.3.6 export baseline, persistent menu, and nine core
 `VRayMtl` features remain verified. Blender importer 0.1.2 completed its
 Basketball and four-potted-plants material, hierarchy, and world-origin
 placement passes. Importer 0.1.4 completed the Ring-Light Blender 5.2 pass with
-26 objects and 26 native materials, no warnings or errors, both packaged
+26 objects, 26 native materials, no warnings or errors, both packaged
 base-color images wired, and the hierarchy and world-origin placement intact.
 The undeclared `Untitled` FBX object exposed by 0.1.3 is removed together with
 its orphaned geometry.
@@ -287,8 +289,8 @@ origin placement, nested-group anchoring, reproducible extension packaging,
 case-insensitive parameter resolution with spelling preservation and explicit
 aliases, unmapped-VRayMtl-parameter diagnostics, V-Ray anisotropy, sheen,
 thin-film, coat, diffuse-roughness, thin-walled refraction, and
-refraction-glossiness interpretation, and the importer/exporter parameter-name
-contract (every VRayMtl parameter the importer reads must be reachable from the
+refraction-glossiness interpretation, the structured Blender import summary
+payload, and the importer/exporter parameter-name contract (every VRayMtl parameter the importer reads must be reachable from the
 exporter's property whitelist).
 Actual `pymxs`, `bpy`, FBX, and host UI
 behavior must be tested inside 3ds Max and Blender.
