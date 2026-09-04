@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import os
-import sys
-import time
 import textwrap
+import time
+
 import bpy
 from bpy.props import BoolProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
@@ -79,22 +79,6 @@ def _console_color(text: str, code: str) -> str:
     return "\x1b[{0}m{1}\x1b[0m".format(code, text)
 
 
-def _print_wrapped(message: str, prefix: str = "- ") -> None:
-    """Print a long diagnostic message with readable console wrapping."""
-    lines = textwrap.wrap(
-        str(message),
-        width=max(20, _DETAIL_WIDTH - len(prefix)),
-        break_long_words=False,
-        break_on_hyphens=False,
-    )
-    if not lines:
-        print(prefix.rstrip())
-        return
-    print(prefix + lines[0])
-    for line in lines[1:]:
-        print("  " + line)
-
-
 def _print_import_summary(summary, elapsed_seconds: float) -> None:
     """Print the detailed import report to Blender's System Console."""
     separator = "=" * _SUMMARY_WIDTH
@@ -124,9 +108,7 @@ def _print_import_summary(summary, elapsed_seconds: float) -> None:
                 width=max(20, _DETAIL_WIDTH - 2),
                 break_long_words=False,
                 break_on_hyphens=False,
-            )
-            if not lines:
-                lines = [""]
+            ) or [""]
             print(_console_color("- " + lines[0], "93"))
             for line in lines[1:]:
                 print(_console_color("  " + line, "93"))
@@ -141,9 +123,7 @@ def _print_import_summary(summary, elapsed_seconds: float) -> None:
                 width=max(20, _DETAIL_WIDTH - 2),
                 break_long_words=False,
                 break_on_hyphens=False,
-            )
-            if not lines:
-                lines = [""]
+            ) or [""]
             print(_console_color("- " + lines[0], "96"))
             for line in lines[1:]:
                 print(_console_color("  " + line, "96"))
