@@ -91,7 +91,7 @@ def _print_import_summary(summary, elapsed_seconds: float) -> None:
     print("Asset       : {0}".format(summary.asset_name))
     print("❒ Objects   : {0}".format(summary.object_count))
     print("● Materials : {0}".format(summary.material_count))
-    print("▦ Textures  : {0}".format(summary.image_count))
+    print("■ Textures  : {0}".format(summary.image_count))
     warning_count = len(summary.warnings)
     warning_line = "⚠︎ Warnings  : {0}".format(warning_count)
     print(_console_color(warning_line, "93" if warning_count else "92"))
