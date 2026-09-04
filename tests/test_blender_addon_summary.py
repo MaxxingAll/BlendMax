@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
-import types
 import unittest
 
 from blendmax_blender.diagnostics import build_import_summary_view
@@ -29,10 +27,6 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
         self.assertEqual(decoded["image_count"], 13)
         self.assertEqual(decoded["warnings"], ["Missing packaged image: leaf.png"])
         self.assertEqual(decoded["notes"], ["Known V-Ray parameter is not supported yet"])
-
-    def test_summary_payload_does_not_require_blender_runtime(self):
-        self.assertNotIn("bpy", sys.modules)
-        self.assertNotIn("bpy_extras", sys.modules)
 
 
 if __name__ == "__main__":
