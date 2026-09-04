@@ -4,6 +4,21 @@ This file records user-visible changes to the 3ds Max exporter/cleanup and the
 Blender importer. BlendMax is still alpha software; host-tested baselines are
 called out separately from automated coverage.
 
+## Blender Importer 0.1.6 — 2026-09-04
+
+### Added
+
+- Adds a compact **⚠ Restart Blender** notice in BlendMax Add-on Preferences
+  when a one-restart refresh is pending. Hovering the control explains that a
+  Blender restart applies recent BlendMax changes and clears the notice
+  automatically after the next Blender process starts.
+- Stores the one-restart state in Blender's user configuration resource path so
+  the notice survives the current Blender session and is consumed after restart.
+
+### Release metadata
+
+- Bumps the Blender importer and extension manifest version to **0.1.6**.
+
 ### Verification
 
 - Clean Blender 5.2 runtime re-import passed with one genuine missing-texture
