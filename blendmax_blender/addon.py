@@ -44,24 +44,33 @@ class BLENDMAX_Preferences(bpy.types.AddonPreferences):
 
 def _print_import_summary(summary) -> None:
     """Print detailed import information to Blender's System Console."""
-    print("\nBlendMax Import Summary")
-    print("=======================")
-    print("Asset: {0}".format(summary.asset_name))
-    print("Objects: {0}".format(summary.object_count))
-    print("Materials: {0}".format(summary.material_count))
-    print("Textures: {0}".format(summary.image_count))
-    print("Warnings: {0}".format(len(summary.warnings)))
-    print("Notes: {0}".format(len(summary.notes)))
+    print("\n" + "=" * 60)
+    print("                 BlendMax Import Summary")
+    print("=" * 60)
+    print()
+    print("Asset       : {0}".format(summary.asset_name))
+    print("❒ Objects     : {0}".format(summary.object_count))
+    print("◕ Materials   : {0}".format(summary.material_count))
+    print("◩ Textures    : {0}".format(summary.image_count))
+    print("⚠︎ Warnings    : {0}".format(len(summary.warnings)))
+    print("✎ Notes       : {0}".format(len(summary.notes)))
+    print()
 
     if summary.warnings:
-        print("\nWarnings:")
+        print("[!] Warnings")
+        print("-" * 60)
         for warning in summary.warnings:
             print("- {0}".format(warning))
+        print()
 
     if summary.notes:
-        print("\nCompatibility Notes:")
+        print("[i] Compatibility Notes")
+        print("-" * 60)
         for note in summary.notes:
             print("- {0}".format(note))
+        print()
+
+    print("=" * 60)
 
 
 class BLENDMAX_OT_import_asset(bpy.types.Operator, ImportHelper):
@@ -92,7 +101,7 @@ class BLENDMAX_OT_import_asset(bpy.types.Operator, ImportHelper):
         if summary.warnings:
             self.report(
                 {"WARNING"},
-                "[!] Imported {0}: {1} Objects, {2} Materials, {3} Warning(s).".format(
+                "Imported {0}: {1} Objects, {2} Materials, {3} Warning(s).".format(
                     summary.asset_name,
                     summary.object_count,
                     summary.material_count,
@@ -102,7 +111,7 @@ class BLENDMAX_OT_import_asset(bpy.types.Operator, ImportHelper):
         else:
             self.report(
                 {"INFO"},
-                "[+] Imported {0}: {1} Objects, {2} Materials, 0 Warning(s).".format(
+                "Imported {0}: {1} Objects, {2} Materials, 0 Warning(s).".format(
                     summary.asset_name,
                     summary.object_count,
                     summary.material_count,
