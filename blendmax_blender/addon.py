@@ -2,20 +2,36 @@
 
 from __future__ import annotations
 
-import json
+import os
+import sys
 import textwrap
+import time
 
 import bpy
 from bpy.props import BoolProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 
-from .diagnostics import build_import_summary_view
 from .errors import BlendMaxImportError
 from .importer import import_blendmax
+from .models import ImportSummary
 from .restart_notice import restart_notice_required
 
 
 _RESTART_NOTICE_REQUIRED = False
+_SUMMARY_WIDTH = 60
+_DETAIL_WIDTH = 72
+_STDOUT_UTF8_CONFIGURED = False
+
+# Preferred glyphs first; ASCII fallbacks if the console encoding cannot
+# represent them (common on older Windows / cp437 Blender consoles).
+_ICONS = {
+    "objects": ("❒", "[O]"),
+    "materials": ("●", "[M]"),
+    "textures": ("■", "[T]"),
+    "warnings": ("⚠", "[!]"),
+    "notes": ("✎", "[i]"),
+    "time": ("⏱", "[t]"),
+}
 
 
 class BLENDMAX_OT_restart_blender_notice(bpy.types.Operator):
@@ -46,85 +62,129 @@ class BLENDMAX_Preferences(bpy.types.AddonPreferences):
             layout.label(text="BlendMax is ready to use.")
 
 
-def _show_import_summary(summary_json: str):
-    """Open the completion popup after the modal File Browser has closed."""
+def _enable_console_colors() -> bool:
+    """Enable ANSI colors when Blender's System Console supports them."""
+    if os.environ.get("NO_COLOR") is not None:
+        return False
+    stdout = getattr(sys, "stdout", None)
+    if stdout is not None and hasattr(stdout, "isatty") and not stdout.isatty():
+        return False
+    if os.name != "nt":
+        return True
     try:
-        bpy.ops.blendmax.import_summary(
-            "INVOKE_DEFAULT",
-            summary_json=summary_json,
-        )
-    except RuntimeError:
-        return 0.1
-    return None
+        import ctypes
 
-
-class BLENDMAX_OT_import_summary(bpy.types.Operator):
-    bl_idname = "blendmax.import_summary"
-    bl_label = "BlendMax Import Complete"
-    bl_description = "Show the result of the completed BlendMax import"
-
-    summary_json: StringProperty(options={"HIDDEN"})
-
-    def _summary(self):
-        try:
-            value = json.loads(self.summary_json)
-        except (TypeError, ValueError):
-            return {}
-        return value if isinstance(value, dict) else {}
-
-    def invoke(self, context, _event):
-        return context.window_manager.invoke_props_dialog(self, width=480)
-
-    def draw(self, _context):
-        layout = self.layout
-        summary = self._summary()
-        asset_name = str(summary.get("asset_name") or "BlendMax Asset")
-        warnings = tuple(summary.get("warnings") or ())
-        notes = tuple(summary.get("notes") or ())
-
-        layout.label(text=asset_name, icon="OBJECT_DATA")
-
-        grid = layout.grid_flow(columns=2, even_columns=True, align=True)
-        grid.label(text="Objects")
-        grid.label(text=str(summary.get("object_count", 0)))
-        grid.label(text="Materials")
-        grid.label(text=str(summary.get("material_count", 0)))
-        grid.label(text="Textures")
-        grid.label(text=str(summary.get("image_count", 0)))
-        grid.label(text="Warnings")
-        grid.label(text=str(len(warnings)), icon="ERROR" if warnings else "CHECKMARK")
-        grid.label(text="Notes")
-        grid.label(text=str(len(notes)), icon="INFO")
-
-        def draw_wrapped(parent, text, icon):
-            lines = textwrap.wrap(text, width=65)
-            if not lines:
-                return
-            parent.label(text=lines[0], icon=icon)
-            for line in lines[1:]:
-                parent.label(text=line, icon="BLANK1")
-
-        if warnings:
-            box = layout.box()
-            box.label(text="Warnings", icon="ERROR")
-            for warning in warnings:
-                draw_wrapped(box, str(warning), icon="ERROR")
-
-        if notes:
-            box = layout.box()
-            box.label(text="Compatibility Notes", icon="INFO")
-            for note in notes:
-                draw_wrapped(box, str(note), icon="INFO")
-
-        if not warnings and not notes:
-            layout.separator()
-            layout.label(
-                text="Import completed without warnings or compatibility notes.",
-                icon="CHECKMARK",
+        handle = ctypes.windll.kernel32.GetStdHandle(-11)
+        mode = ctypes.c_uint()
+        if not ctypes.windll.kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        return bool(
+            ctypes.windll.kernel32.SetConsoleMode(
+                handle, mode.value | 0x0004
             )
+        )
+    except (AttributeError, OSError):
+        return False
 
-    def execute(self, _context):
-        return {"FINISHED"}
+
+def _ensure_utf8_stdout() -> None:
+    """Best-effort UTF-8 console so summary icons render on Windows."""
+    global _STDOUT_UTF8_CONFIGURED
+    if _STDOUT_UTF8_CONFIGURED:
+        return
+    _STDOUT_UTF8_CONFIGURED = True
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+            ctypes.windll.kernel32.SetConsoleCP(65001)
+        except (AttributeError, OSError):
+            pass
+    stdout = getattr(sys, "stdout", None)
+    reconfigure = getattr(stdout, "reconfigure", None)
+    if callable(reconfigure):
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError, TypeError):
+            pass
+
+
+def _stdout_encoding() -> str:
+    return getattr(sys.stdout, "encoding", None) or "utf-8"
+
+
+def _can_encode(text: str) -> bool:
+    try:
+        text.encode(_stdout_encoding())
+        return True
+    except LookupError:
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
+def _icon(name: str) -> str:
+    preferred, fallback = _ICONS[name]
+    return preferred if _can_encode(preferred) else fallback
+
+
+def _console_color(text: str, code: str) -> str:
+    if not _enable_console_colors():
+        return text
+    return "\x1b[{0}m{1}\x1b[0m".format(code, text)
+
+
+def _print_wrapped_items(items, heading: str, color_code: str) -> None:
+    print(_console_color(heading, color_code))
+    print("-" * _SUMMARY_WIDTH)
+    wrap_width = max(20, _DETAIL_WIDTH - 2)
+    for item in items:
+        lines = textwrap.wrap(
+            str(item),
+            width=wrap_width,
+            break_long_words=False,
+            break_on_hyphens=False,
+        ) or [""]
+        print(_console_color("- " + lines[0], color_code))
+        for line in lines[1:]:
+            print(_console_color("  " + line, color_code))
+    print()
+
+
+def _print_import_summary(summary: ImportSummary, elapsed_seconds: float) -> None:
+    """Print the detailed import report to Blender's System Console."""
+    _ensure_utf8_stdout()
+    separator = "=" * _SUMMARY_WIDTH
+    warning_count = len(summary.warnings)
+
+    print("\n" + separator)
+    print(_console_color("                 BlendMax Import Summary", "96"))
+    print(separator)
+    print()
+    print("Asset       : {0}".format(summary.asset_name))
+    print("{0} Objects   : {1}".format(_icon("objects"), summary.object_count))
+    print("{0} Materials : {1}".format(_icon("materials"), summary.material_count))
+    print("{0} Textures  : {1}".format(_icon("textures"), summary.image_count))
+    warning_line = "{0} Warnings  : {1}".format(_icon("warnings"), warning_count)
+    print(_console_color(warning_line, "93" if warning_count else "92"))
+    print("{0} Notes     : {1}".format(_icon("notes"), len(summary.notes)))
+    print("{0} Time      : {1:.2f} s".format(_icon("time"), elapsed_seconds))
+    print()
+
+    if summary.warnings:
+        _print_wrapped_items(summary.warnings, "[!] Warnings", "93")
+    if summary.notes:
+        _print_wrapped_items(summary.notes, "[i] Compatibility Notes", "96")
+
+    if warning_count:
+        print(_console_color(
+            "[!] Import completed with {0} warning(s).".format(warning_count),
+            "93",
+        ))
+    else:
+        print(_console_color("[OK] Import completed successfully.", "92"))
+    print(separator)
 
 
 class BLENDMAX_OT_import_asset(bpy.types.Operator, ImportHelper):
@@ -142,6 +202,7 @@ class BLENDMAX_OT_import_asset(bpy.types.Operator, ImportHelper):
     )
 
     def execute(self, context):
+        started_at = time.perf_counter()
         try:
             summary = import_blendmax(
                 self.filepath,
@@ -152,37 +213,29 @@ class BLENDMAX_OT_import_asset(bpy.types.Operator, ImportHelper):
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
 
+        elapsed_seconds = time.perf_counter() - started_at
+
         if summary.warnings:
             self.report(
                 {"WARNING"},
-                "Imported {0}: {1} objects, {2} materials, {3} warning(s).".format(
+                "Imported {0}: {1} Objects, {2} Materials, {3} Warning(s).".format(
                     summary.asset_name,
                     summary.object_count,
                     summary.material_count,
                     len(summary.warnings),
                 ),
             )
-            for warning in summary.warnings:
-                print("BlendMax warning: {0}".format(warning))
         else:
             self.report(
                 {"INFO"},
-                "Imported {0}: {1} objects and {2} materials.".format(
+                "Imported {0}: {1} Objects, {2} Materials, 0 Warning(s).".format(
                     summary.asset_name,
                     summary.object_count,
                     summary.material_count,
                 ),
             )
 
-        for note in summary.notes:
-            print("BlendMax note: {0}".format(note))
-
-        view = build_import_summary_view(summary)
-        summary_json = json.dumps(view, ensure_ascii=False)
-        bpy.app.timers.register(
-            lambda: _show_import_summary(summary_json),
-            first_interval=0.1,
-        )
+        _print_import_summary(summary, elapsed_seconds)
         return {"FINISHED"}
 
 
@@ -196,7 +249,6 @@ def _menu_import(self, _context) -> None:
 _CLASSES = (
     BLENDMAX_Preferences,
     BLENDMAX_OT_restart_blender_notice,
-    BLENDMAX_OT_import_summary,
     BLENDMAX_OT_import_asset,
 )
 
