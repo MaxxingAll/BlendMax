@@ -54,8 +54,6 @@ def _show_import_summary(summary_json: str):
             summary_json=summary_json,
         )
     except RuntimeError:
-        # If Blender still has the File Browser modal context, retry once from
-        # the next timer tick rather than competing with the active operator.
         return 0.1
     return None
 
@@ -98,19 +96,25 @@ class BLENDMAX_OT_import_summary(bpy.types.Operator):
         grid.label(text="Notes")
         grid.label(text=str(len(notes)), icon="INFO")
 
+        def draw_wrapped(parent, text, icon):
+            lines = textwrap.wrap(text, width=65)
+            if not lines:
+                return
+            parent.label(text=lines[0], icon=icon)
+            for line in lines[1:]:
+                parent.label(text=line, icon="BLANK1")
+
         if warnings:
             box = layout.box()
             box.label(text="Warnings", icon="ERROR")
             for warning in warnings:
-                for line in textwrap.wrap(str(warning), width=62) or [""]:
-                    box.label(text=line, icon="ERROR")
+                draw_wrapped(box, str(warning), icon="ERROR")
 
         if notes:
             box = layout.box()
             box.label(text="Compatibility Notes", icon="INFO")
             for note in notes:
-                for line in textwrap.wrap(str(note), width=62) or [""]:
-                    box.label(text=line, icon="INFO")
+                draw_wrapped(box, str(note), icon="INFO")
 
         if not warnings and not notes:
             layout.separator()
