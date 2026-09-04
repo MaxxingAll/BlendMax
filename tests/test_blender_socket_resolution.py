@@ -1,40 +1,13 @@
 from __future__ import annotations
 
-import sys
-import types
 import unittest
 
-
-if "bpy" not in sys.modules:
-    sys.modules["bpy"] = types.ModuleType("bpy")
-
-from blendmax_blender.blender_materials import _set_default, _socket
+from fakes import FakeNode, FakeSocket, FakeSockets, load_materials_module
 
 
-class FakeSocket:
-    def __init__(self, name, identifier=None, default_value=None):
-        self.name = name
-        self.identifier = identifier if identifier is not None else name
-        self.default_value = default_value
-
-
-class FakeSockets:
-    def __init__(self, sockets):
-        self._sockets = list(sockets)
-
-    def get(self, name):
-        for socket in self._sockets:
-            if socket.name == name:
-                return socket
-        return None
-
-    def __iter__(self):
-        return iter(self._sockets)
-
-
-class FakeNode:
-    def __init__(self, sockets):
-        self.inputs = FakeSockets(sockets)
+materials = load_materials_module()
+_set_default = materials._set_default
+_socket = materials._socket
 
 
 class SocketResolutionTests(unittest.TestCase):
@@ -74,15 +47,17 @@ class SocketResolutionTests(unittest.TestCase):
 
     def test_set_default_skips_missing_socket(self):
         target = FakeSocket("Base Color", default_value="original")
-        node = FakeNode([target])
+        node = FakeNode("ShaderNodeBsdfPrincipled")
+        node.inputs = FakeSockets([target])
 
         _set_default(node, ("Roughness",), 0.5)
 
         self.assertEqual(target.default_value, "original")
 
     def test_set_default_updates_resolved_socket(self):
-        target = FakeSocket("Specular")
-        node = FakeNode([target])
+        target = FakeSocket("Specular", default_value="original")
+        node = FakeNode("ShaderNodeBsdfPrincipled")
+        node.inputs = FakeSockets([target])
 
         _set_default(node, ("Specular IOR Level", "Specular"), 0.25)
 
