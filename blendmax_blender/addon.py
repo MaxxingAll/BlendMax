@@ -8,6 +8,38 @@ from bpy_extras.io_utils import ImportHelper
 
 from .errors import BlendMaxImportError
 from .importer import import_blendmax
+from .restart_notice import restart_notice_required
+
+
+_RESTART_NOTICE_REQUIRED = False
+
+
+class BLENDMAX_OT_restart_blender_notice(bpy.types.Operator):
+    bl_idname = "blendmax.restart_blender_notice"
+    bl_label = "Restart Blender"
+    bl_description = (
+        "Restart Blender to apply recent BlendMax changes. "
+        "This notice disappears automatically after Blender is restarted."
+    )
+
+    def execute(self, _context):
+        self.report({"INFO"}, "Please restart Blender to apply recent BlendMax changes.")
+        return {"FINISHED"}
+
+
+class BLENDMAX_Preferences(bpy.types.AddonPreferences):
+    bl_idname = __package__
+
+    def draw(self, _context):
+        layout = self.layout
+        if _RESTART_NOTICE_REQUIRED:
+            layout.operator(
+                BLENDMAX_OT_restart_blender_notice.bl_idname,
+                text="⚠ Restart Blender",
+                icon="ERROR",
+            )
+        else:
+            layout.label(text="BlendMax is ready to use.")
 
 
 class BLENDMAX_OT_import_asset(bpy.types.Operator, ImportHelper):
@@ -75,10 +107,17 @@ def _menu_import(self, _context) -> None:
     )
 
 
-_CLASSES = (BLENDMAX_OT_import_asset,)
+_CLASSES = (
+    BLENDMAX_Preferences,
+    BLENDMAX_OT_restart_blender_notice,
+    BLENDMAX_OT_import_asset,
+)
 
 
 def register() -> None:
+    global _RESTART_NOTICE_REQUIRED
+    _RESTART_NOTICE_REQUIRED = restart_notice_required(bpy)
+
     for item in _CLASSES:
         bpy.utils.register_class(item)
     bpy.types.TOPBAR_MT_file_import.append(_menu_import)
