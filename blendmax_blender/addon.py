@@ -92,7 +92,7 @@ class BLENDMAX_OT_import_asset(bpy.types.Operator, ImportHelper):
         if summary.warnings:
             self.report(
                 {"WARNING"},
-                "Imported {0}: {1} Objects, {2} Materials, {3} Warning(s).".format(
+                "[!] Imported {0}: {1} Objects, {2} Materials, {3} Warning(s).".format(
                     summary.asset_name,
                     summary.object_count,
                     summary.material_count,
@@ -102,7 +102,7 @@ class BLENDMAX_OT_import_asset(bpy.types.Operator, ImportHelper):
         else:
             self.report(
                 {"INFO"},
-                "Imported {0}: {1} Objects, {2} Materials, 0 Warning(s).".format(
+                "[+] Imported {0}: {1} Objects, {2} Materials, 0 Warning(s).".format(
                     summary.asset_name,
                     summary.object_count,
                     summary.material_count,
