@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import textwrap
 import time
 
@@ -12,12 +13,25 @@ from bpy_extras.io_utils import ImportHelper
 
 from .errors import BlendMaxImportError
 from .importer import import_blendmax
+from .models import ImportSummary
 from .restart_notice import restart_notice_required
 
 
 _RESTART_NOTICE_REQUIRED = False
 _SUMMARY_WIDTH = 60
 _DETAIL_WIDTH = 72
+_STDOUT_UTF8_CONFIGURED = False
+
+# Preferred glyphs first; ASCII fallbacks if the console encoding cannot
+# represent them (common on older Windows / cp437 Blender consoles).
+_ICONS = {
+    "objects": ("❒", "[O]"),
+    "materials": ("●", "[M]"),
+    "textures": ("■", "[T]"),
+    "warnings": ("⚠", "[!]"),
+    "notes": ("✎", "[i]"),
+    "time": ("⏱", "[t]"),
+}
 
 
 class BLENDMAX_OT_restart_blender_notice(bpy.types.Operator):
@@ -52,6 +66,9 @@ def _enable_console_colors() -> bool:
     """Enable ANSI colors when Blender's System Console supports them."""
     if os.environ.get("NO_COLOR") is not None:
         return False
+    stdout = getattr(sys, "stdout", None)
+    if stdout is not None and hasattr(stdout, "isatty") and not stdout.isatty():
+        return False
     if os.name != "nt":
         return True
     try:
@@ -70,66 +87,103 @@ def _enable_console_colors() -> bool:
         return False
 
 
-_CONSOLE_COLORS_ENABLED = _enable_console_colors()
+def _ensure_utf8_stdout() -> None:
+    """Best-effort UTF-8 console so summary icons render on Windows."""
+    global _STDOUT_UTF8_CONFIGURED
+    if _STDOUT_UTF8_CONFIGURED:
+        return
+    _STDOUT_UTF8_CONFIGURED = True
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+            ctypes.windll.kernel32.SetConsoleCP(65001)
+        except (AttributeError, OSError):
+            pass
+    stdout = getattr(sys, "stdout", None)
+    reconfigure = getattr(stdout, "reconfigure", None)
+    if callable(reconfigure):
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError, TypeError):
+            pass
+
+
+def _stdout_encoding() -> str:
+    return getattr(sys.stdout, "encoding", None) or "utf-8"
+
+
+def _can_encode(text: str) -> bool:
+    try:
+        text.encode(_stdout_encoding())
+        return True
+    except LookupError:
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
+def _icon(name: str) -> str:
+    preferred, fallback = _ICONS[name]
+    return preferred if _can_encode(preferred) else fallback
 
 
 def _console_color(text: str, code: str) -> str:
-    if not _CONSOLE_COLORS_ENABLED:
+    if not _enable_console_colors():
         return text
     return "\x1b[{0}m{1}\x1b[0m".format(code, text)
 
 
-def _print_import_summary(summary, elapsed_seconds: float) -> None:
+def _print_wrapped_items(items, heading: str, color_code: str) -> None:
+    print(_console_color(heading, color_code))
+    print("-" * _SUMMARY_WIDTH)
+    wrap_width = max(20, _DETAIL_WIDTH - 2)
+    for item in items:
+        lines = textwrap.wrap(
+            str(item),
+            width=wrap_width,
+            break_long_words=False,
+            break_on_hyphens=False,
+        ) or [""]
+        print(_console_color("- " + lines[0], color_code))
+        for line in lines[1:]:
+            print(_console_color("  " + line, color_code))
+    print()
+
+
+def _print_import_summary(summary: ImportSummary, elapsed_seconds: float) -> None:
     """Print the detailed import report to Blender's System Console."""
+    _ensure_utf8_stdout()
     separator = "=" * _SUMMARY_WIDTH
-    section_separator = "-" * _SUMMARY_WIDTH
+    warning_count = len(summary.warnings)
 
     print("\n" + separator)
     print(_console_color("                 BlendMax Import Summary", "96"))
     print(separator)
     print()
     print("Asset       : {0}".format(summary.asset_name))
-    print("❒ Objects   : {0}".format(summary.object_count))
-    print("● Materials : {0}".format(summary.material_count))
-    print("■ Textures  : {0}".format(summary.image_count))
-    warning_count = len(summary.warnings)
-    warning_line = "⚠︎ Warnings  : {0}".format(warning_count)
+    print("{0} Objects   : {1}".format(_icon("objects"), summary.object_count))
+    print("{0} Materials : {1}".format(_icon("materials"), summary.material_count))
+    print("{0} Textures  : {1}".format(_icon("textures"), summary.image_count))
+    warning_line = "{0} Warnings  : {1}".format(_icon("warnings"), warning_count)
     print(_console_color(warning_line, "93" if warning_count else "92"))
-    print("✎ Notes     : {0}".format(len(summary.notes)))
-    print("⏱ Time      : {0:.2f} s".format(elapsed_seconds))
+    print("{0} Notes     : {1}".format(_icon("notes"), len(summary.notes)))
+    print("{0} Time      : {1:.2f} s".format(_icon("time"), elapsed_seconds))
     print()
 
     if summary.warnings:
-        print(_console_color("[!] Warnings", "93"))
-        print(section_separator)
-        for warning in summary.warnings:
-            lines = textwrap.wrap(
-                str(warning),
-                width=max(20, _DETAIL_WIDTH - 2),
-                break_long_words=False,
-                break_on_hyphens=False,
-            ) or [""]
-            print(_console_color("- " + lines[0], "93"))
-            for line in lines[1:]:
-                print(_console_color("  " + line, "93"))
-        print()
-
+        _print_wrapped_items(summary.warnings, "[!] Warnings", "93")
     if summary.notes:
-        print(_console_color("[i] Compatibility Notes", "96"))
-        print(section_separator)
-        for note in summary.notes:
-            lines = textwrap.wrap(
-                str(note),
-                width=max(20, _DETAIL_WIDTH - 2),
-                break_long_words=False,
-                break_on_hyphens=False,
-            ) or [""]
-            print(_console_color("- " + lines[0], "96"))
-            for line in lines[1:]:
-                print(_console_color("  " + line, "96"))
-        print()
+        _print_wrapped_items(summary.notes, "[i] Compatibility Notes", "96")
 
-    print(_console_color("[OK] Import completed successfully.", "92"))
+    if warning_count:
+        print(_console_color(
+            "[!] Import completed with {0} warning(s).".format(warning_count),
+            "93",
+        ))
+    else:
+        print(_console_color("[OK] Import completed successfully.", "92"))
     print(separator)
 
 

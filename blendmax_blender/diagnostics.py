@@ -64,15 +64,3 @@ def categorize_import_messages(summary: ImportSummary, package) -> ImportSummary
         warnings=tuple(warnings),
         notes=tuple(dict.fromkeys(notes)),
     )
-
-
-def build_import_summary_view(summary: ImportSummary) -> dict:
-    """Return a stable, UI-neutral payload for the Blender import summary."""
-    return {
-        "asset_name": summary.asset_name,
-        "object_count": int(summary.object_count),
-        "material_count": int(summary.material_count),
-        "image_count": int(summary.image_count),
-        "warnings": tuple(summary.warnings),
-        "notes": tuple(summary.notes),
-    }
