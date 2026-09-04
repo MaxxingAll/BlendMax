@@ -21,7 +21,7 @@ created automatically by Python.
 | Component | Version | Status |
 | --- | --- | --- |
 | 3ds Max exporter and cleanup | `0.1.0-alpha.4.3.0` | Host verified in 3ds Max 2025.3 |
-| Blender importer | `0.1.5` | VRayMtl hardening and requested parameter-adaptation checks passed |
+| Blender importer | `0.1.6` | One-restart notice after recent BlendMax changes |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
 | Automated suite | See CI | Python 3.11–3.13 |
 
@@ -132,7 +132,7 @@ an updated exporter or cleanup action cannot continue running stale code.
 
 ## Install the Blender importer
 
-Build or download `blendmax_importer-0.1.5.zip`, then in Blender:
+Build or download `blendmax_importer-0.1.6.zip`, then in Blender:
 
 1. Open **Edit > Preferences > Get Extensions**.
 2. Open the menu in the top-right and choose **Install from Disk**.
