@@ -28,6 +28,20 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
         self.assertEqual(decoded["warnings"], ["Missing packaged image: leaf.png"])
         self.assertEqual(decoded["notes"], ["Known V-Ray parameter is not supported yet"])
 
+    def test_clean_summary_has_no_diagnostics(self):
+        summary = ImportSummary(
+            asset_name="Basketball",
+            object_count=1,
+            material_count=2,
+            image_count=2,
+        )
+
+        payload = json.dumps(build_import_summary_view(summary), ensure_ascii=False)
+        decoded = json.loads(payload)
+
+        self.assertEqual(decoded["warnings"], [])
+        self.assertEqual(decoded["notes"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
