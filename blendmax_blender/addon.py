@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import textwrap
 
 import bpy
 from bpy.props import BoolProperty, StringProperty
@@ -83,17 +84,25 @@ class BLENDMAX_OT_import_summary(bpy.types.Operator):
         grid.label(text="Notes")
         grid.label(text=str(len(notes)), icon="INFO")
 
+        def draw_wrapped(parent, text, icon):
+            lines = textwrap.wrap(text, width=65)
+            if not lines:
+                return
+            parent.label(text=lines[0], icon=icon)
+            for line in lines[1:]:
+                parent.label(text=line, icon="BLANK1")
+
         if warnings:
             box = layout.box()
             box.label(text="Warnings", icon="ERROR")
             for warning in warnings:
-                box.label(text=str(warning), icon="ERROR")
+                draw_wrapped(box, str(warning), icon="ERROR")
 
         if notes:
             box = layout.box()
             box.label(text="Compatibility Notes", icon="INFO")
             for note in notes:
-                box.label(text=str(note), icon="INFO")
+                draw_wrapped(box, str(note), icon="INFO")
 
         if not warnings and not notes:
             layout.separator()
