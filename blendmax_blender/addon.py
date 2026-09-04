@@ -154,10 +154,17 @@ class BLENDMAX_OT_import_asset(bpy.types.Operator, ImportHelper):
             print("BlendMax note: {0}".format(note))
 
         view = build_import_summary_view(summary)
-        bpy.ops.blendmax.import_summary(
-            "INVOKE_DEFAULT",
-            summary_json=json.dumps(view, ensure_ascii=False),
-        )
+        summary_payload = json.dumps(view, ensure_ascii=False)
+
+        def defer_summary():
+            bpy.ops.blendmax.import_summary(
+                "INVOKE_DEFAULT",
+                summary_json=summary_payload,
+            )
+
+        # Defer the popup so it safely opens in the main window after the file browser closes.
+        bpy.app.timers.register(defer_summary, first_interval=0.01)
+
         return {"FINISHED"}
 
 
