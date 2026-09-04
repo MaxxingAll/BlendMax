@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .material_compatibility import known_unmapped_parameters, split_unmapped_parameters
+from .material_compatibility import known_unmapped_parameters
 from .models import ImportSummary
 
 
@@ -26,10 +26,7 @@ def categorize_import_messages(summary: ImportSummary, package) -> ImportSummary
         known = known_unmapped_parameters(node.class_name)
         if not known:
             continue
-        keys = tuple(
-            key for key in node.parameters
-            if key.casefold() in known
-        )
+        keys = tuple(key for key in node.parameters if key.casefold() in known)
         if keys:
             known_by_class.setdefault(node.class_name.casefold(), set()).update(
                 key.casefold() for key in keys
@@ -42,13 +39,6 @@ def categorize_import_messages(summary: ImportSummary, package) -> ImportSummary
                 "/".join(fields)
             )
         )
-
-    # Keep the helper available as the single classification point for future
-    # material translators that want to distinguish intentional gaps from new
-    # exporter fields without coupling diagnostics to a specific renderer.
-    for node in package.manifest.graph:
-        unmapped = tuple(node.parameters)
-        split_unmapped_parameters(node.class_name, unmapped)
 
     glossiness_materials = []
     warnings = []
