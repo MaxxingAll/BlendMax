@@ -13,6 +13,7 @@ from bpy_extras.io_utils import ImportHelper
 
 from .errors import BlendMaxImportError
 from .importer import import_blendmax
+from .models import ImportSummary
 from .restart_notice import restart_notice_required
 
 
@@ -134,11 +135,28 @@ def _console_color(text: str, code: str) -> str:
     return "\x1b[{0}m{1}\x1b[0m".format(code, text)
 
 
-def _print_import_summary(summary, elapsed_seconds: float) -> None:
+def _print_wrapped_items(items, heading: str, color_code: str) -> None:
+    print(_console_color(heading, color_code))
+    print("-" * _SUMMARY_WIDTH)
+    wrap_width = max(20, _DETAIL_WIDTH - 2)
+    for item in items:
+        lines = textwrap.wrap(
+            str(item),
+            width=wrap_width,
+            break_long_words=False,
+            break_on_hyphens=False,
+        ) or [""]
+        print(_console_color("- " + lines[0], color_code))
+        for line in lines[1:]:
+            print(_console_color("  " + line, color_code))
+    print()
+
+
+def _print_import_summary(summary: ImportSummary, elapsed_seconds: float) -> None:
     """Print the detailed import report to Blender's System Console."""
     _ensure_utf8_stdout()
     separator = "=" * _SUMMARY_WIDTH
-    section_separator = "-" * _SUMMARY_WIDTH
+    warning_count = len(summary.warnings)
 
     print("\n" + separator)
     print(_console_color("                 BlendMax Import Summary", "96"))
@@ -148,7 +166,6 @@ def _print_import_summary(summary, elapsed_seconds: float) -> None:
     print("{0} Objects   : {1}".format(_icon("objects"), summary.object_count))
     print("{0} Materials : {1}".format(_icon("materials"), summary.material_count))
     print("{0} Textures  : {1}".format(_icon("textures"), summary.image_count))
-    warning_count = len(summary.warnings)
     warning_line = "{0} Warnings  : {1}".format(_icon("warnings"), warning_count)
     print(_console_color(warning_line, "93" if warning_count else "92"))
     print("{0} Notes     : {1}".format(_icon("notes"), len(summary.notes)))
@@ -156,36 +173,17 @@ def _print_import_summary(summary, elapsed_seconds: float) -> None:
     print()
 
     if summary.warnings:
-        print(_console_color("[!] Warnings", "93"))
-        print(section_separator)
-        for warning in summary.warnings:
-            lines = textwrap.wrap(
-                str(warning),
-                width=max(20, _DETAIL_WIDTH - 2),
-                break_long_words=False,
-                break_on_hyphens=False,
-            ) or [""]
-            print(_console_color("- " + lines[0], "93"))
-            for line in lines[1:]:
-                print(_console_color("  " + line, "93"))
-        print()
-
+        _print_wrapped_items(summary.warnings, "[!] Warnings", "93")
     if summary.notes:
-        print(_console_color("[i] Compatibility Notes", "96"))
-        print(section_separator)
-        for note in summary.notes:
-            lines = textwrap.wrap(
-                str(note),
-                width=max(20, _DETAIL_WIDTH - 2),
-                break_long_words=False,
-                break_on_hyphens=False,
-            ) or [""]
-            print(_console_color("- " + lines[0], "96"))
-            for line in lines[1:]:
-                print(_console_color("  " + line, "96"))
-        print()
+        _print_wrapped_items(summary.notes, "[i] Compatibility Notes", "96")
 
-    print(_console_color("[OK] Import completed successfully.", "92"))
+    if warning_count:
+        print(_console_color(
+            "[!] Import completed with {0} warning(s).".format(warning_count),
+            "93",
+        ))
+    else:
+        print(_console_color("[OK] Import completed successfully.", "92"))
     print(separator)
 
 
