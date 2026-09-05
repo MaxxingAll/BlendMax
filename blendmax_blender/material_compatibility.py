@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import FrozenSet, Mapping, Tuple
+from typing import FrozenSet, Mapping
 
 
 # Parameter names are normalized with ``casefold()`` before comparison.
@@ -32,11 +32,3 @@ KNOWN_UNMAPPED_PARAMETERS: Mapping[str, FrozenSet[str]] = {
 def known_unmapped_parameters(class_name: str) -> FrozenSet[str]:
     """Return normalized parameter names known to be intentional gaps."""
     return KNOWN_UNMAPPED_PARAMETERS.get(str(class_name).casefold(), frozenset())
-
-
-def split_unmapped_parameters(class_name: str, keys: Tuple[str, ...]):
-    """Split unmapped keys into known intentional gaps and unexpected keys."""
-    known = known_unmapped_parameters(class_name)
-    intentional = tuple(key for key in keys if key.casefold() in known)
-    unexpected = tuple(key for key in keys if key.casefold() not in known)
-    return intentional, unexpected
