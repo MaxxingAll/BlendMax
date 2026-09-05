@@ -40,26 +40,32 @@ class PhysicalMaterialIntegrationTests(unittest.TestCase):
             return importlib.import_module("blendmax_blender.physical_material_integration")
 
     def test_install_patches_builder_once_and_is_idempotent(self):
-        integration = self._load_integration()
-        materials = importlib.import_module("blendmax_blender.blender_materials")
+        fake_bpy = ModuleType("bpy")
+        with patch.dict(sys.modules, {"bpy": fake_bpy}):
+            sys.modules.pop("blendmax_blender.physical_material_integration", None)
+            sys.modules.pop("blendmax_blender.blender_materials", None)
+            integration = importlib.import_module(
+                "blendmax_blender.physical_material_integration"
+            )
+            materials = importlib.import_module("blendmax_blender.blender_materials")
 
-        original = materials.MaterialBuilder._build_physical_mtl
-        integration._PATCHED = False
-        integration._ORIGINAL = None
-        try:
-            integration.install()
-            self.assertTrue(integration._PATCHED)
-            self.assertIs(integration._ORIGINAL, original)
-            patched = materials.MaterialBuilder._build_physical_mtl
-            self.assertIs(patched, integration._apply_physical_fidelity)
-
-            integration.install()
-            self.assertIs(materials.MaterialBuilder._build_physical_mtl, patched)
-            self.assertIs(integration._ORIGINAL, original)
-        finally:
-            materials.MaterialBuilder._build_physical_mtl = original
+            original = materials.MaterialBuilder._build_physical_mtl
             integration._PATCHED = False
             integration._ORIGINAL = None
+            try:
+                integration.install()
+                self.assertTrue(integration._PATCHED)
+                self.assertIs(integration._ORIGINAL, original)
+                patched = materials.MaterialBuilder._build_physical_mtl
+                self.assertIs(patched, integration._apply_physical_fidelity)
+
+                integration.install()
+                self.assertIs(materials.MaterialBuilder._build_physical_mtl, patched)
+                self.assertIs(integration._ORIGINAL, original)
+            finally:
+                materials.MaterialBuilder._build_physical_mtl = original
+                integration._PATCHED = False
+                integration._ORIGINAL = None
 
     def test_wrapper_applies_fidelity_without_rebuilding_shader(self):
         integration = self._load_integration()
@@ -69,6 +75,8 @@ class PhysicalMaterialIntegrationTests(unittest.TestCase):
                 [
                     FakeSocket("Base Color", (0.25, 0.5, 0.75, 1.0)),
                     FakeSocket("Roughness", 0.4),
+                    FakeSocket("Subsurface Radius", (0.1, 0.1, 0.1)),
+                    FakeSocket("Subsurface Scale", 0.1),
                     FakeSocket("Emission Strength", 1.0),
                 ]
             )
@@ -111,12 +119,17 @@ class PhysicalMaterialIntegrationTests(unittest.TestCase):
         self.assertEqual(material["blendmax_transparency_depth_inverse"], 0.25)
         self.assertEqual(material["blendmax_sss_depth"], 3.0)
         self.assertEqual(material["blendmax_sss_scatter_color"], (0.9, 0.2, 0.1))
+        self.assertEqual(
+            bsdf.inputs["Subsurface Radius"].default_value, (0.8, 0.4, 0.2)
+        )
+        self.assertEqual(bsdf.inputs["Subsurface Scale"].default_value, 3.0)
         self.assertEqual(material["blendmax_emission_luminance_nits"], 600.0)
         self.assertEqual(material["blendmax_emission_kelvin"], 6500.0)
         self.assertAlmostEqual(bsdf.inputs["Emission Strength"].default_value, 600.0)
-        self.assertAlmostEqual(bsdf.inputs["Base Color"].default_value[0], 0.5)
-        self.assertAlmostEqual(bsdf.inputs["Base Color"].default_value[1], 0.7071067812)
-        self.assertAlmostEqual(bsdf.inputs["Base Color"].default_value[2], 0.8660254038)
+        # Exponent = 1 + coating * coat_affect_color = 1 + 1.0 * 0.5 = 1.5.
+        self.assertAlmostEqual(bsdf.inputs["Base Color"].default_value[0], 0.125)
+        self.assertAlmostEqual(bsdf.inputs["Base Color"].default_value[1], 0.3535533906)
+        self.assertAlmostEqual(bsdf.inputs["Base Color"].default_value[2], 0.6495190528)
 
     def test_import_path_installs_before_package_and_adapter_work(self):
         fake_bpy = ModuleType("bpy")
