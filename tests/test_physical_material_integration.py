@@ -6,6 +6,8 @@ import unittest
 from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
+from blendmax_blender.models import ImportSummary
+
 
 class FakeSocket:
     def __init__(self, name, default_value=0.0, is_linked=False):
@@ -116,7 +118,7 @@ class PhysicalMaterialIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(bsdf.inputs["Base Color"].default_value[1], 0.7071067812)
         self.assertAlmostEqual(bsdf.inputs["Base Color"].default_value[2], 0.8660254038)
 
-    def test_import_path_installs_before_adapter_import(self):
+    def test_import_path_installs_before_package_and_adapter_work(self):
         fake_bpy = ModuleType("bpy")
         fake_bpy.context = object()
         events = []
@@ -129,7 +131,14 @@ class PhysicalMaterialIntegrationTests(unittest.TestCase):
 
             def import_package(self, package, apply_recommended_scale=True):
                 events.append(("import", package, apply_recommended_scale))
-                return SimpleNamespace(messages=[])
+                return ImportSummary(
+                    asset_name="asset",
+                    object_count=1,
+                    material_count=1,
+                    image_count=0,
+                    warnings=(),
+                    notes=(),
+                )
 
         fake_adapter_module.BlenderAdapter = FakeAdapter
         fake_package_module = ModuleType("blendmax_blender.package")
@@ -137,12 +146,15 @@ class PhysicalMaterialIntegrationTests(unittest.TestCase):
         class FakePackageContext:
             def __enter__(self):
                 events.append(("open",))
-                return object()
+                return SimpleNamespace(manifest=SimpleNamespace(graph=()))
 
             def __exit__(self, *args):
                 events.append(("close",))
 
         fake_package_module.open_blendmax = lambda path: FakePackageContext()
+
+        def record_install():
+            events.append(("install",))
 
         with patch.dict(
             sys.modules,
@@ -151,12 +163,17 @@ class PhysicalMaterialIntegrationTests(unittest.TestCase):
                 "blendmax_blender.blender_adapter": fake_adapter_module,
                 "blendmax_blender.package": fake_package_module,
             },
-        ), patch("blendmax_blender.physical_material_integration.install") as install:
+        ), patch(
+            "blendmax_blender.physical_material_integration.install",
+            side_effect=record_install,
+        ):
             importer = importlib.reload(importlib.import_module("blendmax_blender.importer"))
             importer.import_blendmax("asset.blendmax")
 
-        self.assertTrue(install.called)
-        self.assertEqual([event[0] for event in events], ["open", "adapter", "import", "close"])
+        self.assertEqual(
+            [event[0] for event in events],
+            ["install", "open", "adapter", "import", "close"],
+        )
 
 
 if __name__ == "__main__":
