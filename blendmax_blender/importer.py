@@ -13,6 +13,11 @@ _categorize_import_messages = categorize_import_messages
 def import_blendmax(path, context=None, apply_recommended_scale: bool = True):
     import bpy
 
+    # Install before BlenderAdapter imports/instantiates MaterialBuilder.
+    from .physical_material_integration import install as install_physical_material_integration
+
+    install_physical_material_integration()
+
     from .blender_adapter import BlenderAdapter
 
     active_context = context or bpy.context
