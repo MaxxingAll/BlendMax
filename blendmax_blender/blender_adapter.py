@@ -139,6 +139,11 @@ def _mesh_world_bounds(obj):
     )
 
 
+def _is_adoptable_group_node(obj) -> bool:
+    """Return True when an imported node can safely stand in for a Max group head."""
+    return getattr(obj, "type", None) == "EMPTY"
+
+
 class BlenderAdapter:
     def __init__(self, context):
         self.context = context
@@ -270,7 +275,12 @@ class BlenderAdapter:
         mapped: Dict[str, object] = {}
         for record in records:
             match = next(
-                (obj for obj in available if _name_matches(obj.name, record.fbx_name)),
+                (
+                    obj
+                    for obj in available
+                    if _name_matches(obj.name, record.fbx_name)
+                    and (not record.is_group_head or _is_adoptable_group_node(obj))
+                ),
                 None,
             )
             if match is not None:
