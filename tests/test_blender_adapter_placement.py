@@ -235,7 +235,47 @@ class BlenderAdapterPlacementTests(unittest.TestCase):
 
     def test_group_head_does_not_adopt_mesh_with_matching_name(self):
         imported_mesh = FakeImportedObject("BM_group", object_type="MESH")
-        self.assertFalse(self.adapter._is_adoptable_group_node(imported_mesh))
+        collection = SimpleNamespace(objects=SimpleNamespace(link=lambda _obj: None))
+        generated = set()
+        warnings = []
+        created = []
+
+        def new_object(name, data):
+            created_object = FakeImportedObject(name, object_type="EMPTY", data=data)
+            created.append(created_object)
+            return created_object
+
+        previous_data = getattr(self.adapter.bpy, "data", None)
+        self.adapter.bpy.data = SimpleNamespace(objects=SimpleNamespace(new=new_object))
+        try:
+            record = ObjectRecord(
+                object_id="group_1",
+                fbx_name="BM_group",
+                original_name="Imported Group",
+                node_type="Dummy",
+                superclass="helper",
+                is_group_head=True,
+            )
+            mapped, extras = self.adapter.BlenderAdapter._map_objects(
+                (imported_mesh,),
+                (record,),
+                collection,
+                warnings,
+                generated,
+            )
+        finally:
+            if previous_data is None:
+                del self.adapter.bpy.data
+            else:
+                self.adapter.bpy.data = previous_data
+
+        self.assertEqual(extras, (imported_mesh,))
+        self.assertEqual(warnings, [])
+        self.assertEqual(generated, {"group_1"})
+        self.assertEqual(len(created), 1)
+        self.assertIs(mapped["group_1"], created[0])
+        self.assertEqual(created[0].name, "Imported Group")
+        self.assertEqual(created[0].properties["blendmax_object_id"], "group_1")
 
     def test_undeclared_fbx_mesh_and_orphan_data_are_removed(self):
         mesh = SimpleNamespace(users=1)
