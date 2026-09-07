@@ -83,6 +83,8 @@ class PhysicalMaterialIntegrationTests(unittest.TestCase):
                 self.assertIs(reloaded._ORIGINAL, original)
                 self.assertIs(second_wrapper._blendmax_original, original)
 
+                # The previous shipped wrapper had no ownership marker, so that upgrade boundary
+                # is intentionally not simulated here; a live upgrade requires add-on restart.
                 reloaded.install()
                 self.assertIs(materials.MaterialBuilder._build_physical_mtl, second_wrapper)
                 self.assertIs(reloaded._ORIGINAL, original)
