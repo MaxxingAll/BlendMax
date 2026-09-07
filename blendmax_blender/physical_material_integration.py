@@ -24,9 +24,6 @@ def _apply_physical_fidelity(self, tree, graph_node, material, stack, x, y):
 
     parameters = ParameterView(graph_node.parameters)
 
-    # Max's coat can affect the underlying base/SSS color. Principled Coat Tint
-    # is not equivalent, so apply the documented power-rule approximation when
-    # the imported base color is a constant.
     base_color = bsdf.inputs.get("Base Color")
     if base_color is not None and not base_color.is_linked:
         try:
@@ -36,9 +33,6 @@ def _apply_physical_fidelity(self, tree, graph_node, material, stack, x, y):
         except (TypeError, ValueError):
             pass
 
-    # Max can unlock a separate transmission roughness while Principled uses a
-    # shared surface roughness. Preserve the resolved value as metadata; only
-    # replace the shared socket when the values agree.
     try:
         reflection_roughness = float(bsdf.inputs["Roughness"].default_value)
         trans_roughness = transparency_roughness(parameters, reflection_roughness)
@@ -49,15 +43,15 @@ def _apply_physical_fidelity(self, tree, graph_node, material, stack, x, y):
     except (KeyError, TypeError, ValueError):
         pass
 
-    # Principled BSDF has no direct transparency-depth socket. Preserve the
-    # inverse-depth semantic for a future Beer-Lambert volume construction.
     inverse_depth = transparency_depth_inverse(parameters)
     if inverse_depth > 0.0:
         material["blendmax_transparency_depth_inverse"] = inverse_depth
 
-    # Resolve SSS semantics and feed supported Principled sockets where present.
     # Do not materialize SSS defaults on materials whose scattering weight is 0.
-    sss_weight = max(0.0, min(1.0, float(parameters.get("scattering", 0.0))))
+    try:
+        sss_weight = max(0.0, min(1.0, float(parameters.get("scattering", 0.0))))
+    except (TypeError, ValueError):
+        sss_weight = 0.0
     if sss_weight > 0.0:
         sss_color, scatter_color, sss_depth = sss_parameters(parameters)
         if sss_depth > 0.0:
@@ -70,9 +64,6 @@ def _apply_physical_fidelity(self, tree, graph_node, material, stack, x, y):
             if scale_socket is not None and not scale_socket.is_linked:
                 scale_socket.default_value = sss_depth
 
-    # Physical Material emission is specified as surface luminance (nits).
-    # Blender's emission strength is not a strict nit-equivalent, but this
-    # preserves the source physical intent better than the old 1500-nit scale.
     luminance = emission_luminance(parameters)
     if luminance > 0.0:
         emission_strength = bsdf.inputs.get("Emission Strength")
@@ -80,8 +71,6 @@ def _apply_physical_fidelity(self, tree, graph_node, material, stack, x, y):
             emission_strength.default_value = luminance
         material["blendmax_emission_luminance_nits"] = luminance
 
-    # Kelvin emission has no universal one-to-one Principled socket across the
-    # supported Blender versions. Preserve it rather than silently discarding it.
     emit_kelvin = parameters.get("emit_kelvin")
     if emit_kelvin is not None:
         try:
@@ -92,8 +81,6 @@ def _apply_physical_fidelity(self, tree, graph_node, material, stack, x, y):
     return output
 
 
-# Mark the wrapper itself so a module reload can recognize an already-patched
-# class method even though this module's globals have been recreated.
 _apply_physical_fidelity._blendmax_physical_material_wrapper = True
 
 
@@ -103,13 +90,14 @@ def install() -> None:
     from . import blender_materials
 
     current = blender_materials.MaterialBuilder._build_physical_mtl
+    if _PATCHED and current is _apply_physical_fidelity:
+        return
+
     original = getattr(current, "_blendmax_original", None)
     if original is not None:
         # A previous module instance owns the active wrapper. Rebind this
         # module to the true original before replacing it with our new wrapper.
         _ORIGINAL = original
-    elif _PATCHED and current is _apply_physical_fidelity:
-        return
     else:
         _ORIGINAL = current
 
