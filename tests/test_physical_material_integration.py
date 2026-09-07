@@ -82,6 +82,10 @@ class PhysicalMaterialIntegrationTests(unittest.TestCase):
                 self.assertIsNot(first_wrapper, second_wrapper)
                 self.assertIs(reloaded._ORIGINAL, original)
                 self.assertIs(second_wrapper._blendmax_original, original)
+
+                reloaded.install()
+                self.assertIs(materials.MaterialBuilder._build_physical_mtl, second_wrapper)
+                self.assertIs(reloaded._ORIGINAL, original)
             finally:
                 materials.MaterialBuilder._build_physical_mtl = original
 
