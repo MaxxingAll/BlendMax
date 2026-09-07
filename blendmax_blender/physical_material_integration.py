@@ -92,6 +92,8 @@ def install() -> None:
         return
     original = getattr(current, "_blendmax_original", None)
     if original is not None:
+        # A previous module instance owns the active wrapper. Rebind this
+        # module to the true original before replacing it with our new wrapper.
         _ORIGINAL = original
     else:
         _ORIGINAL = current
