@@ -6,18 +6,25 @@ import os
 import sys
 import textwrap
 import time
+import traceback
 
 import bpy
 from bpy.props import BoolProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 
+from . import __version__
 from .errors import BlendMaxImportError
 from .importer import import_blendmax
 from .models import ImportSummary
-from .restart_notice import mark_hot_reload_complete, restart_notice_required
+from .restart_notice import (
+    mark_hot_reload_complete,
+    mark_hot_reload_failed,
+    restart_notice_required,
+)
 
 
 _RESTART_NOTICE_REQUIRED = False
+_RELOAD_PENDING = False
 _SUMMARY_WIDTH = 60
 _DETAIL_WIDTH = 72
 _STDOUT_UTF8_CONFIGURED = False
@@ -48,37 +55,40 @@ class BLENDMAX_OT_restart_blender_notice(bpy.types.Operator):
 
 
 def _hot_reload() -> None:
-    """Reload BlendMax from disk after the current operator has returned."""
+    """Reload BlendMax from the installed module location after the operator returns."""
+    global _RELOAD_PENDING
     module_name = __package__
     try:
         bpy.ops.preferences.addon_disable(module=module_name)
+        mark_hot_reload_complete(bpy, __version__)
 
         for name in list(sys.modules):
             if name == module_name or name.startswith(module_name + "."):
                 del sys.modules[name]
 
         bpy.ops.preferences.addon_enable(module=module_name)
-        mark_hot_reload_complete(bpy)
-
-        # The newly imported addon already ran register() before the state file
-        # was updated. Refresh its UI flag so the restart notice disappears
-        # immediately without requiring another disable/enable cycle.
-        reloaded_module = sys.modules.get(module_name)
-        if reloaded_module is not None:
-            reloaded_module._RESTART_NOTICE_REQUIRED = False
-
         print("BlendMax: hot reload completed successfully.")
     except Exception as exc:
+        mark_hot_reload_failed(bpy)
         print("BlendMax: hot reload failed: {0}".format(exc))
+        traceback.print_exc()
+    finally:
+        _RELOAD_PENDING = False
     return None
 
 
 class BLENDMAX_OT_hot_reload(bpy.types.Operator):
     bl_idname = "blendmax.hot_reload"
     bl_label = "Reload BlendMax"
-    bl_description = "Reload BlendMax modules from disk without restarting Blender"
+    bl_description = "Reload the currently installed BlendMax extension copy without restarting Blender"
 
     def execute(self, _context):
+        global _RELOAD_PENDING
+        if _RELOAD_PENDING:
+            self.report({"INFO"}, "BlendMax reload is already scheduled.")
+            return {"FINISHED"}
+
+        _RELOAD_PENDING = True
         bpy.app.timers.register(_hot_reload, first_interval=0.1)
         self.report({"INFO"}, "BlendMax reload scheduled.")
         return {"FINISHED"}
@@ -298,7 +308,7 @@ _CLASSES = (
 
 def register() -> None:
     global _RESTART_NOTICE_REQUIRED
-    _RESTART_NOTICE_REQUIRED = restart_notice_required(bpy)
+    _RESTART_NOTICE_REQUIRED = restart_notice_required(bpy, __version__)
 
     for item in _CLASSES:
         bpy.utils.register_class(item)
