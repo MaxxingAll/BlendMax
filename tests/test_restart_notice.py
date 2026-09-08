@@ -43,11 +43,13 @@ class RestartNoticeTests(unittest.TestCase):
                 self.assertTrue(restart_notice.restart_notice_required(bpy))
                 self.assertTrue(restart_notice.restart_notice_required(bpy))
 
-    def test_new_process_consumes_restart_notice(self):
+    def test_hot_reload_suppresses_notice_for_current_process(self):
         with tempfile.TemporaryDirectory() as directory:
             bpy = FakeBpy(directory)
             with patch.object(restart_notice.os, "getpid", return_value=101):
                 self.assertTrue(restart_notice.restart_notice_required(bpy))
+                restart_notice.mark_hot_reload_complete(bpy)
+                self.assertFalse(restart_notice.restart_notice_required(bpy))
 
             with patch.object(restart_notice.os, "getpid", return_value=202):
                 self.assertFalse(restart_notice.restart_notice_required(bpy))
