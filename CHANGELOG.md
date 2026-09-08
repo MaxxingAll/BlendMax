@@ -8,8 +8,10 @@ called out separately from automated coverage.
 
 ### Added
 
-- Creates a dedicated hidden, non-rendering **[BlendMax Bounds]** Empty for the
-  exact imported asset bounds.
+- Makes the **[BlendMax]** controller itself the visible asset-bounds display:
+  a selectable CUBE Empty whose XYZ scale encodes the exact imported asset
+  bounds, applied after hierarchy reconstruction while preserving imported
+  world transforms.
 - Promotes exactly one eligible parentless imported group head as the asset
   controller; otherwise a synthetic controller is created.
 - Stores controller provenance, including `blendmax_original_*`, plus
@@ -29,12 +31,14 @@ called out separately from automated coverage.
 ### Changed
 
 - The promoted/synthetic controller is positioned at the computed bounds center
-  with identity rotation and scale; recommended scale is applied uniformly to
-  the controller only, while bounds display remains independent.
+  with identity rotation and shown as a selectable CUBE Empty; its XYZ scale
+  encodes the exact imported bounds and is applied after hierarchy
+  reconstruction while imported world transforms are restored. Recommended
+  scale is applied uniformly on top of the controller scale.
 - Hierarchy restoration uses preserve-world parenting with explicit dependency-graph
   flushes, so imported hierarchy transforms are not distorted during adoption.
 - Degenerate bounds are preserved as authored/imported without an artificial
-  minimum-size clamp.
+  minimum-size clamp; a zero-extent axis stays zero on the controller scale.
 - Restart-notice suppression is represented by a one-shot current-process reload
   marker rather than a sticky version flag. The marker is consumed only by the
   registration produced by the requested reload, so later genuine update/restart
