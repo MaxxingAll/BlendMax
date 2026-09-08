@@ -1,0 +1,81 @@
+name: Surgical BlendMax fix
+
+on:
+  push:
+    branches:
+      - fix/adopt-imported-group-nodes
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/adopt-imported-group-nodes
+
+      - name: Apply reviewer fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          adapter = Path('blendmax_blender/blender_adapter.py')
+          text = adapter.read_text(encoding='utf-8')
+          if len(text.splitlines()) < 500:
+              raise SystemExit('Refusing to edit unexpectedly short blender_adapter.py')
+
+          old = '''        actual_bounds = []\n        for obj in mapped.values():\n            bounds = _mesh_world_bounds(obj)\n'''
+          new = '''        # Bounds are computed before hierarchy restoration intentionally;\n        # the controller must be positioned from the imported mesh bounds\n        # before preserve-world hierarchy parenting is rebuilt.\n        actual_bounds = []\n        for obj in mapped.values():\n            bounds = _mesh_world_bounds(obj)\n'''
+          if text.count(old) != 1:
+              raise SystemExit('Expected exactly one controller bounds loop')
+          text = text.replace(old, new, 1)
+
+          old = '''        self._restore_hierarchy(mapped, manifest.objects, warnings)\n        for obj in mapped.values():\n'''
+          new = '''        self._restore_hierarchy(mapped, manifest.objects, warnings)\n        # The hierarchy restore updates parent transforms; flush the dependency\n        # graph before preserve-world parenting the remaining roots.\n        bpy.context.view_layer.update()\n        for obj in mapped.values():\n'''
+          if text.count(old) != 1:
+              raise SystemExit('Expected exactly one hierarchy restore site')
+          text = text.replace(old, new, 1)
+          adapter.write_text(text, encoding='utf-8')
+
+          changelog = Path('CHANGELOG.md')
+          ctext = changelog.read_text(encoding='utf-8')
+          if len(ctext.splitlines()) < 300:
+              raise SystemExit('Refusing to edit unexpectedly short CHANGELOG.md')
+          marker = '''### Added\n\n- Adds a **Reload BlendMax** control'''
+          block = '''### Added\n\n- Creates a dedicated hidden, non-rendering **[BlendMax Bounds]** Empty for the\n  exact imported asset bounds.\n- Promotes exactly one eligible parentless imported group head as the asset\n  controller; otherwise a synthetic controller is created.\n- Stores controller provenance, including `blendmax_original_*`, plus\n  `blendmax_controller` and `blendmax_controller_source` metadata.\n\n- Adds a **Reload BlendMax** control'''
+          if ctext.count(marker) != 1:
+              raise SystemExit('Expected exactly one 0.1.8 Added marker')
+          ctext = ctext.replace(marker, block, 1)
+
+          marker = '''### Changed\n\n- Restart-notice suppression is represented'''
+          block = '''### Changed\n\n- The promoted/synthetic controller is positioned at the computed bounds center\n  with identity rotation and scale; recommended scale is applied uniformly to\n  the controller only, while bounds display remains independent.\n- Hierarchy restoration uses preserve-world parenting with explicit dependency-graph\n  flushes, so imported hierarchy transforms are not distorted during adoption.\n- Degenerate bounds are preserved as authored/imported without an artificial\n  minimum-size clamp.\n\n- Restart-notice suppression is represented'''
+          if ctext.count(marker) != 1:
+              raise SystemExit('Expected exactly one 0.1.8 Changed marker')
+          ctext = ctext.replace(marker, block, 1)
+          changelog.write_text(ctext, encoding='utf-8')
+          PY
+
+      - name: Validate, test, and commit
+        shell: bash
+        run: |
+          test "$(wc -l < blendmax_blender/blender_adapter.py)" -ge 500
+          test "$(wc -l < CHANGELOG.md)" -ge 300
+          grep -Fq "Bounds are computed before hierarchy restoration intentionally" blendmax_blender/blender_adapter.py
+          grep -Fq "bpy.context.view_layer.update()" blendmax_blender/blender_adapter.py
+          grep -Fq "dedicated hidden, non-rendering **[BlendMax Bounds]** Empty" CHANGELOG.md
+          grep -Fq "recommended scale is applied uniformly" CHANGELOG.md
+          python -m unittest discover -s tests
+          git diff --check
+          git diff --stat
+          git add blendmax_blender/blender_adapter.py CHANGELOG.md
+          git diff --cached --check
+          git status --short
+          git commit -m "fix(blender): finish controller hierarchy safeguards"
+          git rm .github/workflows/_surgical_blendmax_fix.yml
+          git commit -m "chore(ci): remove surgical repair workflow"
+          git push origin HEAD:fix/adopt-imported-group-nodes
