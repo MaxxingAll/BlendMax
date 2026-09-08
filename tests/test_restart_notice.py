@@ -55,36 +55,24 @@ class RestartNoticeTests(unittest.TestCase):
             state = Path(directory) / "blendmax_restart_notice.json"
             self.assertFalse(state.exists())
 
-    def test_hot_reload_suppresses_notice_for_current_process_and_version(self):
+    def test_hot_reload_suppresses_notice_on_first_successful_registration(self):
         with tempfile.TemporaryDirectory() as directory:
             bpy = FakeBpy(directory)
             with patch.object(restart_notice.os, "getpid", return_value=101):
                 self.assertTrue(restart_notice.restart_notice_required(bpy, "0.1.8"))
-                restart_notice.mark_hot_reload_complete(bpy, "0.1.8")
-                self.assertFalse(restart_notice.restart_notice_required(bpy, "0.1.8"))
+                restart_notice.mark_hot_reload_pending(bpy)
 
-            state = Path(directory) / "blendmax_restart_notice.json"
-            self.assertEqual(
-                restart_notice._read_state(state),
-                {
-                    "pending_pid": 101,
-                    "hot_reload_pid": 101,
-                    "hot_reload_version": "0.1.8",
-                },
-            )
+                state = Path(directory) / "blendmax_restart_notice.json"
+                self.assertEqual(
+                    restart_notice._read_state(state),
+                    {
+                        "pending_pid": 101,
+                        "hot_reload_pending_pid": 101,
+                    },
+                )
 
-            with patch.object(restart_notice.os, "getpid", return_value=202):
-                self.assertFalse(restart_notice.restart_notice_required(bpy, "0.1.8"))
-
-            self.assertFalse(state.exists())
-
-    def test_new_version_does_not_inherit_hot_reload_suppression(self):
-        with tempfile.TemporaryDirectory() as directory:
-            bpy = FakeBpy(directory)
-            with patch.object(restart_notice.os, "getpid", return_value=101):
-                self.assertTrue(restart_notice.restart_notice_required(bpy, "0.1.8"))
-                restart_notice.mark_hot_reload_complete(bpy, "0.1.8")
-                self.assertFalse(restart_notice.restart_notice_required(bpy, "0.1.8"))
+                self.assertFalse(restart_notice.restart_notice_required(bpy, "0.1.9"))
+                self.assertFalse(state.exists())
                 self.assertTrue(restart_notice.restart_notice_required(bpy, "0.1.9"))
 
     def test_failed_hot_reload_restores_pending_notice(self):
@@ -92,8 +80,7 @@ class RestartNoticeTests(unittest.TestCase):
             bpy = FakeBpy(directory)
             with patch.object(restart_notice.os, "getpid", return_value=101):
                 self.assertTrue(restart_notice.restart_notice_required(bpy, "0.1.8"))
-                restart_notice.mark_hot_reload_complete(bpy, "0.1.8")
-                self.assertFalse(restart_notice.restart_notice_required(bpy, "0.1.8"))
+                restart_notice.mark_hot_reload_pending(bpy)
                 restart_notice.mark_hot_reload_failed(bpy)
                 self.assertTrue(restart_notice.restart_notice_required(bpy, "0.1.8"))
 
