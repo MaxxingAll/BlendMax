@@ -192,7 +192,7 @@ class BlenderControllerBoundsTests(unittest.TestCase):
             source_path=Path("Test Asset.blendmax"),
         )
 
-    def test_promoted_controller_stays_transform_safe_and_uses_bounds_child(self):
+    def test_promoted_controller_is_the_selectable_bounds_cube(self):
         controller = FakeEmptyObject("Imported Group")
         controller.location = FakeVector((5.0, 6.0, 7.0))
         controller.scale = FakeVector((2.0, 3.0, 4.0))
@@ -218,26 +218,45 @@ class BlenderControllerBoundsTests(unittest.TestCase):
         )
 
         self.assertIs(result, controller)
+        # The promoted imported Empty itself becomes the visible CUBE
+        # controller: centered on the bounds, identity rotation, and its own
+        # XYZ scale encoding the exact imported asset bounds.
+        self.assertEqual(controller.name, "Test Asset [BlendMax]")
+        self.assertEqual(controller.empty_display_type, "CUBE")
+        self.assertEqual(controller.empty_display_size, 0.5)
         self.assertEqual(tuple(controller.location), (11.0, 22.0, 33.0))
-        self.assertEqual(tuple(controller.scale), (1.0, 1.0, 1.0))
         self.assertEqual(tuple(controller.rotation_euler), (0.0, 0.0, 0.0))
+        self.assertEqual(tuple(controller.scale), (2.0, 4.0, 6.0))
+        # The controller stays selectable/renderable: it is the object users
+        # select and manipulate, not a hidden helper.
+        self.assertFalse(controller.hide_select)
+        self.assertFalse(controller.hide_render)
+        # Provenance/original-transform metadata survives the promotion.
         self.assertEqual(controller.properties["blendmax_original_name"], "Imported Group")
         self.assertEqual(controller.properties["blendmax_controller_source"], "imported_group_head")
+        self.assertEqual(
+            controller.properties["blendmax_original_rotation_euler"],
+            (0.1, 0.2, 0.3),
+        )
+        self.assertEqual(
+            controller.properties["blendmax_original_scale"],
+            (2.0, 3.0, 4.0),
+        )
+        # Transform safety: rebuilding the hierarchy under the bounds-scaled
+        # controller restores the mesh's imported world transform.
         self.assertEqual(tuple(mesh.matrix_world.translation), (10.0, 20.0, 30.0))
         self.assertIs(mesh.parent, controller)
+        # No separate bounds helper object remains.
+        self.assertEqual(
+            [
+                obj
+                for obj in collection.objects
+                if obj is not controller and obj is not mesh
+            ],
+            [],
+        )
 
-        bounds = [obj for obj in collection.objects if obj is not controller and obj is not mesh]
-        self.assertEqual(len(bounds), 1)
-        bounds_display = bounds[0]
-        self.assertEqual(bounds_display.empty_display_type, "CUBE")
-        self.assertEqual(bounds_display.empty_display_size, 0.5)
-        self.assertEqual(tuple(bounds_display.location), (0.0, 0.0, 0.0))
-        self.assertEqual(tuple(bounds_display.scale), (2.0, 4.0, 6.0))
-        self.assertTrue(bounds_display.hide_select)
-        self.assertTrue(bounds_display.hide_render)
-        self.assertIs(bounds_display.parent, controller)
-
-    def test_recommended_scale_remains_a_uniform_controller_transform(self):
+    def test_recommended_scale_multiplies_controller_bounds_scale(self):
         controller = FakeEmptyObject("Imported Group")
         mesh = FakeMeshObject(
             (0.0, 0.0, 0.0),
@@ -256,9 +275,17 @@ class BlenderControllerBoundsTests(unittest.TestCase):
             [],
         )
 
-        self.assertEqual(tuple(controller.scale), (1.5, 1.5, 1.5))
-        bounds_display = [obj for obj in collection.objects if obj is not controller and obj is not mesh][0]
-        self.assertEqual(tuple(bounds_display.scale), (2.0, 4.0, 6.0))
+        # Recommended scale remains a real uniform controller scale applied on
+        # top of the bounds display scale (2, 4, 6 × 1.5).
+        self.assertEqual(tuple(controller.scale), (3.0, 6.0, 9.0))
+        self.assertEqual(
+            [
+                obj
+                for obj in collection.objects
+                if obj is not controller and obj is not mesh
+            ],
+            [],
+        )
 
     def test_degenerate_bounds_are_not_artificially_clamped(self):
         controller = FakeEmptyObject("Imported Group")
@@ -282,8 +309,15 @@ class BlenderControllerBoundsTests(unittest.TestCase):
             [],
         )
 
-        bounds_display = [obj for obj in collection.objects if obj is not controller and obj is not mesh][0]
-        self.assertEqual(tuple(bounds_display.scale), (0.0, 4.0, 6.0))
+        self.assertEqual(tuple(controller.scale), (0.0, 4.0, 6.0))
+        self.assertEqual(
+            [
+                obj
+                for obj in collection.objects
+                if obj is not controller and obj is not mesh
+            ],
+            [],
+        )
 
 
 if __name__ == "__main__":

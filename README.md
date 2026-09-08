@@ -168,11 +168,14 @@ It currently:
   controller. When the manifest has exactly one parentless imported group head,
   that Empty is promoted; otherwise a synthetic controller is created. The
   controller is positioned at the asset bounds centre with identity rotation
-  and scale, and stores provenance/original-transform metadata
+  and stores provenance/original-transform metadata
   (`blendmax_controller`, `blendmax_controller_source`, `blendmax_original_*`);
-- creates a separate hidden, non-rendering `[BlendMax Bounds]` Empty as a
-  visualization helper for the exact imported asset bounds, parented to the
-  controller so recommended uniform scale does not distort the helper;
+- shows the controller itself as a selectable CUBE Empty scaled to the exact
+  imported asset bounds, so the object users select and manipulate is also the
+  object that visualizes the bounds. The bounds scale is display state applied
+  after hierarchy reconstruction (imported world transforms are restored), and
+  recommended scale remains a real uniform controller scale applied on top of
+  it;
 - directly centers imported FBX geometry at world origin, grounds its lowest
   point at Z=0, and keeps reconstructed group pivots close to their own meshes;
 - preserves FBX polygon material indices and reconstructs Multi/Sub slots;
