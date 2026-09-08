@@ -21,7 +21,7 @@ created automatically by Python.
 | Component | Version | Status |
 | --- | --- | --- |
 | 3ds Max exporter and cleanup | `0.1.0-alpha.4.3.0` | Host verified in 3ds Max 2025.3 |
-| Blender importer | `0.1.7` | Structured import summary after successful import |
+| Blender importer | `0.1.8` | Structured import summary and in-process hot reload |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
 | Automated suite | See CI | Python 3.11–3.13 |
 
@@ -132,7 +132,7 @@ an updated exporter or cleanup action cannot continue running stale code.
 
 ## Install the Blender importer
 
-Build or download `blendmax_importer-0.1.7.zip`, then in Blender:
+Build or download `blendmax_importer-0.1.8.zip`, then in Blender:
 
 1. Open **Edit > Preferences > Get Extensions**.
 2. Open the menu in the top-right and choose **Install from Disk**.
@@ -140,7 +140,11 @@ Build or download `blendmax_importer-0.1.7.zip`, then in Blender:
 4. Use **File > Import > BlendMax Asset (.blendmax)**.
 
 Installing a newer version of the same extension ZIP updates the isolated
-extension. There are no background services, handlers, or polling loops.
+extension. The **Reload BlendMax** control in Add-on Preferences performs a
+single deferred in-process reload of the currently installed extension copy;
+it does not watch the source tree or run continuously. Editing the repository
+working tree therefore requires updating the installed extension copy (or
+pointing Blender at that working copy) before using Reload BlendMax.
 
 To build the ZIP from source:
 
