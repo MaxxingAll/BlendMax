@@ -164,7 +164,15 @@ It currently:
 - restores original object names and manifest parent relationships;
 - removes FBX-created objects that have no manifest record, including synthetic
   scene-root geometry/helpers;
-- places the asset in its own collection under one `[BlendMax]` controller;
+- places the asset in its own collection under one transform-safe `[BlendMax]`
+  controller. When the manifest has exactly one parentless imported group head,
+  that Empty is promoted; otherwise a synthetic controller is created. The
+  controller is positioned at the asset bounds centre with identity rotation
+  and scale, and stores provenance/original-transform metadata
+  (`blendmax_controller`, `blendmax_controller_source`, `blendmax_original_*`);
+- creates a separate hidden, non-rendering `[BlendMax Bounds]` Empty as a
+  visualization helper for the exact imported asset bounds, parented to the
+  controller so recommended uniform scale does not distort the helper;
 - directly centers imported FBX geometry at world origin, grounds its lowest
   point at Z=0, and keeps reconstructed group pivots close to their own meshes;
 - preserves FBX polygon material indices and reconstructs Multi/Sub slots;

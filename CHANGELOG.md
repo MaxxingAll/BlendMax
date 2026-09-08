@@ -8,6 +8,12 @@ called out separately from automated coverage.
 
 ### Added
 
+- Creates a dedicated hidden, non-rendering **[BlendMax Bounds]** Empty for the
+  exact imported asset bounds.
+- Promotes exactly one eligible parentless imported group head as the asset
+  controller; otherwise a synthetic controller is created.
+- Stores controller provenance, including `blendmax_original_*`, plus
+  `blendmax_controller` and `blendmax_controller_source` metadata.
 - Adds a **Reload BlendMax** control in Add-on Preferences for a one-shot,
   deferred in-process reload of the currently installed Blender extension copy.
 - Reload purges the active package and its submodules from `sys.modules` before
@@ -22,6 +28,13 @@ called out separately from automated coverage.
 
 ### Changed
 
+- The promoted/synthetic controller is positioned at the computed bounds center
+  with identity rotation and scale; recommended scale is applied uniformly to
+  the controller only, while bounds display remains independent.
+- Hierarchy restoration uses preserve-world parenting with explicit dependency-graph
+  flushes, so imported hierarchy transforms are not distorted during adoption.
+- Degenerate bounds are preserved as authored/imported without an artificial
+  minimum-size clamp.
 - Restart-notice suppression is represented by a one-shot current-process reload
   marker rather than a sticky version flag. The marker is consumed only by the
   registration produced by the requested reload, so later genuine update/restart

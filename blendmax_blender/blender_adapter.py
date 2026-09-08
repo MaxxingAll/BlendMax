@@ -428,6 +428,11 @@ class BlenderAdapter:
             controller = bpy.data.objects.new("{0} [BlendMax]".format(manifest.asset_name), None)
             collection.objects.link(controller)
 
+        # Bounds are computed before hierarchy restoration intentionally.
+        # `_set_parent_preserve_world()` preserves mesh world transforms, so
+        # these bounds are parenting-invariant; a future restore path that
+        # does not preserve world matrices would silently mis-size the
+        # controller.
         actual_bounds = []
         for obj in mapped.values():
             bounds = _mesh_world_bounds(obj)
@@ -502,6 +507,9 @@ class BlenderAdapter:
         # controller's existing FBX children. The controller is identity-scaled
         # at this point, so preserve-world parenting cannot introduce shear.
         BlenderAdapter._restore_hierarchy(mapped, manifest.objects, warnings)
+        # The hierarchy restore updates parent transforms; flush the dependency
+        # graph before preserve-world parenting the remaining roots.
+        bpy.context.view_layer.update()
 
         roots = []
         for object_id, obj in mapped.items():
