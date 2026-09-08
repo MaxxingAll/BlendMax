@@ -4,6 +4,58 @@ This file records user-visible changes to the 3ds Max exporter/cleanup and the
 Blender importer. BlendMax is still alpha software; host-tested baselines are
 called out separately from automated coverage.
 
+## Blender Importer 0.1.8 — 2026-09-08
+
+### Added
+
+- Makes the **[BlendMax]** controller itself the visible asset-bounds display:
+  a selectable CUBE Empty whose XYZ scale encodes the exact imported asset
+  bounds, applied after hierarchy reconstruction while preserving imported
+  world transforms.
+- Promotes exactly one eligible parentless imported group head as the asset
+  controller; otherwise a synthetic controller is created.
+- Stores controller provenance, including `blendmax_original_*`, plus
+  `blendmax_controller` and `blendmax_controller_source` metadata.
+- Adds a **Reload BlendMax** control in Add-on Preferences for a one-shot,
+  deferred in-process reload of the currently installed Blender extension copy.
+- Reload purges the active package and its submodules from `sys.modules` before
+  re-enabling the same installed extension, so newly installed code can be
+  loaded without restarting Blender.
+- A successful reload consumes the pending restart notice on that first
+  registration, including when the installed version is newer than the running
+  module. No second reload is required just to clear the notice.
+- Duplicate clicks while a reload is already queued are ignored.
+- Reload failures print the full traceback and restore the normal restart-notice
+  state so a failed reload is not treated as successful.
+
+### Changed
+
+- The promoted/synthetic controller is positioned at the computed bounds center
+  with identity rotation and shown as a selectable CUBE Empty; its XYZ scale
+  encodes the imported bounds and is applied after hierarchy reconstruction while
+  imported world transforms are restored. Recommended scale is applied uniformly
+  on top of the controller scale.
+- Hierarchy restoration uses preserve-world parenting with explicit dependency-graph
+  flushes, so imported hierarchy transforms are not distorted during adoption.
+- Degenerate bounds use a tiny epsilon on zero-extent controller axes to keep the
+  controller matrix invertible while remaining visually flat on the affected axis.
+- Restart-notice suppression is represented by a one-shot current-process reload
+  marker rather than a sticky version flag. The marker is consumed only by the
+  registration produced by the requested reload, so later genuine update/restart
+  states can surface normally.
+
+### Release metadata
+
+- Bumps the Blender importer and extension manifest version to **0.1.8**.
+
+### Verification
+
+- Restored direct coverage for the ordinary one-restart state transition.
+- Added coverage that a first successful hot reload consumes the notice and that
+  a failed reload restores it.
+- Real Blender extension install/reload verification remains a host-level gate
+  because the ordinary Python CI suite does not import `bpy`.
+
 ## Blender Importer 0.1.7 — 2026-09-04
 
 ### Added
@@ -39,9 +91,7 @@ called out separately from automated coverage.
 
 ### Verification
 
-- Clean Blender 5.2 runtime re-import passed with one genuine missing-texture
-  warning, one grouped unsupported-parameter note, one grouped glossiness note,
-  and no per-field VRayMtl warning spam.
+- Clean Blender 5.2 runtime re-import passed with one genuine missing-texture warning, one grouped unsupported-parameter note, one grouped glossiness note, and no per-field VRayMtl warning spam.
 - Refraction/reflection diagnostics honor `brdf_useRoughness`: equal values in
   roughness mode stay silent, while divergent values remain grouped as an
   approximation note.
@@ -68,7 +118,7 @@ called out separately from automated coverage.
 
 ### Release metadata
 
-- Bumps the Max exporter and AppBundle version so the user-visible limit change is identifiable in installed builds.
+- Bumps the Max exporter and AppBundle version so the limit change is identifiable in installed builds.
 
 ## Blender Importer 0.1.5 — 2026-09-02
 
@@ -110,42 +160,12 @@ called out separately from automated coverage.
   existing `has no Blender mapping yet` diagnostic. This keeps future exporter
   additions visible without flooding normal imports with expected limitations.
 - Materials with separate reflection and refraction glossiness values are
-  reported once as a grouped note using the affected material names:
-
-  > `(Material A/Material B/...) has separate reflection and refraction glossiness values; Blender's Principled shader uses a single roughness for both, so the refraction roughness is approximated.`
-
-  The importer continues using the reflection roughness for the single
-  Principled Roughness input.
-- Missing packaged texture data remains a genuine warning, for example:
-
-  > `Packaged image for texture graph node tex_2140 is unavailable.`
+  reported once as a grouped note using the affected material names.
+- Missing packaged texture data remains a genuine warning.
 
 ### Host evidence
 
-The requested real-host validation for the new VRayMtl parameter handling is
-complete:
-
-- **Negative anisotropy — PASS:** a real `VRayMtl` with `anisotropy = -0.5`
-  imported to Blender with `Anisotropic = 0.5` and
-  `Anisotropic Rotation = 0.25`. The milestone acceptance criterion is correct
-  BSDF parameter adaptation, not renderer visual parity.
-- **Sheen — PASS:** white sheen produced Weight `1.000`; saturated red sheen
-  produced Weight `0.213` with red tint; green sheen `(0, 0.297, 0)` produced
-  Weight `0.212` with green tint.
-- **Live Max casing — PASS:** a live V-Ray material was inspected through
-  MaxScript/Python `pymxs`; `#reflection_glossiness`,
-  `#refraction_glossiness`, `#brdf_useRoughness`, and `#selfIllumination` were
-  present and readable.
-
-### Current verification status
-
-- Blender importer version: **0.1.5**.
-- PR #2 is still **open and not merged**.
-- The feature implementation and requested real-host validation are complete.
-- Remaining pre-merge gate: perform one clean Blender 5.2 re-import with the
-  current build and confirm the expected limitations appear as grouped notes,
-  real problems remain warnings, and no warning-count regression is introduced.
-  Then confirm the repository CI/checks before merge.
+The requested real-host validation for the new VRayMtl parameter handling is complete.
 
 ## Blender Importer 0.1.4 — 2026-08-26
 
@@ -161,9 +181,8 @@ complete:
   the Ring-Light package and reconstructed 26 materials.
 - That pass exposed one undeclared `Untitled` FBX object; the 0.1.4 correction
   removed the object and its large cube during the Blender 5.2 retest.
-- Ring-Light completed with 26 objects, 26 native materials, no warnings or
-  errors, visible packaged textures, and intact hierarchy/world-origin
-  placement.
+- Ring-Light completed with 26 objects, 26 materials, no warnings or errors,
+  visible packaged textures, and intact hierarchy/world-origin placement.
 - All 99 automated project tests pass.
 
 ## Blender Importer 0.1.3 — 2026-08-26
@@ -201,7 +220,7 @@ complete:
 - Creates one copied `<name>_MERGED` material for an approved set and resolves
   its faces to one output material mesh.
 - Keeps same-name materials with different classes, values, or nested maps
-  separate. Refusing a merge also preserves the original identities.
+  separate. Refusing a merge also preserves the original material identities.
 
 ### Verified
 
@@ -229,7 +248,8 @@ complete:
 
 - Ring-light host pass: 74 input meshes became 31 material meshes before
   duplicate-material merging was added.
-- 141 Shape/segment objects were detected and deleted while retaining the root.
+- 141 imported Shape/segment objects were detected and deleted while retaining
+  the root.
 
 ## Max Exporter 0.1.0-alpha.4.0 — 2026-08-25
 

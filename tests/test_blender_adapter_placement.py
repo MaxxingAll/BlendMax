@@ -79,17 +79,6 @@ class FakeImportedObject:
         self.properties[key] = value
 
 
-class FakeRemoveCollection:
-    def __init__(self, clear_users=False):
-        self.clear_users = clear_users
-        self.removed = []
-
-    def remove(self, item, **_kwargs):
-        self.removed.append(item)
-        if self.clear_users and getattr(item, "data", None) is not None:
-            item.data.users = 0
-
-
 def load_adapter():
     fake_bpy = ModuleType("bpy")
     fake_mathutils = ModuleType("mathutils")
@@ -218,11 +207,91 @@ class BlenderAdapterPlacementTests(unittest.TestCase):
         self.assertEqual(extras, (undeclared,))
         self.assertEqual(matched.name, "Declared mesh")
 
+    def test_group_head_adopts_imported_empty_node(self):
+        imported_group = FakeImportedObject("BM_group", object_type="EMPTY")
+        record = ObjectRecord(
+            object_id="group_1",
+            fbx_name="BM_group",
+            original_name="Imported Group",
+            node_type="Dummy",
+            superclass="helper",
+            is_group_head=True,
+        )
+        generated = set()
+
+        mapped, extras = self.adapter.BlenderAdapter._map_objects(
+            (imported_group,),
+            (record,),
+            None,
+            [],
+            generated,
+        )
+
+        self.assertIs(mapped["group_1"], imported_group)
+        self.assertEqual(extras, ())
+        self.assertEqual(generated, set())
+        self.assertEqual(imported_group.name, "Imported Group")
+        self.assertEqual(imported_group.properties["blendmax_object_id"], "group_1")
+
+    def test_group_head_does_not_adopt_mesh_with_matching_name(self):
+        imported_mesh = FakeImportedObject("BM_group", object_type="MESH")
+        collection = SimpleNamespace(objects=SimpleNamespace(link=lambda _obj: None))
+        generated = set()
+        warnings = []
+        created = []
+
+        def new_object(name, data):
+            created_object = FakeImportedObject(name, object_type="EMPTY", data=data)
+            created.append(created_object)
+            return created_object
+
+        previous_data = getattr(self.adapter.bpy, "data", None)
+        self.adapter.bpy.data = SimpleNamespace(objects=SimpleNamespace(new=new_object))
+        try:
+            record = ObjectRecord(
+                object_id="group_1",
+                fbx_name="BM_group",
+                original_name="Imported Group",
+                node_type="Dummy",
+                superclass="helper",
+                is_group_head=True,
+            )
+            mapped, extras = self.adapter.BlenderAdapter._map_objects(
+                (imported_mesh,),
+                (record,),
+                collection,
+                warnings,
+                generated,
+            )
+        finally:
+            if previous_data is None:
+                del self.adapter.bpy.data
+            else:
+                self.adapter.bpy.data = previous_data
+
+        self.assertEqual(extras, (imported_mesh,))
+        self.assertEqual(warnings, [])
+        self.assertEqual(generated, {"group_1"})
+        self.assertEqual(len(created), 1)
+        self.assertIs(mapped["group_1"], created[0])
+        self.assertEqual(created[0].name, "Imported Group")
+        self.assertEqual(created[0].properties["blendmax_object_id"], "group_1")
+
     def test_undeclared_fbx_mesh_and_orphan_data_are_removed(self):
         mesh = SimpleNamespace(users=1)
         undeclared = FakeImportedObject("Untitled", data=mesh)
-        objects = FakeRemoveCollection(clear_users=True)
-        meshes = FakeRemoveCollection()
+        objects = SimpleNamespace(removed=[])
+        meshes = SimpleNamespace(removed=[])
+
+        def remove_object(item, **_kwargs):
+            objects.removed.append(item)
+            item.data.users = 0
+
+        def remove_mesh(item):
+            meshes.removed.append(item)
+
+        objects.remove = remove_object
+        meshes.remove = remove_mesh
         previous_data = getattr(self.adapter.bpy, "data", None)
         self.adapter.bpy.data = SimpleNamespace(objects=objects, meshes=meshes)
         try:

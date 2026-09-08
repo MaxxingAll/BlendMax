@@ -1,4 +1,4 @@
-# BlendMax Blender Importer 0.1.5 Test Matrix
+# BlendMax Blender Importer 0.1.8 Test Matrix
 
 ## Scope
 
@@ -6,28 +6,67 @@ Primary tested target: Blender 5.2. Minimum declared version: Blender 4.2.0. No
 maximum Blender version is declared; API variation is contained in the Blender
 adapter through operator, socket, and property feature detection.
 
-The importer has no timer, background service, persistent handler, or external
-Python dependency. Each import performs one archive scan, selective extraction,
-one FBX operator call, and indexed O(n) manifest/graph processing.
+The importer does not run a background service, persistent handler, or polling
+loop. The 0.1.8 developer workflow adds one-shot use of `bpy.app.timers` only to
+defer the **Reload BlendMax** operation until the current Preferences operator
+has returned.
+
+Reload operates on the currently installed extension copy. It does not watch
+the repository working tree or continuously execute in the background.
 
 ## Automated status
 
-The current automated suite contains **133 tests** under ordinary Python.
-GitHub Actions runs the suite on Python 3.11, 3.12, and 3.13. The suite covers
-Blender packaging/manifest behavior, importer translation, V-Ray parameter and
-map contracts, diagnostics grouping, Max cleanup/export validation, and the
-existing installer/update paths.
+GitHub Actions runs the ordinary Python test suite on Python 3.11, 3.12, and
+3.13. The suite covers Blender packaging/manifest behavior, importer
+translation, V-Ray parameter and map contracts, diagnostics grouping, Max
+cleanup/export validation, installer / update paths, and restart/hot-reload
+state handling. The exact suite count is intentionally taken from the latest
+CI run rather than maintained as a static number here.
 
 The headless V-Ray fixtures are deliberately simulated manifests, not claims
 that a running V-Ray host produced those exact values. They provide a fast
 regression layer for the importer pipeline; real Max/V-Ray A/B tests remain the
 ground truth for renderer-specific host behavior.
 
+## Hot-reload manual verification
+
+### A. Legacy add-on layout — PENDING HOST TEST
+
+1. Install BlendMax using the legacy add-on layout.
+2. Open **Edit > Preferences > Add-ons** and enable BlendMax.
+3. Confirm the **Reload BlendMax** button is visible in BlendMax Preferences.
+4. Make a controlled change in the installed copy, such as a diagnostic string.
+5. Click **Reload BlendMax** once and confirm the add-on remains enabled.
+6. Confirm the changed code is active without restarting Blender and that the
+   first successful reload consumes the restart notice.
+7. Click the button twice rapidly and confirm only one reload is scheduled.
+8. Force an import-time error in the installed copy, click Reload, and confirm
+   the System Console receives a traceback and the restart notice becomes visible.
+
+### B. Blender extension ZIP layout — PENDING HOST TEST
+
+1. Build `blendmax_importer-0.1.8.zip` and install it through **Install from Disk**.
+2. Confirm Blender registers the extension under its `bl_ext.*` package namespace.
+3. Open **Edit > Preferences > Extensions > BlendMax Importer** and confirm
+   **Reload BlendMax** is available.
+4. Make a controlled change in the installed extension copy.
+5. Click **Reload BlendMax** and confirm the extension remains enabled and the
+   changed code is active without restarting Blender. The first successful
+   reload must also remove the restart notice; a second reload must not be
+   required merely to consume the notice.
+6. Repeat the rapid double-click and import-error checks from the legacy layout.
+7. Install a newer BlendMax version into the same Blender process and confirm
+   its normal restart notice can appear again before the reload is requested.
+
+Record the exact Blender version, installation layout, build ZIP, and result
+here after host validation. The automated suite cannot verify these operator and
+extension-loader behaviors because it does not import `bpy`.
+
 ## Verified Blender 5.2 manual passes
 
 ### A. Basketball
 
-1. Install `blendmax_importer-0.1.5.zip` from disk.
+1. Install the importer ZIP from disk.
 2. Import `Basketbalv2l.blendmax`.
 3. Confirm one mesh appears in its own collection under a `[BlendMax]`
    controller.
@@ -43,9 +82,10 @@ ground truth for renderer-specific host behavior.
 1. Import `4pottedplants.blendmax` into a clean scene.
 2. Confirm 12 meshes, the recorded nested group hierarchy, and one asset
    controller are present.
-3. Confirm the controller sits at world origin, the plant footprint is centered
-   around X/Y=0, its base rests at Z=0, and nested group pivots stay near their
-   own geometry.
+3. Confirm the controller is centered on the asset's world-space bounds center
+   and its CUBE display exactly encompasses the imported mesh bounds, the
+   plant footprint is centered around X/Y=0, its base rests at Z=0, and
+   nested group pivots stay near their own geometry.
 4. Confirm the Multi/Sub material retains six leaf/branch slots on its assigned
    meshes.
 5. Confirm each leaf `VRay2SidedMtl` becomes a Backfacing-driven front/back
@@ -55,8 +95,7 @@ ground truth for renderer-specific host behavior.
 
 ### C. Ring-Light Physical Materials
 
-1. Install `blendmax_importer-0.1.5.zip` and import `RingLight.blendmax` into a
-   clean scene.
+1. Install the importer ZIP and import `RingLight.blendmax` into a clean scene.
 2. Confirm the completion message reports 26 objects and 26 materials without
    the previous 27 unsupported-PhysicalMaterial warnings.
 3. Confirm none of the materials use the magenta fallback shader.
@@ -104,23 +143,12 @@ Live `getPropNames` confirmed these actual keys and readable values:
 - `#brdf_useRoughness`
 - `#selfIllumination`
 
-## Final runtime gate — PASS
-
-A clean Blender 5.2 re-import of the previously noisy test asset was completed
-against the current `0.1.5` build. Actual operator/console output confirmed:
-
-1. **one genuine warning** for missing packaged image `tex_2140`;
-2. **one grouped note** for known unsupported V-Ray fields;
-3. **one grouped note** for divergent reflection/refraction glossiness across
-   three materials; and
-4. **no per-field** `BlendMax warning: VRayMtl parameter ...` spam.
-
-The FBX import completed successfully. This runtime acceptance check complements
-the ordinary-Python suite.
-
 ## Pass criteria
 
 - Import completes without a Python traceback.
+- Reload completes without disabling the extension when the installed code is valid.
+- Reload never remains queued twice from rapid repeated clicks.
+- A successful first reload consumes the pending restart notice; no second reload is required just to clear it.
 - Relative object transforms, hierarchy, UVs, normals, tangents, and material
   indices visually match the FBX/export manifest after world-origin placement.
 - No unpacked image points at the importer's temporary directory.
@@ -129,21 +157,3 @@ the ordinary-Python suite.
 - Warnings identify real problems; expected unsupported/approximate V-Ray
   behavior is grouped into informational notes.
 - Undo removes the imported asset as one operator action.
-
-## Known Alpha.1 limits
-
-- `VRayBlendMtl` and other advanced compound materials use a fallback.
-- `VRay2SidedMtl` is represented as front/back surface selection; V-Ray's full
-  light-translucency model is not yet reproduced.
-- Normal-map red/green flip and channel-swap flags are reported but not yet
-  applied.
-- Bitmap crop/place controls and advanced V-Ray bitmap color transforms are
-  not yet reproduced.
-- V-Ray thin-film thickness uses the minimum only; a connected thickness-blend
-  map is not yet interpreted, so the maximum is ignored (its value remains in
-  the stored manifest).
-- Blender's single Principled roughness approximates V-Ray's separate
-  reflection/refraction roughness; divergent values are grouped as an
-  informational note rather than reproduced exactly.
-- Advanced rendering parity beyond the verified Basketball and four-potted-
-  plants baselines remains ongoing.

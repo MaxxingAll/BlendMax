@@ -21,7 +21,7 @@ created automatically by Python.
 | Component | Version | Status |
 | --- | --- | --- |
 | 3ds Max exporter and cleanup | `0.1.0-alpha.4.3.0` | Host verified in 3ds Max 2025.3 |
-| Blender importer | `0.1.7` | Structured import summary after successful import |
+| Blender importer | `0.1.8` | Structured import summary and in-process hot reload |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
 | Automated suite | See CI | Python 3.11–3.13 |
 
@@ -132,7 +132,7 @@ an updated exporter or cleanup action cannot continue running stale code.
 
 ## Install the Blender importer
 
-Build or download `blendmax_importer-0.1.7.zip`, then in Blender:
+Build or download `blendmax_importer-0.1.8.zip`, then in Blender:
 
 1. Open **Edit > Preferences > Get Extensions**.
 2. Open the menu in the top-right and choose **Install from Disk**.
@@ -140,7 +140,11 @@ Build or download `blendmax_importer-0.1.7.zip`, then in Blender:
 4. Use **File > Import > BlendMax Asset (.blendmax)**.
 
 Installing a newer version of the same extension ZIP updates the isolated
-extension. There are no background services, handlers, or polling loops.
+extension. The **Reload BlendMax** control in Add-on Preferences performs a
+single deferred in-process reload of the currently installed extension copy;
+it does not watch the source tree or run continuously. Editing the repository
+working tree therefore requires updating the installed extension copy (or
+pointing Blender at that working copy) before using Reload BlendMax.
 
 To build the ZIP from source:
 
@@ -160,7 +164,18 @@ It currently:
 - restores original object names and manifest parent relationships;
 - removes FBX-created objects that have no manifest record, including synthetic
   scene-root geometry/helpers;
-- places the asset in its own collection under one `[BlendMax]` controller;
+- places the asset in its own collection under one transform-safe `[BlendMax]`
+  controller. When the manifest has exactly one parentless imported group head,
+  that Empty is promoted; otherwise a synthetic controller is created. The
+  controller is positioned at the asset bounds centre with identity rotation
+  and stores provenance/original-transform metadata
+  (`blendmax_controller`, `blendmax_controller_source`, `blendmax_original_*`);
+- shows the controller itself as a selectable CUBE Empty scaled to the exact
+  imported asset bounds, so the object users select and manipulate is also the
+  object that visualizes the bounds. The bounds scale is display state applied
+  after hierarchy reconstruction (imported world transforms are restored), and
+  recommended scale remains a real uniform controller scale applied on top of
+  it;
 - directly centers imported FBX geometry at world origin, grounds its lowest
   point at Z=0, and keeps reconstructed group pivots close to their own meshes;
 - preserves FBX polygon material indices and reconstructs Multi/Sub slots;

@@ -139,6 +139,11 @@ def _mesh_world_bounds(obj):
     )
 
 
+def _is_adoptable_group_node(obj) -> bool:
+    """Return True when an imported node can safely stand in for a Max group head."""
+    return getattr(obj, "type", None) == "EMPTY"
+
+
 class BlenderAdapter:
     def __init__(self, context):
         self.context = context
@@ -217,14 +222,14 @@ class BlenderAdapter:
             manifest.objects,
             generated_group_heads,
         )
-        self._restore_hierarchy(mapped, manifest.objects, warnings)
-        self.context.view_layer.update()
         controller = self._create_controller(
             collection,
             package,
             mapped,
             apply_recommended_scale,
             manifest_text.name,
+            warnings,
+            generated_group_heads,
         )
 
         for obj in mapped.values():
@@ -270,11 +275,20 @@ class BlenderAdapter:
         mapped: Dict[str, object] = {}
         for record in records:
             match = next(
-                (obj for obj in available if _name_matches(obj.name, record.fbx_name)),
+                (
+                    obj
+                    for obj in available
+                    if _name_matches(obj.name, record.fbx_name)
+                    and (not record.is_group_head or _is_adoptable_group_node(obj))
+                ),
                 None,
             )
             if match is not None:
                 available.remove(match)
+                if record.is_group_head:
+                    # Group-head helpers are visualized as plain axes until the
+                    # final asset controller/bounds display is configured.
+                    match.empty_display_type = "PLAIN_AXES"
             elif record.is_group_head:
                 match = bpy.data.objects.new(record.fbx_name, None)
                 match.empty_display_type = "PLAIN_AXES"
@@ -390,10 +404,39 @@ class BlenderAdapter:
         mapped: Dict[str, object],
         apply_recommended_scale: bool,
         manifest_text_name: str,
+        warnings: List[str],
+        generated_group_heads: Optional[Set[str]] = None,
     ):
         manifest = package.manifest
-        controller = bpy.data.objects.new("{0} [BlendMax]".format(manifest.asset_name), None)
-        controller.empty_display_type = "CUBE"
+        records_by_id = {item.object_id: item for item in manifest.objects}
+
+        # A Max asset root/group head imported from FBX is already the correct
+        # controller node. Promote it only when the manifest has one unparented
+        # group head; multiple roots must not be arbitrarily collapsed.
+        parentless_group_heads = [
+            obj
+            for object_id, obj in mapped.items()
+            if obj.type == "EMPTY"
+            and records_by_id[object_id].is_group_head
+            and not records_by_id[object_id].parent_id
+            and object_id not in (generated_group_heads or ())
+        ]
+        controller = parentless_group_heads[0] if len(parentless_group_heads) == 1 else None
+        promoted = controller is not None
+        original_name = controller.name if promoted else None
+        original_rotation = tuple(controller.rotation_euler) if promoted else None
+        original_scale = tuple(controller.scale) if promoted else None
+
+        if controller is None:
+            controller = bpy.data.objects.new("{0} [BlendMax]".format(manifest.asset_name), None)
+            collection.objects.link(controller)
+
+        # Bounds are computed before hierarchy restoration intentionally.
+        # `_set_parent_preserve_world()` preserves mesh world transforms, so
+        # these bounds are parenting-invariant; a future restore path that
+        # does not preserve world matrices would silently mis-size the
+        # controller. The controller is also positioned from the imported mesh
+        # bounds before preserve-world parenting is rebuilt.
         actual_bounds = []
         for obj in mapped.values():
             bounds = _mesh_world_bounds(obj)
@@ -406,41 +449,99 @@ class BlenderAdapter:
         dimensions = tuple(
             upper - lower for lower, upper in zip(minimum, maximum)
         )
-        controller.empty_display_size = max(0.01, max(dimensions) * 0.08)
-        controller.location = (0.0, 0.0, 0.0)
+        center = tuple(
+            (lower + upper) * 0.5 for lower, upper in zip(minimum, maximum)
+        )
+
+        # A promoted FBX Empty can already own imported children. Detach them
+        # while preserving their world transforms before normalizing the
+        # controller. This avoids applying non-uniform controller scale to a
+        # rotated child, which can introduce shear.
+        for child in tuple(controller.children):
+            _set_parent_preserve_world(child, None)
+
+        # The controller itself is the visible bounds display. Keep its initial
+        # transform normalized while the hierarchy is rebuilt, then apply the
+        # bounds scale with explicit world-matrix restoration below.
+        controller.empty_display_type = "CUBE"
+        controller.empty_display_size = 0.5
+        controller.location = center
+        controller.rotation_mode = "XYZ"
+        controller.rotation_euler = (0.0, 0.0, 0.0)
+        controller.scale = (1.0, 1.0, 1.0)
+
+        # Blender defers dependency-graph evaluation after transform writes.
+        # Flush before any preserve-world parenting reads parent.matrix_world.
+        bpy.context.view_layer.update()
+
+        controller.name = "{0} [BlendMax]".format(manifest.asset_name)
         controller["blendmax_asset"] = True
+        controller["blendmax_controller"] = True
+        controller["blendmax_controller_source"] = (
+            "imported_group_head" if promoted else "synthetic"
+        )
         controller["blendmax_schema_version"] = manifest.schema_version
         controller["blendmax_source_package"] = str(package.source_path)
         controller["blendmax_manifest_text"] = manifest_text_name
         controller["blendmax_recommended_scale"] = manifest.recommended_scale
-        collection.objects.link(controller)
+        if promoted:
+            controller["blendmax_original_name"] = original_name
+            controller["blendmax_original_rotation_euler"] = original_rotation
+            controller["blendmax_original_scale"] = original_scale
+
+        # Rebuild the manifest hierarchy after detaching the promoted
+        # controller's existing FBX children.
+        BlenderAdapter._restore_hierarchy(mapped, manifest.objects, warnings)
+        # The hierarchy restore updates parent transforms; flush the dependency
+        # graph before preserve-world parenting the remaining roots.
+        bpy.context.view_layer.update()
 
         roots = []
-        records_by_id = {item.object_id: item for item in manifest.objects}
         for object_id, obj in mapped.items():
+            if obj is controller:
+                continue
             record = records_by_id[object_id]
             if not record.parent_id or record.parent_id not in mapped:
                 roots.append(obj)
         for root in roots:
             _set_parent_preserve_world(root, controller)
         for obj in tuple(collection.objects):
-            if obj != controller and obj.parent is None:
+            if obj is not controller and obj.parent is None:
                 _set_parent_preserve_world(obj, controller)
+
+        # The controller's CUBE display uses its XYZ scale for the exact asset
+        # bounds. Apply that scale only after hierarchy reconstruction, then
+        # restore every mapped object's previous world matrix so the bounds
+        # scale is visual/controller state rather than an import-time geometry
+        # transform. Recommended scale is intentionally applied afterward so it
+        # remains a real controller scale operation.
+        preserved_worlds = {
+            obj: obj.matrix_world.copy()
+            for obj in mapped.values()
+            if obj is not controller
+        }
+        controller.scale = tuple(
+            max(abs(value), 1e-6) for value in dimensions
+        )
+        bpy.context.view_layer.update()
+        for obj, world in preserved_worlds.items():
+            obj.matrix_world = world
+        bpy.context.view_layer.update()
 
         if apply_recommended_scale and manifest.recommended_scale != 1.0:
             scale = manifest.recommended_scale
-            controller.scale = (scale, scale, scale)
+            controller.scale = tuple(value * scale for value in controller.scale)
         return controller
 
     @staticmethod
     def _discard_fbx_material_data(fbx_materials, fbx_images, builder) -> None:
         built_materials = set(builder.created_materials)
         built_images = set(builder.created_images)
-        for material in tuple(fbx_materials):
-            if material not in built_materials and material.users == 0:
+        for material in tuple(fbx_materials - built_materials):
+            if material.users == 0:
                 bpy.data.materials.remove(material)
-        for image in tuple(fbx_images):
-            if image not in built_images and image.users == 0:
+        for image in tuple(fbx_images - built_images):
+            if image.users == 0:
                 bpy.data.images.remove(image)
 
     @staticmethod
@@ -448,7 +549,6 @@ class BlenderAdapter:
         for obj in bpy.context.selected_objects:
             obj.select_set(False)
         for obj in imported:
-            if obj.name in bpy.data.objects:
-                obj.select_set(True)
+            obj.select_set(True)
         controller.select_set(True)
         bpy.context.view_layer.objects.active = controller
