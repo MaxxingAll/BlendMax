@@ -428,11 +428,9 @@ class BlenderAdapter:
             controller = bpy.data.objects.new("{0} [BlendMax]".format(manifest.asset_name), None)
             collection.objects.link(controller)
 
-        # Bounds are computed before hierarchy restoration intentionally.
-        # `_set_parent_preserve_world()` preserves mesh world transforms, so
-        # these bounds are parenting-invariant; a future restore path that
-        # does not preserve world matrices would silently mis-size the
-        # controller.
+        # Bounds are computed before hierarchy restoration intentionally;
+        # the controller must be positioned from the imported mesh bounds
+        # before preserve-world hierarchy parenting is rebuilt.
         actual_bounds = []
         for obj in mapped.values():
             bounds = _mesh_world_bounds(obj)
