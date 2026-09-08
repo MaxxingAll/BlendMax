@@ -12,13 +12,12 @@ import bpy
 from bpy.props import BoolProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 
-from . import __version__
 from .errors import BlendMaxImportError
 from .importer import import_blendmax
 from .models import ImportSummary
 from .restart_notice import (
-    mark_hot_reload_complete,
     mark_hot_reload_failed,
+    mark_hot_reload_pending,
     restart_notice_required,
 )
 
@@ -59,8 +58,8 @@ def _hot_reload() -> None:
     global _RELOAD_PENDING
     module_name = __package__
     try:
+        mark_hot_reload_pending(bpy)
         bpy.ops.preferences.addon_disable(module=module_name)
-        mark_hot_reload_complete(bpy, __version__)
 
         for name in list(sys.modules):
             if name == module_name or name.startswith(module_name + "."):
