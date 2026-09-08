@@ -285,6 +285,11 @@ class BlenderAdapter:
             )
             if match is not None:
                 available.remove(match)
+                if record.is_group_head:
+                    # Imported FBX helpers may arrive with Blender's own Empty
+                    # display mode. Normalize adopted group heads so their
+                    # viewport appearance matches the synthetic fallback.
+                    match.empty_display_type = "PLAIN_AXES"
             elif record.is_group_head:
                 match = bpy.data.objects.new(record.fbx_name, None)
                 match.empty_display_type = "PLAIN_AXES"
@@ -402,7 +407,26 @@ class BlenderAdapter:
         manifest_text_name: str,
     ):
         manifest = package.manifest
-        controller = bpy.data.objects.new("{0} [BlendMax]".format(manifest.asset_name), None)
+        records_by_id = {item.object_id: item for item in manifest.objects}
+
+        # A Max asset root/group head imported from FBX is already the correct
+        # controller node. Promote it instead of creating a redundant Empty.
+        controller = next(
+            (
+                obj
+                for object_id, obj in mapped.items()
+                if obj.type == "EMPTY"
+                and records_by_id[object_id].is_group_head
+                and not records_by_id[object_id].parent_id
+            ),
+            None,
+        )
+
+        if controller is None:
+            controller = bpy.data.objects.new("{0} [BlendMax]".format(manifest.asset_name), None)
+            controller.location = (0.0, 0.0, 0.0)
+            collection.objects.link(controller)
+
         controller.empty_display_type = "CUBE"
         actual_bounds = []
         for obj in mapped.values():
@@ -417,17 +441,17 @@ class BlenderAdapter:
             upper - lower for lower, upper in zip(minimum, maximum)
         )
         controller.empty_display_size = max(0.01, max(dimensions) * 0.08)
-        controller.location = (0.0, 0.0, 0.0)
+        controller.name = "{0} [BlendMax]".format(manifest.asset_name)
         controller["blendmax_asset"] = True
         controller["blendmax_schema_version"] = manifest.schema_version
         controller["blendmax_source_package"] = str(package.source_path)
         controller["blendmax_manifest_text"] = manifest_text_name
         controller["blendmax_recommended_scale"] = manifest.recommended_scale
-        collection.objects.link(controller)
 
         roots = []
-        records_by_id = {item.object_id: item for item in manifest.objects}
         for object_id, obj in mapped.items():
+            if obj == controller:
+                continue
             record = records_by_id[object_id]
             if not record.parent_id or record.parent_id not in mapped:
                 roots.append(obj)
