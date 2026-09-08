@@ -38,6 +38,9 @@ class FakeMatrix:
     def copy(self):
         return FakeMatrix(self.translation)
 
+    def __matmul__(self, point):
+        return self.translation + point
+
 
 class FakeMeshObject:
     type = "MESH"
@@ -80,6 +83,8 @@ class FakeEmptyObject:
         self.rotation_mode = "XYZ"
         self.empty_display_type = "PLAIN_AXES"
         self.empty_display_size = 1.0
+        self.hide_select = False
+        self.hide_render = False
         self.properties = {}
 
     @property
@@ -119,6 +124,10 @@ class FakeBpyData:
 def load_adapter():
     fake_bpy = ModuleType("bpy")
     fake_bpy.data = FakeBpyData()
+    fake_bpy.context = SimpleNamespace(
+        view_layer=SimpleNamespace(update=lambda: None),
+        selected_objects=(),
+    )
     fake_mathutils = ModuleType("mathutils")
     fake_mathutils.Vector = FakeVector
     fake_materials = ModuleType("blendmax_blender.blender_materials")
@@ -197,6 +206,7 @@ class BlenderControllerBoundsTests(unittest.TestCase):
         controller.children.append(mesh)
         collection = SimpleNamespace(objects=FakeObjectCollection((controller, mesh)))
         package = self._package()
+        warnings = []
 
         result = self.adapter.BlenderAdapter._create_controller(
             collection,
@@ -204,6 +214,7 @@ class BlenderControllerBoundsTests(unittest.TestCase):
             {"group_1": controller, "mesh_1": mesh},
             False,
             "Test Asset - BlendMax manifest.json",
+            warnings,
         )
 
         self.assertIs(result, controller)
@@ -222,6 +233,8 @@ class BlenderControllerBoundsTests(unittest.TestCase):
         self.assertEqual(bounds_display.empty_display_size, 0.5)
         self.assertEqual(tuple(bounds_display.location), (0.0, 0.0, 0.0))
         self.assertEqual(tuple(bounds_display.scale), (2.0, 4.0, 6.0))
+        self.assertTrue(bounds_display.hide_select)
+        self.assertTrue(bounds_display.hide_render)
         self.assertIs(bounds_display.parent, controller)
 
     def test_recommended_scale_remains_a_uniform_controller_transform(self):
@@ -240,6 +253,7 @@ class BlenderControllerBoundsTests(unittest.TestCase):
             {"group_1": controller, "mesh_1": mesh},
             True,
             "Test Asset - BlendMax manifest.json",
+            [],
         )
 
         self.assertEqual(tuple(controller.scale), (1.5, 1.5, 1.5))
@@ -265,6 +279,7 @@ class BlenderControllerBoundsTests(unittest.TestCase):
             {"group_1": controller, "mesh_1": mesh},
             False,
             "Test Asset - BlendMax manifest.json",
+            [],
         )
 
         bounds_display = [obj for obj in collection.objects if obj is not controller and obj is not mesh][0]
