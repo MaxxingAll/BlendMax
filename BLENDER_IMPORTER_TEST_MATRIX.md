@@ -16,11 +16,12 @@ the repository working tree or continuously execute in the background.
 
 ## Automated status
 
-The current automated suite contains **139 tests** under ordinary Python.
-GitHub Actions runs the suite on Python 3.11, 3.12, and 3.13. The suite covers
-Blender packaging/manifest behavior, importer translation, V-Ray parameter and
-map contracts, diagnostics grouping, Max cleanup/export validation, installer /
-update paths, and restart/hot-reload state handling.
+GitHub Actions runs the ordinary Python test suite on Python 3.11, 3.12, and
+3.13. The suite covers Blender packaging/manifest behavior, importer
+translation, V-Ray parameter and map contracts, diagnostics grouping, Max
+cleanup/export validation, installer / update paths, and restart/hot-reload
+state handling. The exact suite count is intentionally taken from the latest
+CI run rather than maintained as a static number here.
 
 The headless V-Ray fixtures are deliberately simulated manifests, not claims
 that a running V-Ray host produced those exact values. They provide a fast
@@ -36,7 +37,8 @@ ground truth for renderer-specific host behavior.
 3. Confirm the **Reload BlendMax** button is visible in BlendMax Preferences.
 4. Make a controlled change in the installed copy, such as a diagnostic string.
 5. Click **Reload BlendMax** once and confirm the add-on remains enabled.
-6. Confirm the changed code is active without restarting Blender.
+6. Confirm the changed code is active without restarting Blender and that the
+   first successful reload consumes the restart notice.
 7. Click the button twice rapidly and confirm only one reload is scheduled.
 8. Force an import-time error in the installed copy, click Reload, and confirm
    the System Console receives a traceback and the restart notice becomes visible.
@@ -49,10 +51,12 @@ ground truth for renderer-specific host behavior.
    **Reload BlendMax** is available.
 4. Make a controlled change in the installed extension copy.
 5. Click **Reload BlendMax** and confirm the extension remains enabled and the
-   changed code is active without restarting Blender.
+   changed code is active without restarting Blender. The first successful
+   reload must also remove the restart notice; a second reload must not be
+   required merely to consume the notice.
 6. Repeat the rapid double-click and import-error checks from the legacy layout.
 7. Install a newer BlendMax version into the same Blender process and confirm
-   the restart notice is not permanently suppressed by an earlier hot reload.
+   its normal restart notice can appear again before the reload is requested.
 
 Record the exact Blender version, installation layout, build ZIP, and result
 here after host validation. The automated suite cannot verify these operator and
@@ -143,6 +147,7 @@ Live `getPropNames` confirmed these actual keys and readable values:
 - Import completes without a Python traceback.
 - Reload completes without disabling the extension when the installed code is valid.
 - Reload never remains queued twice from rapid repeated clicks.
+- A successful first reload consumes the pending restart notice; no second reload is required just to clear it.
 - Relative object transforms, hierarchy, UVs, normals, tangents, and material
   indices visually match the FBX/export manifest after world-origin placement.
 - No unpacked image points at the importer's temporary directory.
