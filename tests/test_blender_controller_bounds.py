@@ -185,12 +185,12 @@ class BlenderControllerBoundsTests(unittest.TestCase):
 
     def test_promoted_controller_stays_transform_safe_and_uses_bounds_child(self):
         controller = FakeEmptyObject("Imported Group")
-        controller.location = FakeVector((99.0, 88.0, 77.0))
+        controller.location = FakeVector((5.0, 6.0, 7.0))
         controller.scale = FakeVector((2.0, 3.0, 4.0))
         controller.rotation_euler = FakeVector((0.1, 0.2, 0.3))
 
         mesh = FakeMeshObject(
-            (10.0, 20.0, 30.0),
+            (5.0, 14.0, 23.0),
             ((0.0, 0.0, 0.0), (2.0, 4.0, 6.0)),
             parent=controller,
         )
