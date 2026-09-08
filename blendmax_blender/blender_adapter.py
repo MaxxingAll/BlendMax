@@ -440,7 +440,10 @@ class BlenderAdapter:
         dimensions = tuple(
             upper - lower for lower, upper in zip(minimum, maximum)
         )
-        controller.empty_display_size = max(0.01, max(dimensions) * 0.08)
+        # Blender's Empty-CUBE display is a uniform cube. Use the largest asset
+        # extent so the controller visibly encloses the complete imported asset
+        # instead of appearing as a tiny local helper.
+        controller.empty_display_size = max(0.01, max(dimensions))
         controller.name = "{0} [BlendMax]".format(manifest.asset_name)
         controller["blendmax_asset"] = True
         controller["blendmax_schema_version"] = manifest.schema_version
@@ -470,19 +473,17 @@ class BlenderAdapter:
     def _discard_fbx_material_data(fbx_materials, fbx_images, builder) -> None:
         built_materials = set(builder.created_materials)
         built_images = set(builder.created_images)
-        for material in tuple(fbx_materials):
-            if material not in built_materials and material.users == 0:
+        for material in tuple(fbx_materials - built_materials):
+            if material.users == 0:
                 bpy.data.materials.remove(material)
-        for image in tuple(fbx_images):
-            if image not in built_images and image.users == 0:
+        for image in tuple(fbx_images - built_images):
+            if image.users == 0:
                 bpy.data.images.remove(image)
 
     @staticmethod
     def _select_result(imported: Iterable[object], controller) -> None:
-        for obj in bpy.context.selected_objects:
-            obj.select_set(False)
+        bpy.ops.object.select_all(action="DESELECT")
         for obj in imported:
-            if obj.name in bpy.data.objects:
-                obj.select_set(True)
+            obj.select_set(True)
         controller.select_set(True)
         bpy.context.view_layer.objects.active = controller
