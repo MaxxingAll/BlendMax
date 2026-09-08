@@ -55,6 +55,38 @@ class RestartNoticeTests(unittest.TestCase):
             state = Path(directory) / "blendmax_restart_notice.json"
             self.assertFalse(state.exists())
 
+    def test_hot_reload_suppresses_notice_on_first_successful_registration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bpy = FakeBpy(directory)
+            with patch.object(restart_notice.os, "getpid", return_value=101):
+                self.assertTrue(restart_notice.restart_notice_required(bpy))
+                restart_notice.mark_hot_reload_pending(bpy)
+
+                state = Path(directory) / "blendmax_restart_notice.json"
+                self.assertEqual(
+                    restart_notice._read_state(state),
+                    {
+                        "pending_pid": 101,
+                        "hot_reload_pending_pid": 101,
+                    },
+                )
+
+                self.assertFalse(restart_notice.restart_notice_required(bpy))
+                self.assertFalse(state.exists())
+                self.assertTrue(restart_notice.restart_notice_required(bpy))
+
+    def test_failed_hot_reload_restores_pending_notice(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bpy = FakeBpy(directory)
+            with patch.object(restart_notice.os, "getpid", return_value=101):
+                self.assertTrue(restart_notice.restart_notice_required(bpy))
+                restart_notice.mark_hot_reload_pending(bpy)
+                restart_notice.mark_hot_reload_failed(bpy)
+                self.assertTrue(restart_notice.restart_notice_required(bpy))
+
+            state = Path(directory) / "blendmax_restart_notice.json"
+            self.assertEqual(restart_notice._read_state(state), {"pending_pid": 101})
+
 
 if __name__ == "__main__":
     unittest.main()
