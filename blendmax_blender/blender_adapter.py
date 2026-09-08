@@ -460,10 +460,11 @@ class BlenderAdapter:
         for child in tuple(controller.children):
             _set_parent_preserve_world(child, None)
 
-        # The actual controller stays transform-safe: its import-time scale is
-        # identity, while a separate Empty provides the exact bounds display.
-        controller.empty_display_type = "PLAIN_AXES"
-        controller.empty_display_size = 1.0
+        # The controller itself is the visible bounds display. Keep its initial
+        # transform normalized while the hierarchy is rebuilt, then apply the
+        # bounds scale with explicit world-matrix restoration below.
+        controller.empty_display_type = "CUBE"
+        controller.empty_display_size = 0.5
         controller.location = center
         controller.rotation_mode = "XYZ"
         controller.rotation_euler = (0.0, 0.0, 0.0)
@@ -488,28 +489,8 @@ class BlenderAdapter:
             controller["blendmax_original_rotation_euler"] = original_rotation
             controller["blendmax_original_scale"] = original_scale
 
-        bounds_display = bpy.data.objects.new(
-            "{0} [BlendMax Bounds]".format(manifest.asset_name),
-            None,
-        )
-        bounds_display.empty_display_type = "CUBE"
-        bounds_display.empty_display_size = 0.5
-        bounds_display.location = (0.0, 0.0, 0.0)
-        bounds_display.rotation_mode = "XYZ"
-        bounds_display.rotation_euler = (0.0, 0.0, 0.0)
-        bounds_display.scale = tuple(abs(value) for value in dimensions)
-        bounds_display["blendmax_bounds_display"] = True
-        bounds_display.hide_select = True
-        bounds_display.hide_render = True
-        collection.objects.link(bounds_display)
-        # This is intentionally a local-space assignment on a freshly-created
-        # Empty so its parent inverse remains identity and the bounds display
-        # stays centered on the controller.
-        bounds_display.parent = controller
-
         # Rebuild the manifest hierarchy after detaching the promoted
-        # controller's existing FBX children. The controller is identity-scaled
-        # at this point, so preserve-world parenting cannot introduce shear.
+        # controller's existing FBX children.
         BlenderAdapter._restore_hierarchy(mapped, manifest.objects, warnings)
         # The hierarchy restore updates parent transforms; flush the dependency
         # graph before preserve-world parenting the remaining roots.
@@ -528,6 +509,23 @@ class BlenderAdapter:
             if obj is not controller and obj.parent is None:
                 _set_parent_preserve_world(obj, controller)
 
+        # The controller's CUBE display uses its XYZ scale for the exact asset
+        # bounds. Apply that scale only after hierarchy reconstruction, then
+        # restore every mapped object's previous world matrix so the bounds
+        # scale is visual/controller state rather than an import-time geometry
+        # transform. Recommended scale is intentionally applied afterward so it
+        # remains a real controller scale operation.
+        preserved_worlds = {
+            obj: obj.matrix_world.copy()
+            for obj in mapped.values()
+            if obj is not controller
+        }
+        controller.scale = tuple(abs(value) for value in dimensions)
+        bpy.context.view_layer.update()
+        for obj, world in preserved_worlds.items():
+            obj.matrix_world = world
+        bpy.context.view_layer.update()
+
         if apply_recommended_scale and manifest.recommended_scale != 1.0:
             scale = manifest.recommended_scale
             controller.scale = tuple(value * scale for value in controller.scale)
@@ -543,7 +541,6 @@ class BlenderAdapter:
         for image in tuple(fbx_images - built_images):
             if image.users == 0:
                 bpy.data.images.remove(image)
-        
 
     @staticmethod
     def _select_result(imported: Iterable[object], controller) -> None:
