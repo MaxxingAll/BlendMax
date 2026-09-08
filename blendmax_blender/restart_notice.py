@@ -44,7 +44,7 @@ def _clear_state(path: Path) -> None:
         pass
 
 
-def restart_notice_required(bpy, version: str | None = None) -> bool:
+def restart_notice_required(bpy) -> bool:
     """Return whether the current Blender process still needs a restart.
 
     The first registration records the current process ID and shows the notice.
