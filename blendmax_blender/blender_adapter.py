@@ -520,7 +520,9 @@ class BlenderAdapter:
             for obj in mapped.values()
             if obj is not controller
         }
-        controller.scale = tuple(abs(value) for value in dimensions)
+        controller.scale = tuple(
+            max(abs(value), 1e-6) for value in dimensions
+        )
         bpy.context.view_layer.update()
         for obj, world in preserved_worlds.items():
             obj.matrix_world = world
