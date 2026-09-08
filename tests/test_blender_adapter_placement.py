@@ -83,6 +83,7 @@ class FakeEmptyObject(FakeImportedObject):
     def __init__(self, name):
         super().__init__(name, object_type="EMPTY")
         self.parent = None
+        self.children = []
         self.location = FakeVector((0.0, 0.0, 0.0))
         self.scale = FakeVector((1.0, 1.0, 1.0))
         self.rotation_euler = FakeVector((0.0, 0.0, 0.0))
@@ -324,7 +325,9 @@ class BlenderAdapterPlacementTests(unittest.TestCase):
         mesh = FakeMeshObject(
             (10.0, 20.0, 30.0),
             ((0.0, 0.0, 0.0), (2.0, 4.0, 6.0)),
+            parent=controller,
         )
+        controller.children.append(mesh)
         collection = SimpleNamespace(objects=FakeObjectCollection((controller, mesh)))
         group_record = ObjectRecord(
             object_id="group_1",
@@ -376,7 +379,9 @@ class BlenderAdapterPlacementTests(unittest.TestCase):
         mesh = FakeMeshObject(
             (0.0, 0.0, 0.0),
             ((0.0, 0.0, 0.0), (2.0, 4.0, 6.0)),
+            parent=controller,
         )
+        controller.children.append(mesh)
         collection = SimpleNamespace(objects=FakeObjectCollection((controller, mesh)))
         group_record = ObjectRecord(
             object_id="group_1",
@@ -416,6 +421,7 @@ class BlenderAdapterPlacementTests(unittest.TestCase):
         )
 
         self.assertEqual(tuple(controller.scale), (3.0, 6.0, 9.0))
+        self.assertEqual(tuple(mesh.matrix_world.translation), (0.0, 0.0, 0.0))
 
     def test_undeclared_fbx_mesh_and_orphan_data_are_removed(self):
         mesh = SimpleNamespace(users=1)
