@@ -82,9 +82,10 @@ extension-loader behaviors because it does not import `bpy`.
 1. Import `4pottedplants.blendmax` into a clean scene.
 2. Confirm 12 meshes, the recorded nested group hierarchy, and one asset
    controller are present.
-3. Confirm the controller sits at world origin, the plant footprint is centered
-   around X/Y=0, its base rests at Z=0, and nested group pivots stay near their
-   own geometry.
+3. Confirm the controller is centered on the asset's world-space bounds center,
+   the `[BlendMax Bounds]` Empty exactly encompasses the imported mesh bounds,
+   the plant footprint is centered around X/Y=0, its base rests at Z=0, and
+   nested group pivots stay near their own geometry.
 4. Confirm the Multi/Sub material retains six leaf/branch slots on its assigned
    meshes.
 5. Confirm each leaf `VRay2SidedMtl` becomes a Backfacing-driven front/back
