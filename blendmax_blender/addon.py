@@ -59,6 +59,14 @@ def _hot_reload() -> None:
 
         bpy.ops.preferences.addon_enable(module=module_name)
         mark_hot_reload_complete(bpy)
+
+        # The newly imported addon already ran register() before the state file
+        # was updated. Refresh its UI flag so the restart notice disappears
+        # immediately without requiring another disable/enable cycle.
+        reloaded_module = sys.modules.get(module_name)
+        if reloaded_module is not None:
+            reloaded_module._RESTART_NOTICE_REQUIRED = False
+
         print("BlendMax: hot reload completed successfully.")
     except Exception as exc:
         print("BlendMax: hot reload failed: {0}".format(exc))
