@@ -410,24 +410,21 @@ class BlenderAdapter:
         records_by_id = {item.object_id: item for item in manifest.objects}
 
         # A Max asset root/group head imported from FBX is already the correct
-        # controller node. Promote it instead of creating a redundant Empty.
-        controller = next(
-            (
-                obj
-                for object_id, obj in mapped.items()
-                if obj.type == "EMPTY"
-                and records_by_id[object_id].is_group_head
-                and not records_by_id[object_id].parent_id
-            ),
-            None,
-        )
+        # controller node. Promote it only when the manifest has one unparented
+        # group head; multiple roots must not be arbitrarily collapsed.
+        parentless_group_heads = [
+            obj
+            for object_id, obj in mapped.items()
+            if obj.type == "EMPTY"
+            and records_by_id[object_id].is_group_head
+            and not records_by_id[object_id].parent_id
+        ]
+        controller = parentless_group_heads[0] if len(parentless_group_heads) == 1 else None
 
         if controller is None:
             controller = bpy.data.objects.new("{0} [BlendMax]".format(manifest.asset_name), None)
-            controller.location = (0.0, 0.0, 0.0)
             collection.objects.link(controller)
 
-        controller.empty_display_type = "CUBE"
         actual_bounds = []
         for obj in mapped.values():
             bounds = _mesh_world_bounds(obj)
@@ -440,10 +437,22 @@ class BlenderAdapter:
         dimensions = tuple(
             upper - lower for lower, upper in zip(minimum, maximum)
         )
-        # Blender's Empty-CUBE display is a uniform cube. Use the largest asset
-        # extent so the controller visibly encloses the complete imported asset
-        # instead of appearing as a tiny local helper.
-        controller.empty_display_size = max(0.01, max(dimensions))
+        center = tuple(
+            (lower + upper) * 0.5 for lower, upper in zip(minimum, maximum)
+        )
+
+        # The Empty-CUBE display uses its display size as a half-extent.
+        # Normalize the promoted controller to a 0.5-unit half-extent and use
+        # its XYZ scale to make the visible controller match the asset bounds.
+        # This transform is established before parenting so the imported asset
+        # keeps its world-space placement while becoming a normal scale handle.
+        controller.empty_display_type = "CUBE"
+        controller.empty_display_size = 0.5
+        controller.location = center
+        controller.rotation_mode = "XYZ"
+        controller.rotation_euler = (0.0, 0.0, 0.0)
+        controller.scale = tuple(max(abs(value), 0.0001) for value in dimensions)
+
         controller.name = "{0} [BlendMax]".format(manifest.asset_name)
         controller["blendmax_asset"] = True
         controller["blendmax_schema_version"] = manifest.schema_version
@@ -453,7 +462,7 @@ class BlenderAdapter:
 
         roots = []
         for object_id, obj in mapped.items():
-            if obj == controller:
+            if obj is controller:
                 continue
             record = records_by_id[object_id]
             if not record.parent_id or record.parent_id not in mapped:
@@ -461,12 +470,12 @@ class BlenderAdapter:
         for root in roots:
             _set_parent_preserve_world(root, controller)
         for obj in tuple(collection.objects):
-            if obj != controller and obj.parent is None:
+            if obj is not controller and obj.parent is None:
                 _set_parent_preserve_world(obj, controller)
 
         if apply_recommended_scale and manifest.recommended_scale != 1.0:
             scale = manifest.recommended_scale
-            controller.scale = (scale, scale, scale)
+            controller.scale = tuple(value * scale for value in controller.scale)
         return controller
 
     @staticmethod
