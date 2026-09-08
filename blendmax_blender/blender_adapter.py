@@ -229,6 +229,7 @@ class BlenderAdapter:
             apply_recommended_scale,
             manifest_text.name,
             warnings,
+            generated_group_heads,
         )
 
         for obj in mapped.values():
@@ -404,6 +405,7 @@ class BlenderAdapter:
         apply_recommended_scale: bool,
         manifest_text_name: str,
         warnings: List[str],
+        generated_group_heads: Optional[Set[str]] = None,
     ):
         manifest = package.manifest
         records_by_id = {item.object_id: item for item in manifest.objects}
@@ -417,6 +419,7 @@ class BlenderAdapter:
             if obj.type == "EMPTY"
             and records_by_id[object_id].is_group_head
             and not records_by_id[object_id].parent_id
+            and object_id not in (generated_group_heads or ())
         ]
         controller = parentless_group_heads[0] if len(parentless_group_heads) == 1 else None
         promoted = controller is not None
@@ -428,9 +431,12 @@ class BlenderAdapter:
             controller = bpy.data.objects.new("{0} [BlendMax]".format(manifest.asset_name), None)
             collection.objects.link(controller)
 
-        # Bounds are computed before hierarchy restoration intentionally;
-        # the controller must be positioned from the imported mesh bounds
-        # before preserve-world hierarchy parenting is rebuilt.
+        # Bounds are computed before hierarchy restoration intentionally.
+        # `_set_parent_preserve_world()` preserves mesh world transforms, so
+        # these bounds are parenting-invariant; a future restore path that
+        # does not preserve world matrices would silently mis-size the
+        # controller. The controller is also positioned from the imported mesh
+        # bounds before preserve-world parenting is rebuilt.
         actual_bounds = []
         for obj in mapped.values():
             bounds = _mesh_world_bounds(obj)
@@ -537,6 +543,7 @@ class BlenderAdapter:
         for image in tuple(fbx_images - built_images):
             if image.users == 0:
                 bpy.data.images.remove(image)
+        
 
     @staticmethod
     def _select_result(imported: Iterable[object], controller) -> None:
