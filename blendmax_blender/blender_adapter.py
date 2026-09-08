@@ -222,14 +222,13 @@ class BlenderAdapter:
             manifest.objects,
             generated_group_heads,
         )
-        self._restore_hierarchy(mapped, manifest.objects, warnings)
-        self.context.view_layer.update()
         controller = self._create_controller(
             collection,
             package,
             mapped,
             apply_recommended_scale,
             manifest_text.name,
+            warnings,
         )
 
         for obj in mapped.values():
@@ -286,6 +285,8 @@ class BlenderAdapter:
             if match is not None:
                 available.remove(match)
                 if record.is_group_head:
+                    # Group-head helpers are visualized as plain axes until the
+                    # final asset controller/bounds display is configured.
                     match.empty_display_type = "PLAIN_AXES"
             elif record.is_group_head:
                 match = bpy.data.objects.new(record.fbx_name, None)
@@ -402,6 +403,7 @@ class BlenderAdapter:
         mapped: Dict[str, object],
         apply_recommended_scale: bool,
         manifest_text_name: str,
+        warnings: List[str],
     ):
         manifest = package.manifest
         records_by_id = {item.object_id: item for item in manifest.objects}
@@ -458,6 +460,10 @@ class BlenderAdapter:
         controller.rotation_euler = (0.0, 0.0, 0.0)
         controller.scale = (1.0, 1.0, 1.0)
 
+        # Blender defers dependency-graph evaluation after transform writes.
+        # Flush before any preserve-world parenting reads parent.matrix_world.
+        bpy.context.view_layer.update()
+
         controller.name = "{0} [BlendMax]".format(manifest.asset_name)
         controller["blendmax_asset"] = True
         controller["blendmax_controller"] = True
@@ -484,19 +490,18 @@ class BlenderAdapter:
         bounds_display.rotation_euler = (0.0, 0.0, 0.0)
         bounds_display.scale = tuple(abs(value) for value in dimensions)
         bounds_display["blendmax_bounds_display"] = True
+        bounds_display.hide_select = True
+        bounds_display.hide_render = True
         collection.objects.link(bounds_display)
+        # This is intentionally a local-space assignment on a freshly-created
+        # Empty so its parent inverse remains identity and the bounds display
+        # stays centered on the controller.
         bounds_display.parent = controller
 
         # Rebuild the manifest hierarchy after detaching the promoted
         # controller's existing FBX children. The controller is identity-scaled
         # at this point, so preserve-world parenting cannot introduce shear.
-        for record in manifest.objects:
-            child = mapped.get(record.object_id)
-            if child is None or not record.parent_id:
-                continue
-            parent = mapped.get(record.parent_id)
-            if parent is not None:
-                _set_parent_preserve_world(child, parent)
+        BlenderAdapter._restore_hierarchy(mapped, manifest.objects, warnings)
 
         roots = []
         for object_id, obj in mapped.items():
