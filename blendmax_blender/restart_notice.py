@@ -50,22 +50,19 @@ def restart_notice_required(bpy, version: str | None = None) -> bool:
     The first registration records the current process ID and shows the notice.
     A later Blender process consumes that state, which makes the notice vanish
     after one full Blender restart while keeping it visible through re-enables
-    in the original process. A successful hot reload can suppress the notice
-    for that process and that exact imported version.
+    in the original process. A successful hot reload is represented by a
+    one-shot current-process reload marker and consumes the notice on the first
+    successful registration of the reloaded module.
     """
 
     path = _state_path(bpy)
     state = _read_state(path)
     current_pid = os.getpid()
     pending_pid = state.get("pending_pid")
-    hot_reload_pid = state.get("hot_reload_pid")
-    hot_reload_version = state.get("hot_reload_version")
+    hot_reload_pending_pid = state.get("hot_reload_pending_pid")
 
-    if (
-        hot_reload_pid == current_pid
-        and version is not None
-        and hot_reload_version == version
-    ):
+    if hot_reload_pending_pid == current_pid:
+        _clear_state(path)
         return False
 
     if pending_pid is None:
@@ -79,19 +76,15 @@ def restart_notice_required(bpy, version: str | None = None) -> bool:
     return False
 
 
-def mark_hot_reload_complete(bpy, version: str) -> None:
-    """Suppress the restart notice for the current process and imported version."""
+def mark_hot_reload_pending(bpy) -> None:
+    """Mark that the next successful registration is caused by a hot reload."""
 
     path = _state_path(bpy)
     current_pid = os.getpid()
-    _write_state(
-        path,
-        {
-            "pending_pid": current_pid,
-            "hot_reload_pid": current_pid,
-            "hot_reload_version": version,
-        },
-    )
+    state = _read_state(path)
+    state["pending_pid"] = current_pid
+    state["hot_reload_pending_pid"] = current_pid
+    _write_state(path, state)
 
 
 def mark_hot_reload_failed(bpy) -> None:
