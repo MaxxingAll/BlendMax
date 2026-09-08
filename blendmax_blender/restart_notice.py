@@ -50,12 +50,17 @@ def restart_notice_required(bpy) -> bool:
     The first registration records the current process ID and shows the notice.
     A later Blender process consumes that state, which makes the notice vanish
     after one full Blender restart while keeping it visible through re-enables
-    in the original process. The state intentionally assumes a typical\n    single-Blender-process workflow; concurrent Blender instances sharing one\n    profile may consume the notice state unpredictably.\n    """
+    in the original process. A successful hot reload can explicitly suppress
+    the notice for that same process without pretending a new process started.
+    """
 
     path = _state_path(bpy)
     state = _read_state(path)
     current_pid = os.getpid()
     pending_pid = state.get("pending_pid")
+
+    if state.get("hot_reload_pid") == current_pid:
+        return False
 
     if pending_pid is None:
         _write_state(path, {"pending_pid": current_pid})
@@ -66,3 +71,17 @@ def restart_notice_required(bpy) -> bool:
 
     _clear_state(path)
     return False
+
+
+def mark_hot_reload_complete(bpy) -> None:
+    """Suppress the restart notice after a successful in-process reload."""
+
+    path = _state_path(bpy)
+    current_pid = os.getpid()
+    _write_state(
+        path,
+        {
+            "pending_pid": current_pid,
+            "hot_reload_pid": current_pid,
+        },
+    )
