@@ -12,6 +12,7 @@ import bpy
 from bpy.props import BoolProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 
+from . import __version__
 from .errors import BlendMaxImportError
 from .importer import import_blendmax
 from .models import ImportSummary
@@ -307,7 +308,7 @@ _CLASSES = (
 
 def register() -> None:
     global _RESTART_NOTICE_REQUIRED
-    _RESTART_NOTICE_REQUIRED = restart_notice_required(bpy, __version__)
+    _RESTART_NOTICE_REQUIRED = restart_notice_required(bpy)
 
     for item in _CLASSES:
         bpy.utils.register_class(item)
