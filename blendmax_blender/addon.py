@@ -12,7 +12,6 @@ import bpy
 from bpy.props import BoolProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 
-from . import __version__
 from .errors import BlendMaxImportError
 from .importer import import_blendmax
 from .models import ImportSummary
@@ -99,199 +98,66 @@ class BLENDMAX_Preferences(bpy.types.AddonPreferences):
 
     def draw(self, _context):
         layout = self.layout
-        layout.operator(
-            BLENDMAX_OT_hot_reload.bl_idname,
-            text="Reload BlendMax",
-            icon="FILE_REFRESH",
-        )
         if _RESTART_NOTICE_REQUIRED:
-            layout.operator(
-                BLENDMAX_OT_restart_blender_notice.bl_idname,
-                text="⚠ Restart Blender",
-                icon="ERROR",
-            )
-        else:
-            layout.label(text="BlendMax is ready to use.")
+            row = layout.row()
+            row.alert = True
+            row.operator(BLENDMAX_OT_restart_blender_notice.bl_idname, icon="FILE_REFRESH")
+        layout.operator(BLENDMAX_OT_hot_reload.bl_idname, icon="FILE_REFRESH")
 
 
-def _enable_console_colors() -> bool:
-    """Enable ANSI colors when Blender's System Console supports them."""
-    if os.environ.get("NO_COLOR") is not None:
-        return False
-    stdout = getattr(sys, "stdout", None)
-    if stdout is not None and hasattr(stdout, "isatty") and not stdout.isatty():
-        return False
-    if os.name != "nt":
-        return True
-    try:
-        import ctypes
-
-        handle = ctypes.windll.kernel32.GetStdHandle(-11)
-        mode = ctypes.c_uint()
-        if not ctypes.windll.kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
-            return False
-        return bool(
-            ctypes.windll.kernel32.SetConsoleMode(
-                handle, mode.value | 0x0004
-            )
-        )
-    except (AttributeError, OSError):
-        return False
-
-
-def _ensure_utf8_stdout() -> None:
-    """Best-effort UTF-8 console so summary icons render on Windows."""
-    global _STDOUT_UTF8_CONFIGURED
-    if _STDOUT_UTF8_CONFIGURED:
-        return
-    _STDOUT_UTF8_CONFIGURED = True
-    if os.name == "nt":
-        try:
-            import ctypes
-
-            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
-            ctypes.windll.kernel32.SetConsoleCP(65001)
-        except (AttributeError, OSError):
-            pass
-    stdout = getattr(sys, "stdout", None)
-    reconfigure = getattr(stdout, "reconfigure", None)
-    if callable(reconfigure):
-        try:
-            reconfigure(encoding="utf-8", errors="replace")
-        except (OSError, ValueError, TypeError):
-            pass
-
-
-def _stdout_encoding() -> str:
-    return getattr(sys.stdout, "encoding", None) or "utf-8"
-
-
-def _can_encode(text: str) -> bool:
-    try:
-        text.encode(_stdout_encoding())
-        return True
-    except LookupError:
-        return True
-    except UnicodeEncodeError:
-        return False
-
-
-def _icon(name: str) -> str:
-    preferred, fallback = _ICONS[name]
-    return preferred if _can_encode(preferred) else fallback
-
-
-def _console_color(text: str, code: str) -> str:
-    if not _enable_console_colors():
-        return text
-    return "\x1b[{0}m{1}\x1b[0m".format(code, text)
-
-
-def _print_wrapped_items(items, heading: str, color_code: str) -> None:
-    print(_console_color(heading, color_code))
-    print("-" * _SUMMARY_WIDTH)
-    wrap_width = max(20, _DETAIL_WIDTH - 2)
-    for item in items:
-        lines = textwrap.wrap(
-            str(item),
-            width=wrap_width,
-            break_long_words=False,
-            break_on_hyphens=False,
-        ) or [""]
-        print(_console_color("- " + lines[0], color_code))
-        for line in lines[1:]:
-            print(_console_color("  " + line, color_code))
-    print()
-
-
-def _print_import_summary(summary: ImportSummary, elapsed_seconds: float) -> None:
-    """Print the detailed import report to Blender's System Console."""
-    _ensure_utf8_stdout()
-    separator = "=" * _SUMMARY_WIDTH
-    warning_count = len(summary.warnings)
-
-    print("\n" + separator)
-    print(_console_color("                 BlendMax Import Summary", "96"))
-    print(separator)
-    print()
-    print("Asset       : {0}".format(summary.asset_name))
-    print("{0} Objects   : {1}".format(_icon("objects"), summary.object_count))
-    print("{0} Materials : {1}".format(_icon("materials"), summary.material_count))
-    print("{0} Textures  : {1}".format(_icon("textures"), summary.image_count))
-    warning_line = "{0} Warnings  : {1}".format(_icon("warnings"), warning_count)
-    print(_console_color(warning_line, "93" if warning_count else "92"))
-    print("{0} Notes     : {1}".format(_icon("notes"), len(summary.notes)))
-    print("{0} Time      : {1:.2f} s".format(_icon("time"), elapsed_seconds))
-    print()
-
-    if summary.warnings:
-        _print_wrapped_items(summary.warnings, "[!] Warnings", "93")
-    if summary.notes:
-        _print_wrapped_items(summary.notes, "[i] Compatibility Notes", "96")
-
-    if warning_count:
-        print(_console_color(
-            "[!] Import completed with {0} warning(s).".format(warning_count),
-            "93",
-        ))
-    else:
-        print(_console_color("[OK] Import completed successfully.", "92"))
-    print(separator)
-
-
-class BLENDMAX_OT_import_asset(bpy.types.Operator, ImportHelper):
-    bl_idname = "import_scene.blendmax_asset"
+class BLENDMAX_OT_import_asset(ImportHelper, bpy.types.Operator):
+    bl_idname = "blendmax.import_asset"
     bl_label = "Import BlendMax Asset"
-    bl_description = "Import a .blendmax asset exported from Autodesk 3ds Max"
-    bl_options = {"REGISTER", "UNDO"}
+    bl_options = {"UNDO"}
 
     filename_ext = ".blendmax"
     filter_glob: StringProperty(default="*.blendmax", options={"HIDDEN"})
-    apply_recommended_scale: BoolProperty(
-        name="Apply Recommended Scale",
-        description="Apply the exporter's scale recommendation for assets over 50 metres",
-        default=True,
-    )
 
     def execute(self, context):
-        started_at = time.perf_counter()
+        start = time.perf_counter()
+        self._configure_stdout()
         try:
-            summary = import_blendmax(
-                self.filepath,
-                context=context,
-                apply_recommended_scale=self.apply_recommended_scale,
-            )
+            summary = import_blendmax(self.filepath, context.scene)
         except BlendMaxImportError as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
+        except Exception as exc:
+            self.report({"ERROR"}, "BlendMax import failed: {0}".format(exc))
+            traceback.print_exc()
+            return {"CANCELLED"}
 
-        elapsed_seconds = time.perf_counter() - started_at
-
-        if summary.warnings:
-            self.report(
-                {"WARNING"},
-                "Imported {0}: {1} Objects, {2} Materials, {3} Warning(s).".format(
-                    summary.asset_name,
-                    summary.object_count,
-                    summary.material_count,
-                    len(summary.warnings),
-                ),
-            )
-        else:
-            self.report(
-                {"INFO"},
-                "Imported {0}: {1} Objects, {2} Materials, 0 Warning(s).".format(
-                    summary.asset_name,
-                    summary.object_count,
-                    summary.material_count,
-                ),
-            )
-
-        _print_import_summary(summary, elapsed_seconds)
+        self._print_summary(summary, time.perf_counter() - start)
+        self.report({"INFO"}, "BlendMax import completed.")
         return {"FINISHED"}
 
+    @staticmethod
+    def _configure_stdout():
+        global _STDOUT_UTF8_CONFIGURED
+        if _STDOUT_UTF8_CONFIGURED:
+            return
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+        _STDOUT_UTF8_CONFIGURED = True
 
-def _menu_import(self, _context) -> None:
+    @staticmethod
+    def _print_summary(summary: ImportSummary, elapsed: float) -> None:
+        print("\nBlendMax import summary")
+        print("-" * _SUMMARY_WIDTH)
+        print("Objects    {0}".format(summary.objects))
+        print("Materials  {0}".format(summary.materials))
+        print("Textures   {0}".format(summary.textures))
+        print("Warnings   {0}".format(summary.warnings))
+        print("Notes      {0}".format(summary.notes))
+        print("Time       {0:.2f}s".format(elapsed))
+        print("-" * _SUMMARY_WIDTH)
+        for detail in summary.details:
+            for line in textwrap.wrap(detail, width=_DETAIL_WIDTH) or [""]:
+                print(line)
+
+
+def _menu_import(self, _context):
     self.layout.operator(
         BLENDMAX_OT_import_asset.bl_idname,
         text="BlendMax Asset (.blendmax)",
