@@ -286,9 +286,6 @@ class BlenderAdapter:
             if match is not None:
                 available.remove(match)
                 if record.is_group_head:
-                    # Imported FBX helpers may arrive with Blender's own Empty
-                    # display mode. Normalize adopted group heads so their
-                    # viewport appearance matches the synthetic fallback.
                     match.empty_display_type = "PLAIN_AXES"
             elif record.is_group_head:
                 match = bpy.data.objects.new(record.fbx_name, None)
@@ -420,6 +417,10 @@ class BlenderAdapter:
             and not records_by_id[object_id].parent_id
         ]
         controller = parentless_group_heads[0] if len(parentless_group_heads) == 1 else None
+        promoted = controller is not None
+        original_name = controller.name if promoted else None
+        original_rotation = tuple(controller.rotation_euler) if promoted else None
+        original_scale = tuple(controller.scale) if promoted else None
 
         if controller is None:
             controller = bpy.data.objects.new("{0} [BlendMax]".format(manifest.asset_name), None)
@@ -441,36 +442,61 @@ class BlenderAdapter:
             (lower + upper) * 0.5 for lower, upper in zip(minimum, maximum)
         )
 
-        # The promoted group head can already have mapped mesh children because
-        # hierarchy restoration runs before controller promotion. Snapshot their
-        # world matrices so the controller's bounds transform cannot move or
-        # stretch the imported asset.
-        existing_children_world = {
-            child: child.matrix_world.copy()
-            for child in tuple(controller.children)
-        }
+        # A promoted FBX Empty can already own imported children. Detach them
+        # while preserving their world transforms before normalizing the
+        # controller. This avoids applying non-uniform controller scale to a
+        # rotated child, which can introduce shear.
+        for child in tuple(controller.children):
+            _set_parent_preserve_world(child, None)
 
-        # The Empty-CUBE display uses its display size as a half-extent.
-        # Normalize the controller to a 0.5-unit half-extent and use its XYZ
-        # scale to make the visible controller match the asset's exact bounds.
-        controller.empty_display_type = "CUBE"
-        controller.empty_display_size = 0.5
+        # The actual controller stays transform-safe: its import-time scale is
+        # identity, while a separate Empty provides the exact bounds display.
+        controller.empty_display_type = "PLAIN_AXES"
+        controller.empty_display_size = 1.0
         controller.location = center
         controller.rotation_mode = "XYZ"
         controller.rotation_euler = (0.0, 0.0, 0.0)
-        controller.scale = tuple(max(abs(value), 0.0001) for value in dimensions)
-
-        # Restore the pre-promotion world transforms of existing children. This
-        # is a no-op for the synthetic controller, which has no children yet.
-        for child, world in existing_children_world.items():
-            child.matrix_world = world
+        controller.scale = (1.0, 1.0, 1.0)
 
         controller.name = "{0} [BlendMax]".format(manifest.asset_name)
         controller["blendmax_asset"] = True
+        controller["blendmax_controller"] = True
+        controller["blendmax_controller_source"] = (
+            "imported_group_head" if promoted else "synthetic"
+        )
         controller["blendmax_schema_version"] = manifest.schema_version
         controller["blendmax_source_package"] = str(package.source_path)
         controller["blendmax_manifest_text"] = manifest_text_name
         controller["blendmax_recommended_scale"] = manifest.recommended_scale
+        if promoted:
+            controller["blendmax_original_name"] = original_name
+            controller["blendmax_original_rotation_euler"] = original_rotation
+            controller["blendmax_original_scale"] = original_scale
+
+        bounds_display = bpy.data.objects.new(
+            "{0} [BlendMax Bounds]".format(manifest.asset_name),
+            None,
+        )
+        bounds_display.empty_display_type = "CUBE"
+        bounds_display.empty_display_size = 0.5
+        bounds_display.location = (0.0, 0.0, 0.0)
+        bounds_display.rotation_mode = "XYZ"
+        bounds_display.rotation_euler = (0.0, 0.0, 0.0)
+        bounds_display.scale = tuple(abs(value) for value in dimensions)
+        bounds_display["blendmax_bounds_display"] = True
+        collection.objects.link(bounds_display)
+        bounds_display.parent = controller
+
+        # Rebuild the manifest hierarchy after detaching the promoted
+        # controller's existing FBX children. The controller is identity-scaled
+        # at this point, so preserve-world parenting cannot introduce shear.
+        for record in manifest.objects:
+            child = mapped.get(record.object_id)
+            if child is None or not record.parent_id:
+                continue
+            parent = mapped.get(record.parent_id)
+            if parent is not None:
+                _set_parent_preserve_world(child, parent)
 
         roots = []
         for object_id, obj in mapped.items():
@@ -503,7 +529,8 @@ class BlenderAdapter:
 
     @staticmethod
     def _select_result(imported: Iterable[object], controller) -> None:
-        bpy.ops.object.select_all(action="DESELECT")
+        for obj in bpy.context.selected_objects:
+            obj.select_set(False)
         for obj in imported:
             obj.select_set(True)
         controller.select_set(True)
