@@ -79,6 +79,48 @@ class FakeImportedObject:
         self.properties[key] = value
 
 
+class FakeEmptyObject(FakeImportedObject):
+    def __init__(self, name):
+        super().__init__(name, object_type="EMPTY")
+        self.parent = None
+        self.location = FakeVector((0.0, 0.0, 0.0))
+        self.scale = FakeVector((1.0, 1.0, 1.0))
+        self.rotation_euler = FakeVector((0.0, 0.0, 0.0))
+        self.rotation_mode = "XYZ"
+        self.empty_display_type = "PLAIN_AXES"
+        self.empty_display_size = 1.0
+
+    @property
+    def matrix_world(self):
+        return FakeMatrix(self.location)
+
+    @matrix_world.setter
+    def matrix_world(self, value):
+        self.location = value.translation
+
+
+class FakeObjectCollection:
+    def __init__(self, objects=()):
+        self.items = list(objects)
+
+    def link(self, obj):
+        self.items.append(obj)
+
+    def __iter__(self):
+        return iter(self.items)
+
+
+class FakeBpyData:
+    def __init__(self):
+        self.created = []
+        self.objects = SimpleNamespace(new=self.new_object)
+
+    def new_object(self, name, _data):
+        obj = FakeEmptyObject(name)
+        self.created.append(obj)
+        return obj
+
+
 def load_adapter():
     fake_bpy = ModuleType("bpy")
     fake_mathutils = ModuleType("mathutils")
@@ -276,6 +318,104 @@ class BlenderAdapterPlacementTests(unittest.TestCase):
         self.assertIs(mapped["group_1"], created[0])
         self.assertEqual(created[0].name, "Imported Group")
         self.assertEqual(created[0].properties["blendmax_object_id"], "group_1")
+
+    def test_controller_is_centered_and_matches_asset_bounds(self):
+        controller = FakeEmptyObject("Imported Group")
+        mesh = FakeMeshObject(
+            (10.0, 20.0, 30.0),
+            ((0.0, 0.0, 0.0), (2.0, 4.0, 6.0)),
+        )
+        collection = SimpleNamespace(objects=FakeObjectCollection((controller, mesh)))
+        group_record = ObjectRecord(
+            object_id="group_1",
+            fbx_name="BM_group",
+            original_name="Imported Group",
+            node_type="Dummy",
+            superclass="helper",
+            is_group_head=True,
+        )
+        mesh_record = ObjectRecord(
+            object_id="mesh_1",
+            fbx_name="BM_mesh",
+            original_name="Mesh",
+            node_type="Editable_Poly",
+            superclass="GeometryClass",
+            parent_id="group_1",
+        )
+        manifest = SimpleNamespace(
+            asset_name="Test Asset",
+            schema_version=1,
+            objects=(group_record, mesh_record),
+            bounds_minimum_m=(0.0, 0.0, 0.0),
+            bounds_maximum_m=(2.0, 4.0, 6.0),
+            recommended_scale=1.0,
+        )
+        package = SimpleNamespace(
+            manifest=manifest,
+            source_path=Path("Test Asset.blendmax"),
+        )
+
+        result = self.adapter.BlenderAdapter._create_controller(
+            collection,
+            package,
+            {"group_1": controller, "mesh_1": mesh},
+            False,
+            "Test Asset - BlendMax manifest.json",
+        )
+
+        self.assertIs(result, controller)
+        self.assertEqual(tuple(controller.location), (11.0, 22.0, 33.0))
+        self.assertEqual(tuple(controller.scale), (2.0, 4.0, 6.0))
+        self.assertEqual(controller.empty_display_type, "CUBE")
+        self.assertEqual(controller.empty_display_size, 0.5)
+        self.assertIs(mesh.parent, controller)
+        self.assertEqual(tuple(mesh.matrix_world.translation), (10.0, 20.0, 30.0))
+
+    def test_controller_recommended_scale_multiplies_bounds_scale(self):
+        controller = FakeEmptyObject("Imported Group")
+        mesh = FakeMeshObject(
+            (0.0, 0.0, 0.0),
+            ((0.0, 0.0, 0.0), (2.0, 4.0, 6.0)),
+        )
+        collection = SimpleNamespace(objects=FakeObjectCollection((controller, mesh)))
+        group_record = ObjectRecord(
+            object_id="group_1",
+            fbx_name="BM_group",
+            original_name="Imported Group",
+            node_type="Dummy",
+            superclass="helper",
+            is_group_head=True,
+        )
+        mesh_record = ObjectRecord(
+            object_id="mesh_1",
+            fbx_name="BM_mesh",
+            original_name="Mesh",
+            node_type="Editable_Poly",
+            superclass="GeometryClass",
+            parent_id="group_1",
+        )
+        manifest = SimpleNamespace(
+            asset_name="Test Asset",
+            schema_version=1,
+            objects=(group_record, mesh_record),
+            bounds_minimum_m=(0.0, 0.0, 0.0),
+            bounds_maximum_m=(2.0, 4.0, 6.0),
+            recommended_scale=1.5,
+        )
+        package = SimpleNamespace(
+            manifest=manifest,
+            source_path=Path("Test Asset.blendmax"),
+        )
+
+        self.adapter.BlenderAdapter._create_controller(
+            collection,
+            package,
+            {"group_1": controller, "mesh_1": mesh},
+            True,
+            "Test Asset - BlendMax manifest.json",
+        )
+
+        self.assertEqual(tuple(controller.scale), (3.0, 6.0, 9.0))
 
     def test_undeclared_fbx_mesh_and_orphan_data_are_removed(self):
         mesh = SimpleNamespace(users=1)
