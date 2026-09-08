@@ -218,20 +218,14 @@ class BlenderControllerBoundsTests(unittest.TestCase):
         )
 
         self.assertIs(result, controller)
-        # The promoted imported Empty itself becomes the visible CUBE
-        # controller: centered on the bounds, identity rotation, and its own
-        # XYZ scale encoding the exact imported asset bounds.
         self.assertEqual(controller.name, "Test Asset [BlendMax]")
         self.assertEqual(controller.empty_display_type, "CUBE")
         self.assertEqual(controller.empty_display_size, 0.5)
         self.assertEqual(tuple(controller.location), (11.0, 22.0, 33.0))
         self.assertEqual(tuple(controller.rotation_euler), (0.0, 0.0, 0.0))
         self.assertEqual(tuple(controller.scale), (2.0, 4.0, 6.0))
-        # The controller stays selectable/renderable: it is the object users
-        # select and manipulate, not a hidden helper.
         self.assertFalse(controller.hide_select)
         self.assertFalse(controller.hide_render)
-        # Provenance/original-transform metadata survives the promotion.
         self.assertEqual(controller.properties["blendmax_original_name"], "Imported Group")
         self.assertEqual(controller.properties["blendmax_controller_source"], "imported_group_head")
         self.assertEqual(
@@ -242,11 +236,8 @@ class BlenderControllerBoundsTests(unittest.TestCase):
             controller.properties["blendmax_original_scale"],
             (2.0, 3.0, 4.0),
         )
-        # Transform safety: rebuilding the hierarchy under the bounds-scaled
-        # controller restores the mesh's imported world transform.
         self.assertEqual(tuple(mesh.matrix_world.translation), (10.0, 20.0, 30.0))
         self.assertIs(mesh.parent, controller)
-        # No separate bounds helper object remains.
         self.assertEqual(
             [
                 obj
@@ -275,8 +266,6 @@ class BlenderControllerBoundsTests(unittest.TestCase):
             [],
         )
 
-        # Recommended scale remains a real uniform controller scale applied on
-        # top of the bounds display scale (2, 4, 6 × 1.5).
         self.assertEqual(tuple(controller.scale), (3.0, 6.0, 9.0))
         self.assertEqual(
             [
@@ -287,7 +276,7 @@ class BlenderControllerBoundsTests(unittest.TestCase):
             [],
         )
 
-    def test_degenerate_bounds_are_not_artificially_clamped(self):
+    def test_degenerate_bounds_keep_controller_matrix_invertible(self):
         controller = FakeEmptyObject("Imported Group")
         mesh = FakeMeshObject(
             (0.0, 0.0, 0.0),
@@ -309,7 +298,8 @@ class BlenderControllerBoundsTests(unittest.TestCase):
             [],
         )
 
-        self.assertEqual(tuple(controller.scale), (0.0, 4.0, 6.0))
+        self.assertEqual(tuple(controller.scale), (1e-6, 4.0, 6.0))
+        self.assertGreater(controller.scale[0], 0.0)
         self.assertEqual(
             [
                 obj
