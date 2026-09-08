@@ -32,13 +32,13 @@ called out separately from automated coverage.
 
 - The promoted/synthetic controller is positioned at the computed bounds center
   with identity rotation and shown as a selectable CUBE Empty; its XYZ scale
-  encodes the exact imported bounds and is applied after hierarchy
-  reconstruction while imported world transforms are restored. Recommended
-  scale is applied uniformly on top of the controller scale.
+  encodes the imported bounds and is applied after hierarchy reconstruction while
+  imported world transforms are restored. Recommended scale is applied uniformly
+  on top of the controller scale.
 - Hierarchy restoration uses preserve-world parenting with explicit dependency-graph
   flushes, so imported hierarchy transforms are not distorted during adoption.
-- Degenerate bounds are preserved as authored/imported without an artificial
-  minimum-size clamp; a zero-extent axis stays zero on the controller scale.
+- Degenerate bounds use a tiny epsilon on zero-extent controller axes to keep the
+  controller matrix invertible while remaining visually flat on the affected axis.
 - Restart-notice suppression is represented by a one-shot current-process reload
   marker rather than a sticky version flag. The marker is consumed only by the
   registration produced by the requested reload, so later genuine update/restart
@@ -91,9 +91,7 @@ called out separately from automated coverage.
 
 ### Verification
 
-- Clean Blender 5.2 runtime re-import passed with one genuine missing-texture
-  warning, one grouped unsupported-parameter note, one grouped glossiness note,
-  and no per-field VRayMtl warning spam.
+- Clean Blender 5.2 runtime re-import passed with one genuine missing-texture warning, one grouped unsupported-parameter note, one grouped glossiness note, and no per-field VRayMtl warning spam.
 - Refraction/reflection diagnostics honor `brdf_useRoughness`: equal values in
   roughness mode stay silent, while divergent values remain grouped as an
   approximation note.
