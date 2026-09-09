@@ -130,36 +130,60 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
         class FakeLayout:
             def __init__(self):
                 self.row_instance = FakeRow()
+                self.operator_calls = []
+                self.labels = []
 
             def row(self):
                 return self.row_instance
 
-            def label(self, **_kwargs):
-                pass
+            def operator(self, *args, **kwargs):
+                self.operator_calls.append((args, kwargs))
+
+            def label(self, *args, **kwargs):
+                self.labels.append((args, kwargs))
 
         preferences = self.addon.BLENDMAX_Preferences()
 
         ready_layout = FakeLayout()
         preferences.layout = ready_layout
-        with patch.object(self.addon, "_RELOAD_PENDING", False):
+        with patch.object(self.addon, "_RELOAD_PENDING", False), patch.object(
+            self.addon, "_RESTART_NOTICE_REQUIRED", False
+        ):
             preferences.draw(None)
 
-        self.assertTrue(ready_layout.row_instance.enabled)
+        self.assertIs(ready_layout.row_instance.enabled, True)
         self.assertEqual(
             ready_layout.row_instance.operator_call[1]["text"],
             "Reload BlendMax",
         )
+        self.assertEqual(ready_layout.operator_calls, [])
+        self.assertEqual(
+            ready_layout.labels,
+            [((), {"text": "BlendMax is ready to use."})],
+        )
 
         pending_layout = FakeLayout()
         preferences.layout = pending_layout
-        with patch.object(self.addon, "_RELOAD_PENDING", True):
+        with patch.object(self.addon, "_RELOAD_PENDING", True), patch.object(
+            self.addon, "_RESTART_NOTICE_REQUIRED", True
+        ):
             preferences.draw(None)
 
-        self.assertFalse(pending_layout.row_instance.enabled)
+        self.assertIs(pending_layout.row_instance.enabled, False)
         self.assertEqual(
             pending_layout.row_instance.operator_call[1]["text"],
             "Reloading BlendMax…",
         )
+        self.assertEqual(
+            pending_layout.operator_calls,
+            [
+                (
+                    (self.addon.BLENDMAX_OT_restart_blender_notice.bl_idname,),
+                    {"text": "⚠ Restart Blender", "icon": "ERROR"},
+                )
+            ],
+        )
+        self.assertEqual(pending_layout.labels, [])
 
     def test_hot_reload_operator_schedules_only_one_reload(self):
         class FakeTimers:
