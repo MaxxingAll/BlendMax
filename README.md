@@ -141,10 +141,12 @@ Build or download `blendmax_importer-0.1.8.zip`, then in Blender:
 
 Installing a newer version of the same extension ZIP updates the isolated
 extension. The **Reload BlendMax** control in Add-on Preferences performs a
-single deferred in-process reload of the currently installed extension copy;
-it does not watch the source tree or run continuously. Editing the repository
-working tree therefore requires updating the installed extension copy (or
-pointing Blender at that working copy) before using Reload BlendMax.
+single deferred in-process reload of the currently installed extension copy,
+once per Blender process. After that click the button stays disabled until
+Blender is restarted. It does not watch the source tree or run continuously.
+Editing the repository working tree therefore requires updating the installed
+extension copy (or pointing Blender at that working copy) before using Reload
+BlendMax.
 
 To build the ZIP from source:
 

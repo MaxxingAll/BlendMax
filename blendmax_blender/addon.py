@@ -16,6 +16,8 @@ from .errors import BlendMaxImportError
 from .importer import import_blendmax
 from .models import ImportSummary
 from .restart_notice import (
+    hot_reload_consumed_for_current_process,
+    mark_hot_reload_consumed,
     mark_hot_reload_failed,
     mark_hot_reload_pending,
     restart_notice_required,
@@ -76,17 +78,31 @@ def _hot_reload() -> None:
     return None
 
 
+def _hot_reload_button_text(*, reload_pending: bool, reload_consumed: bool) -> str:
+    if reload_pending:
+        return "Reloading BlendMax…"
+    if reload_consumed:
+        return "BlendMax Reload Used"
+    return "Reload BlendMax"
+
+
 class BLENDMAX_OT_hot_reload(bpy.types.Operator):
     bl_idname = "blendmax.hot_reload"
     bl_label = "Reload BlendMax"
-    bl_description = "Reload the currently installed BlendMax extension copy without restarting Blender"
+    bl_description = (
+        "Reload the currently installed BlendMax extension copy once in this "
+        "Blender session without restarting Blender"
+    )
 
     def execute(self, _context):
         global _RELOAD_PENDING
+        if hot_reload_consumed_for_current_process(bpy):
+            return {"CANCELLED"}
         if _RELOAD_PENDING:
             self.report({"INFO"}, "BlendMax reload is already scheduled.")
             return {"FINISHED"}
 
+        mark_hot_reload_consumed(bpy)
         _RELOAD_PENDING = True
         bpy.app.timers.register(_hot_reload, first_interval=0.1)
         self.report({"INFO"}, "BlendMax reload scheduled.")
@@ -99,15 +115,15 @@ class BLENDMAX_Preferences(bpy.types.AddonPreferences):
     def draw(self, _context):
         layout = self.layout
         reload_pending = _RELOAD_PENDING
+        reload_consumed = hot_reload_consumed_for_current_process(bpy)
 
         row = layout.row()
-        row.enabled = not reload_pending
+        row.enabled = not reload_consumed
         row.operator(
             BLENDMAX_OT_hot_reload.bl_idname,
-            text=(
-                "Reload BlendMax"
-                if not reload_pending
-                else "Reloading BlendMax…"
+            text=_hot_reload_button_text(
+                reload_pending=reload_pending,
+                reload_consumed=reload_consumed,
             ),
             icon="FILE_REFRESH",
         )

@@ -36,12 +36,16 @@ ground truth for renderer-specific host behavior.
 2. Open **Edit > Preferences > Add-ons** and enable BlendMax.
 3. Confirm the **Reload BlendMax** button is visible in BlendMax Preferences.
 4. Make a controlled change in the installed copy, such as a diagnostic string.
-5. Click **Reload BlendMax** once and confirm the add-on remains enabled.
+5. Click **Reload BlendMax** once and confirm the add-on remains enabled. The
+   button must disable immediately and read **Reloading BlendMax…**, then remain
+   disabled as **BlendMax Reload Used** after the reload completes.
 6. Confirm the changed code is active without restarting Blender and that the
    first successful reload consumes the restart notice.
-7. Click the button twice rapidly and confirm only one reload is scheduled.
+7. Click the button twice rapidly and confirm only one reload is scheduled, with
+   no repeated `BlendMax reload scheduled.` Info Log messages.
 8. Force an import-time error in the installed copy, click Reload, and confirm
-   the System Console receives a traceback and the restart notice becomes visible.
+   the System Console receives a traceback, the restart notice becomes visible,
+   and Hot Reload stays consumed until Blender is restarted.
 
 ### B. Blender extension ZIP layout — PENDING HOST TEST
 
@@ -148,6 +152,8 @@ Live `getPropNames` confirmed these actual keys and readable values:
 - Import completes without a Python traceback.
 - Reload completes without disabling the extension when the installed code is valid.
 - Reload never remains queued twice from rapid repeated clicks.
+- Hot Reload can be used only once per Blender process; restarting Blender makes
+  the button available again.
 - A successful first reload consumes the pending restart notice; no second reload is required just to clear it.
 - Relative object transforms, hierarchy, UVs, normals, tangents, and material
   indices visually match the FBX/export manifest after world-origin placement.

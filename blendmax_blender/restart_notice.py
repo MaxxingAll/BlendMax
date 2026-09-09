@@ -62,11 +62,17 @@ def restart_notice_required(bpy) -> bool:
     hot_reload_pending_pid = state.get("hot_reload_pending_pid")
 
     if hot_reload_pending_pid == current_pid:
-        _clear_state(path)
+        state.pop("pending_pid", None)
+        state.pop("hot_reload_pending_pid", None)
+        if state:
+            _write_state(path, state)
+        else:
+            _clear_state(path)
         return False
 
     if pending_pid is None:
-        _write_state(path, {"pending_pid": current_pid})
+        state["pending_pid"] = current_pid
+        _write_state(path, state)
         return True
 
     if pending_pid == current_pid:
@@ -92,4 +98,24 @@ def mark_hot_reload_failed(bpy) -> None:
 
     path = _state_path(bpy)
     current_pid = os.getpid()
-    _write_state(path, {"pending_pid": current_pid})
+    state = _read_state(path)
+    state["pending_pid"] = current_pid
+    state.pop("hot_reload_pending_pid", None)
+    _write_state(path, state)
+
+
+def hot_reload_consumed_for_current_process(bpy) -> bool:
+    """Return whether this Blender process has already used Hot Reload."""
+
+    path = _state_path(bpy)
+    state = _read_state(path)
+    return state.get("hot_reload_consumed_pid") == os.getpid()
+
+
+def mark_hot_reload_consumed(bpy) -> None:
+    """Record that Hot Reload has been used in the current Blender process."""
+
+    path = _state_path(bpy)
+    state = _read_state(path)
+    state["hot_reload_consumed_pid"] = os.getpid()
+    _write_state(path, state)
