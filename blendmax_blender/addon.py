@@ -98,9 +98,17 @@ class BLENDMAX_Preferences(bpy.types.AddonPreferences):
 
     def draw(self, _context):
         layout = self.layout
-        layout.operator(
+        reload_pending = _RELOAD_PENDING
+
+        row = layout.row()
+        row.enabled = not reload_pending
+        row.operator(
             BLENDMAX_OT_hot_reload.bl_idname,
-            text="Reload BlendMax",
+            text=(
+                "Reload BlendMax"
+                if not reload_pending
+                else "Reloading BlendMax…"
+            ),
             icon="FILE_REFRESH",
         )
         if _RESTART_NOTICE_REQUIRED:
