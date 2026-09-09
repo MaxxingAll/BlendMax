@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import io
 import os
@@ -25,6 +26,9 @@ def load_addon(module_name="blendmax_blender._addon_summary_test", config_direct
     class FakeImportHelper:
         pass
 
+    if config_directory is None:
+        config_directory = tempfile.mkdtemp(prefix="blendmax-addon-test-")
+
     fake_bpy = ModuleType("bpy")
     fake_bpy.types = SimpleNamespace(
         Operator=FakeOperator,
@@ -36,7 +40,7 @@ def load_addon(module_name="blendmax_blender._addon_summary_test", config_direct
     )
     fake_bpy.utils = SimpleNamespace(
         user_resource=lambda _resource_type, path="", create=False: str(
-            config_directory or ""
+            config_directory
         ),
     )
     fake_extras = ModuleType("bpy_extras")
@@ -61,6 +65,7 @@ def load_addon(module_name="blendmax_blender._addon_summary_test", config_direct
         },
     ):
         spec.loader.exec_module(module)
+    module._test_config_directory = str(config_directory)
     return module
 
 
@@ -93,6 +98,10 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.addon = load_addon()
+
+    def setUp(self):
+        self.addon._HOT_RELOAD_CONSUMED = None
+        self.addon._RELOAD_PENDING = False
 
     def _print_summary(self, summary: ImportSummary, elapsed_seconds: float = 1.25) -> str:
         buffer = io.StringIO()
@@ -146,6 +155,11 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
             self.assertEqual(self.addon._icon("objects"), "[O]")
             self.assertEqual(self.addon._icon("warnings"), "[!]")
 
+    def test_load_addon_uses_isolated_config_directory(self):
+        self.assertTrue(self.addon._test_config_directory)
+        self.assertNotEqual(self.addon._test_config_directory, "")
+        self.assertTrue(Path(self.addon._test_config_directory).is_absolute())
+
     def _draw_preferences(
         self,
         *,
@@ -157,9 +171,7 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
         layout = FakeLayout()
         preferences.layout = layout
         with patch.object(self.addon, "_RELOAD_PENDING", reload_pending), patch.object(
-            self.addon,
-            "hot_reload_consumed_for_current_process",
-            return_value=reload_consumed,
+            self.addon, "_HOT_RELOAD_CONSUMED", reload_consumed
         ), patch.object(
             self.addon, "_RESTART_NOTICE_REQUIRED", restart_notice_required
         ):
@@ -177,6 +189,10 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
         self.assertEqual(
             layout.row_instance.operator_call[1]["text"],
             "Reload BlendMax",
+        )
+        self.assertEqual(
+            layout.labels,
+            [((), {"text": "BlendMax is ready to use."})],
         )
 
     def test_hot_reload_button_pending_state(self):
@@ -201,6 +217,7 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
             )
             with patch.object(restart_notice.os, "getpid", return_value=1234):
                 restart_notice.mark_hot_reload_consumed(bpy)
+                importlib.reload(restart_notice)
                 reloaded = load_addon(
                     module_name="blendmax_blender._addon_summary_test_reloaded",
                     config_directory=directory,
@@ -222,6 +239,10 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
                 self.assertEqual(
                     layout.row_instance.operator_call[1]["text"],
                     "BlendMax Reload Used",
+                )
+                self.assertEqual(
+                    layout.labels,
+                    [((), {"text": "Restart Blender to reload again."})],
                 )
 
     def test_hot_reload_available_in_new_blender_process(self):
@@ -298,6 +319,58 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
             self.assertEqual(timers.registered[0][1], 0.1)
             self.assertEqual(reports, [({"INFO"}, "BlendMax reload scheduled.")])
 
+    def test_hot_reload_timer_registration_failure_rolls_back(self):
+        class FakeTimers:
+            def register(self, callback, first_interval):
+                raise RuntimeError("timer registration failed")
+
+        with tempfile.TemporaryDirectory() as directory:
+            reports = []
+            operator = self.addon.BLENDMAX_OT_hot_reload()
+            operator.report = lambda levels, message: reports.append((levels, message))
+
+            with patch.object(restart_notice.os, "getpid", return_value=1234), patch.object(
+                self.addon.bpy.utils,
+                "user_resource",
+                lambda _resource_type, path="", create=False: directory,
+            ), patch.object(
+                self.addon.bpy,
+                "app",
+                SimpleNamespace(timers=FakeTimers()),
+                create=True,
+            ):
+                self.assertEqual(operator.execute(None), {"CANCELLED"})
+                self.assertIs(self.addon._HOT_RELOAD_CONSUMED, False)
+                self.assertIs(self.addon._RELOAD_PENDING, False)
+                self.assertIs(
+                    restart_notice.hot_reload_consumed_for_current_process(
+                        self.addon.bpy
+                    ),
+                    False,
+                )
+            self.assertEqual(reports, [])
+
+    def test_preferences_draw_does_not_reread_state_every_time(self):
+        calls = {"count": 0}
+
+        def counting(_bpy):
+            calls["count"] += 1
+            return True
+
+        preferences = self.addon.BLENDMAX_Preferences()
+        preferences.layout = FakeLayout()
+        with patch.object(
+            self.addon, "hot_reload_consumed_for_current_process", counting
+        ), patch.object(self.addon, "_RELOAD_PENDING", False), patch.object(
+            self.addon, "_RESTART_NOTICE_REQUIRED", False
+        ):
+            self.addon._HOT_RELOAD_CONSUMED = None
+            preferences.draw(None)
+            preferences.layout = FakeLayout()
+            preferences.draw(None)
+
+        self.assertEqual(calls["count"], 1)
+
     def test_preferences_draw_restart_notice_branches(self):
         ready_layout = self._draw_preferences(
             reload_pending=False,
@@ -308,6 +381,16 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
         self.assertEqual(
             ready_layout.labels,
             [((), {"text": "BlendMax is ready to use."})],
+        )
+
+        consumed_layout = self._draw_preferences(
+            reload_pending=False,
+            reload_consumed=True,
+            restart_notice_required=False,
+        )
+        self.assertEqual(
+            consumed_layout.labels,
+            [((), {"text": "Restart Blender to reload again."})],
         )
 
         notice_layout = self._draw_preferences(

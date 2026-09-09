@@ -18,9 +18,13 @@ called out separately from automated coverage.
   `blendmax_controller` and `blendmax_controller_source` metadata.
 - Adds a **Reload BlendMax** control in Add-on Preferences for a one-shot,
   deferred in-process reload of the currently installed Blender extension copy.
-  The control can be used only once per Blender process: the first click greys
+  The control can be used only once per Blender process because BlendMax's own
+  module reload resets in-memory flags; repeated in-process reloads previously
+  scheduled duplicate timers and spammed the Info Log. The first click greys
   it out as **Reloading BlendMax…**, and after the add-on reloads it stays
-  disabled as **BlendMax Reload Used** until Blender itself is restarted.
+  disabled as **BlendMax Reload Used** with a **Restart Blender to reload again**
+  hint until Blender itself is restarted. Concurrent Blender processes keep
+  independent consumed markers in the shared config state.
 - Reload purges the active package and its submodules from `sys.modules` before
   re-enabling the same installed extension, so newly installed code can be
   loaded without restarting Blender.
