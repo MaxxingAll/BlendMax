@@ -232,8 +232,16 @@ class BlenderAdapter:
             generated_group_heads,
         )
 
-        for obj in mapped.values():
-            if obj.type == "MESH":
+        # Meshes with no manifest assignment at all get no BlendMax-authored
+        # materials; their raw FBX materials are dropped like before. Meshes
+        # that *do* have an assignment must NOT go through materials.clear():
+        # clearing removes the mesh's material_index attribute as a Blender
+        # side effect, permanently destroying the per-face slot mapping the
+        # FBX importer just established. Those meshes are rebuilt in place
+        # instead (see _replace_material_slots).
+        assigned_object_ids = {item.object_id for item in manifest.assignments}
+        for object_id, obj in mapped.items():
+            if obj.type == "MESH" and object_id not in assigned_object_ids:
                 obj.data.materials.clear()
 
         builder = MaterialBuilder(index, package.root, warnings)
@@ -248,8 +256,8 @@ class BlenderAdapter:
                 continue
             if obj.type != "MESH":
                 continue
-            for material in builder.materials_for_assignment(assignment.material_ref):
-                obj.data.materials.append(material)
+            materials = builder.materials_for_assignment(assignment.material_ref)
+            self._replace_material_slots(obj, materials, warnings)
 
         self._discard_fbx_material_data(fbx_materials, fbx_images, builder)
         self._select_result(imported, controller)
@@ -540,6 +548,61 @@ class BlenderAdapter:
             scale = manifest.recommended_scale
             controller.scale = tuple(value * scale for value in controller.scale)
         return controller
+
+    @staticmethod
+    def _replace_material_slots(obj, materials: Tuple[object, ...], warnings: List[str]) -> None:
+        """Rebuild a mesh's material slots without clearing them first.
+
+        `Mesh.materials.clear()` resets every polygon's `material_index` to 0
+        as a side effect once the slot list it points into is emptied. The
+        FBX importer's per-face slot assignment is correct at this point in
+        the import; the only thing that needs to change is *which materials*
+        occupy each slot, not the face-to-slot relationship itself. Replacing
+        slot contents in place (and trimming any now-unused trailing slots)
+        preserves `polygon.material_index` exactly as Blender's FBX importer
+        set it.
+
+        A shorter `materials` list than the mesh's current slot count is a
+        genuine manifest/FBX mismatch worth surfacing. It has to be detected
+        *before* the trailing slots are popped: removing a slot does not
+        leave `polygon.material_index` pointing past the end of the list for
+        Blender to catch afterward -- Blender remaps every face that
+        referenced a removed slot down onto the new last slot as part of the
+        pop itself, so the out-of-range evidence is gone by the time the
+        slot list is back down to `len(materials)`.
+        """
+        slots = obj.data.materials
+        original_slot_count = len(slots)
+
+        for slot_index, material in enumerate(materials):
+            if slot_index < len(slots):
+                slots[slot_index] = material
+            else:
+                slots.append(material)
+
+        if len(materials) < original_slot_count:
+            removed_slot_count = original_slot_count - len(materials)
+            affected_face_count = sum(
+                1
+                for polygon in obj.data.polygons
+                if polygon.material_index >= len(materials)
+            )
+            if affected_face_count:
+                warnings.append(
+                    "{0}: {1} imported material slot(s) removed during the "
+                    "material rebuild ({2} slot(s) -> {3}); {4} face(s) that "
+                    "referenced a removed slot will be remapped onto the "
+                    "last remaining slot.".format(
+                        obj.name,
+                        removed_slot_count,
+                        original_slot_count,
+                        len(materials),
+                        affected_face_count,
+                    )
+                )
+
+        while len(slots) > len(materials):
+            slots.pop(index=len(slots) - 1)
 
     @staticmethod
     def _discard_fbx_material_data(fbx_materials, fbx_images, builder) -> None:

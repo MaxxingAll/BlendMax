@@ -4,6 +4,31 @@ This file records user-visible changes to the 3ds Max exporter/cleanup and the
 Blender importer. BlendMax is still alpha software; host-tested baselines are
 called out separately from automated coverage.
 
+## Blender Importer 0.1.9 — Unreleased
+
+### Fixed
+
+- Fixed a regression where every face on an imported mesh with a manifest
+  material assignment silently collapsed onto material slot 0, discarding
+  the per-face material assignment 3ds Max exported and Blender's FBX
+  importer had correctly read back. The importer previously called
+  `Mesh.materials.clear()` before rebuilding a mesh's converted material
+  slots; clearing the slot collection resets every polygon's
+  `material_index` to 0 as a side effect. The rebuilt slot list was always
+  correct, but every face pointed at slot 0 regardless of which material it
+  had actually been assigned to in 3ds Max. Confirmed against a Multi/Sub-
+  Object chair asset: Blender's native FBX import read `0:70, 1:408, 2:888,
+  3:758, 4:2098, 5:8404` across 12,626 faces; the old BlendMax rebuild
+  collapsed that to `0:12626`. Meshes are now rebuilt by replacing slot
+  contents in place instead, which never touches `polygon.material_index`.
+  Meshes with no manifest assignment keep the previous behavior (their raw
+  FBX materials are still cleared and dropped).
+- Added a warning, surfaced through the existing import warnings list, when
+  a manifest/material-graph mismatch means fewer materials are being
+  assigned than the mesh's imported slot count. Those faces are remapped
+  by Blender onto the mesh's last remaining slot rather than left correctly
+  assigned, so this is now visible in the import summary instead of silent.
+
 ## Blender Importer 0.1.8 — 2026-09-08
 
 ### Added
@@ -295,9 +320,9 @@ The requested real-host validation for the new VRayMtl parameter handling is com
 
 - Basketball: mesh, two material slots, diffuse/normal wiring, and grounded
   world-origin placement passed in Blender 5.2.
-- Four potted plants: 12 meshes, hierarchy, Multi/Sub, `VRay2SidedMtl`, packed
-  images, procedural bump, reconstructed pivots, and world-origin placement
-  passed in Blender 5.2.
+- Four potted plants: 12 meshes, hierarchy, Multi/Sub, `VRay2SidedMtl`,
+  packed images, procedural bump, reconstructed pivots, and world-origin
+  placement passed in Blender 5.2.
 
 ## Max Exporter 0.1.0-alpha.3.6 — 2026-08-20
 
