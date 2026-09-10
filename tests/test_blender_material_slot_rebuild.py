@@ -199,6 +199,7 @@ class ReplaceMaterialSlotsTests(unittest.TestCase):
 
         self.assertEqual(len(obj.data.materials), 1)
         self.assertEqual(tuple(obj.data.materials), ("only_material",))
+        self.assertEqual(self._distribution(obj), {0: 3})
 
     def test_faces_referencing_removed_slots_produce_a_warning_before_the_trim(self):
         original_slots = ["fbx_mat_{0}".format(i) for i in range(6)]
