@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import math
 import sys
 import unittest
 from pathlib import Path
@@ -32,39 +33,204 @@ class FakeVector:
 
 
 class FakeMatrix:
-    def __init__(self, translation):
-        self.translation = FakeVector(translation)
+    """Homogeneous 4x4 matrix fake.
+
+    Mirrors the Blender relationships these tests depend on:
+    ``child.matrix_world = parent.matrix_world @ matrix_parent_inverse @
+    matrix_basis``. Bases are translation @ axis-aligned scale; rotations are
+    intentionally ignored because the adapter normalizes the controller
+    rotation before applying bounds scale.
+    """
+
+    def __init__(self, rows):
+        self.rows = tuple(tuple(float(value) for value in row) for row in rows)
+
+    @classmethod
+    def identity(cls):
+        return cls(
+            (
+                (1.0, 0.0, 0.0, 0.0),
+                (0.0, 1.0, 0.0, 0.0),
+                (0.0, 0.0, 1.0, 0.0),
+                (0.0, 0.0, 0.0, 1.0),
+            )
+        )
+
+    @classmethod
+    def translation_scale(cls, translation, scale):
+        tx, ty, tz = (float(value) for value in translation)
+        sx, sy, sz = (float(value) for value in scale)
+        return cls(
+            (
+                (sx, 0.0, 0.0, tx),
+                (0.0, sy, 0.0, ty),
+                (0.0, 0.0, sz, tz),
+                (0.0, 0.0, 0.0, 1.0),
+            )
+        )
+
+    @classmethod
+    def from_translation(cls, x, y, z):
+        return cls.translation_scale((x, y, z), (1.0, 1.0, 1.0))
+
+    @classmethod
+    def from_rotation_scale(cls, rx, ry, rz, sx, sy, sz):
+        cx, sx_ = math.cos(rx), math.sin(rx)
+        cy, sy_ = math.cos(ry), math.sin(ry)
+        cz, sz_ = math.cos(rz), math.sin(rz)
+        rz_matrix = cls(
+            (
+                (cz, -sz_, 0.0, 0.0),
+                (sz_, cz, 0.0, 0.0),
+                (0.0, 0.0, 1.0, 0.0),
+                (0.0, 0.0, 0.0, 1.0),
+            )
+        )
+        ry_matrix = cls(
+            (
+                (cy, 0.0, sy_, 0.0),
+                (0.0, 1.0, 0.0, 0.0),
+                (-sy_, 0.0, cy, 0.0),
+                (0.0, 0.0, 0.0, 1.0),
+            )
+        )
+        rx_matrix = cls(
+            (
+                (1.0, 0.0, 0.0, 0.0),
+                (0.0, cx, -sx_, 0.0),
+                (0.0, sx_, cx, 0.0),
+                (0.0, 0.0, 0.0, 1.0),
+            )
+        )
+        scale = cls(
+            (
+                (sx, 0.0, 0.0, 0.0),
+                (0.0, sy, 0.0, 0.0),
+                (0.0, 0.0, sz, 0.0),
+                (0.0, 0.0, 0.0, 1.0),
+            )
+        )
+        return rz_matrix @ ry_matrix @ rx_matrix @ scale
+
+    @property
+    def translation(self):
+        return FakeVector((self.rows[0][3], self.rows[1][3], self.rows[2][3]))
+
+    @translation.setter
+    def translation(self, value):
+        rows = [list(row) for row in self.rows]
+        rows[0][3], rows[1][3], rows[2][3] = (
+            float(component) for component in value
+        )
+        self.rows = tuple(tuple(row) for row in rows)
 
     def copy(self):
-        return FakeMatrix(self.translation)
+        return FakeMatrix(self.rows)
 
-    def __matmul__(self, point):
-        return self.translation + point
+    def __matmul__(self, other):
+        if isinstance(other, FakeMatrix):
+            return FakeMatrix(
+                tuple(
+                    tuple(
+                        sum(self.rows[row][k] * other.rows[k][column] for k in range(4))
+                        for column in range(4)
+                    )
+                    for row in range(4)
+                )
+            )
+        if isinstance(other, FakeVector):
+            values = list(other) + [1.0]
+            return FakeVector(
+                sum(self.rows[row][k] * values[k] for k in range(4))
+                for row in range(3)
+            )
+        raise TypeError("FakeMatrix can only multiply FakeMatrix or FakeVector")
+
+    def inverted(self):
+        augmented = [
+            list(row) + list(identity_row)
+            for row, identity_row in zip(self.rows, FakeMatrix.identity().rows)
+        ]
+        for column in range(4):
+            pivot = max(
+                range(column, 4),
+                key=lambda row: abs(augmented[row][column]),
+            )
+            if abs(augmented[pivot][column]) < 1e-12:
+                raise ValueError("FakeMatrix is singular")
+            augmented[column], augmented[pivot] = augmented[pivot], augmented[column]
+            divisor = augmented[column][column]
+            augmented[column] = [value / divisor for value in augmented[column]]
+            for row in range(4):
+                if row == column:
+                    continue
+                factor = augmented[row][column]
+                augmented[row] = [
+                    left - factor * right
+                    for left, right in zip(augmented[row], augmented[column])
+                ]
+        return FakeMatrix(tuple(row[4:] for row in augmented))
+
+    def almost_equal(self, other, tolerance=1e-9):
+        return all(
+            abs(left - right) <= tolerance
+            for left_row, right_row in zip(self.rows, other.rows)
+            for left, right in zip(left_row, right_row)
+        )
 
 
 class FakeMeshObject:
     type = "MESH"
 
-    def __init__(self, location, bound_box, parent=None):
+    def __init__(self, location, bound_box, parent=None, matrix_basis=None):
+        self.children = []
         self.parent = parent
-        self.location = FakeVector(location)
         self.bound_box = bound_box
         self.data = SimpleNamespace(vertices=(object(),))
         self.properties = {}
+        self.matrix_parent_inverse = FakeMatrix.identity()
+        if matrix_basis is None:
+            matrix_basis = FakeMatrix.translation_scale(location, (1.0, 1.0, 1.0))
+        self._matrix_basis = matrix_basis.copy()
+
+    @property
+    def parent(self):
+        return self._parent
+
+    @parent.setter
+    def parent(self, value):
+        # Blender derives a parent's `children` tuple from each object's
+        # `parent` pointer; keep both sides of that relationship in sync so
+        # `controller.children` reads the same way it does in a real scene.
+        old = getattr(self, "_parent", None)
+        if old is not None and self in old.children:
+            old.children.remove(self)
+        self._parent = value
+        if value is not None and self not in value.children:
+            value.children.append(self)
+
+    @property
+    def matrix_basis(self):
+        return self._matrix_basis
+
+    @property
+    def location(self):
+        return self._matrix_basis.translation
 
     @property
     def matrix_world(self):
-        location = self.location
-        if self.parent is not None:
-            location = self.parent.matrix_world.translation + location
-        return FakeMatrix(location)
+        if self.parent is None:
+            return self._matrix_basis.copy()
+        return self.parent.matrix_world @ self.matrix_parent_inverse @ self._matrix_basis
 
     @matrix_world.setter
     def matrix_world(self, value):
-        location = value.translation
-        if self.parent is not None:
-            location = location - self.parent.matrix_world.translation
-        self.location = FakeVector(location)
+        if self.parent is None:
+            self._matrix_basis = value.copy()
+            return
+        self._matrix_basis = (
+            self.parent.matrix_world @ self.matrix_parent_inverse
+        ).inverted() @ value
 
     def __setitem__(self, key, value):
         self.properties[key] = value
@@ -75,8 +241,8 @@ class FakeEmptyObject:
         self.name = name
         self.type = "EMPTY"
         self.data = None
-        self.parent = None
         self.children = []
+        self.parent = None
         self.location = FakeVector((0.0, 0.0, 0.0))
         self.scale = FakeVector((1.0, 1.0, 1.0))
         self.rotation_euler = FakeVector((0.0, 0.0, 0.0))
@@ -86,14 +252,43 @@ class FakeEmptyObject:
         self.hide_select = False
         self.hide_render = False
         self.properties = {}
+        self.matrix_parent_inverse = FakeMatrix.identity()
+
+    @property
+    def parent(self):
+        return self._parent
+
+    @parent.setter
+    def parent(self, value):
+        old = getattr(self, "_parent", None)
+        if old is not None and self in old.children:
+            old.children.remove(self)
+        self._parent = value
+        if value is not None and self not in value.children:
+            value.children.append(self)
+
+    @property
+    def matrix_basis(self):
+        return FakeMatrix.translation_scale(self.location, self.scale)
 
     @property
     def matrix_world(self):
-        return FakeMatrix(self.location)
+        basis = self.matrix_basis
+        if self.parent is None:
+            return basis
+        return self.parent.matrix_world @ self.matrix_parent_inverse @ basis
 
     @matrix_world.setter
     def matrix_world(self, value):
-        self.location = value.translation
+        # Empties in these tests only appear as controllers, so a world write
+        # only needs to reposition them; scale and rotation stay authored.
+        if self.parent is None:
+            self.location = FakeVector(value.translation)
+            return
+        parent_space = (
+            self.parent.matrix_world @ self.matrix_parent_inverse
+        ).inverted() @ value
+        self.location = FakeVector(parent_space.translation)
 
     def __setitem__(self, key, value):
         self.properties[key] = value
@@ -195,17 +390,24 @@ class BlenderControllerBoundsTests(unittest.TestCase):
     def test_promoted_controller_is_the_selectable_bounds_cube(self):
         controller = FakeEmptyObject("Imported Group")
         controller.location = FakeVector((5.0, 6.0, 7.0))
-        controller.scale = FakeVector((2.0, 3.0, 4.0))
+        controller.scale = FakeVector((2.0, 4.0, 8.0))
         controller.rotation_euler = FakeVector((0.1, 0.2, 0.3))
 
         mesh = FakeMeshObject(
             (5.0, 14.0, 23.0),
-            ((0.0, 0.0, 0.0), (2.0, 4.0, 6.0)),
+            ((0.0, 0.0, 0.0), (2.0, 4.0, 8.0)),
             parent=controller,
         )
-        controller.children.append(mesh)
+        # FBX-style parenting: the child's parent inverse cancels the
+        # controller's initial scale so its world corners sit exactly on the
+        # manifest bounds.
+        mesh.matrix_parent_inverse = FakeMatrix.translation_scale(
+            (0.0, 0.0, 0.0), (0.5, 0.25, 0.125)
+        )
         collection = SimpleNamespace(objects=FakeObjectCollection((controller, mesh)))
         package = self._package()
+        package.manifest.bounds_minimum_m = (10.0, 20.0, 30.0)
+        package.manifest.bounds_maximum_m = (12.0, 24.0, 38.0)
         warnings = []
 
         result = self.adapter.BlenderAdapter._create_controller(
@@ -221,9 +423,9 @@ class BlenderControllerBoundsTests(unittest.TestCase):
         self.assertEqual(controller.name, "Test Asset [BlendMax]")
         self.assertEqual(controller.empty_display_type, "CUBE")
         self.assertEqual(controller.empty_display_size, 0.5)
-        self.assertEqual(tuple(controller.location), (11.0, 22.0, 33.0))
+        self.assertEqual(tuple(controller.location), (11.0, 22.0, 34.0))
         self.assertEqual(tuple(controller.rotation_euler), (0.0, 0.0, 0.0))
-        self.assertEqual(tuple(controller.scale), (2.0, 4.0, 6.0))
+        self.assertEqual(tuple(controller.scale), (2.0, 4.0, 8.0))
         self.assertFalse(controller.hide_select)
         self.assertFalse(controller.hide_render)
         self.assertEqual(controller.properties["blendmax_original_name"], "Imported Group")
@@ -234,7 +436,7 @@ class BlenderControllerBoundsTests(unittest.TestCase):
         )
         self.assertEqual(
             controller.properties["blendmax_original_scale"],
-            (2.0, 3.0, 4.0),
+            (2.0, 4.0, 8.0),
         )
         self.assertEqual(tuple(mesh.matrix_world.translation), (10.0, 20.0, 30.0))
         self.assertIs(mesh.parent, controller)
@@ -247,6 +449,102 @@ class BlenderControllerBoundsTests(unittest.TestCase):
             [],
         )
 
+    def test_rotated_hierarchy_world_transforms_survive_full_controller_build(self):
+        # End-to-end guard for the shear bug: unlike the isolated
+        # _apply_bounds_scale() unit test, this runs the whole controller
+        # build (hierarchy restore, root parenting, bounds scale) over a
+        # genuinely rotated/scaled direct child plus a nested grandchild and
+        # pins their world matrices, so any future step that lossily rewrites
+        # transforms after the bounds scale fails here.
+        root_basis = FakeMatrix.from_translation(
+            1.5, -0.5, 2.0
+        ) @ FakeMatrix.from_rotation_scale(
+            math.radians(23.0),
+            math.radians(-31.0),
+            math.radians(17.0),
+            1.2,
+            0.7,
+            1.8,
+        )
+        child_basis = FakeMatrix.from_translation(
+            -0.5, 0.25, 0.75
+        ) @ FakeMatrix.from_rotation_scale(
+            math.radians(-11.0),
+            math.radians(9.0),
+            math.radians(28.0),
+            0.9,
+            1.1,
+            0.6,
+        )
+        root_mesh = FakeMeshObject(
+            (0.0, 0.0, 0.0),
+            ((-1.0, -1.0, -1.0), (1.0, 1.0, 1.0)),
+            matrix_basis=root_basis,
+        )
+        child_mesh = FakeMeshObject(
+            (0.0, 0.0, 0.0),
+            ((-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)),
+            parent=root_mesh,
+            matrix_basis=child_basis,
+        )
+        collection = SimpleNamespace(
+            objects=FakeObjectCollection((root_mesh, child_mesh))
+        )
+        records = (
+            ObjectRecord(
+                object_id="mesh_root",
+                fbx_name="BM_root",
+                original_name="Root Mesh",
+                node_type="Editable_Poly",
+                superclass="GeometryClass",
+            ),
+            ObjectRecord(
+                object_id="mesh_child",
+                fbx_name="BM_child",
+                original_name="Child Mesh",
+                node_type="Editable_Poly",
+                superclass="GeometryClass",
+                parent_id="mesh_root",
+            ),
+        )
+        package = SimpleNamespace(
+            manifest=SimpleNamespace(
+                asset_name="Rotated Asset",
+                schema_version=1,
+                objects=records,
+                bounds_minimum_m=(0.0, 0.0, 0.0),
+                bounds_maximum_m=(1.0, 1.0, 1.0),
+                recommended_scale=1.0,
+            ),
+            source_path=Path("Rotated Asset.blendmax"),
+        )
+
+        root_world_before = root_mesh.matrix_world.copy()
+        child_world_before = child_mesh.matrix_world.copy()
+
+        controller = self.adapter.BlenderAdapter._create_controller(
+            collection,
+            package,
+            {"mesh_root": root_mesh, "mesh_child": child_mesh},
+            False,
+            "Rotated Asset - BlendMax manifest.json",
+            [],
+        )
+
+        self.assertIs(root_mesh.parent, controller)
+        self.assertIs(child_mesh.parent, root_mesh)
+        self.assertGreater(min(float(value) for value in controller.scale), 0.0)
+        self.assertNotEqual(tuple(controller.scale), (1.0, 1.0, 1.0))
+        self.assertTrue(
+            root_mesh.matrix_world.almost_equal(root_world_before, tolerance=1e-8),
+            "Direct child world transform must survive bounds scaling "
+            "without shear loss.",
+        )
+        self.assertTrue(
+            child_mesh.matrix_world.almost_equal(child_world_before, tolerance=1e-8),
+            "Grandchild world transform must be preserved transitively.",
+        )
+
     def test_recommended_scale_multiplies_controller_bounds_scale(self):
         controller = FakeEmptyObject("Imported Group")
         mesh = FakeMeshObject(
@@ -254,7 +552,6 @@ class BlenderControllerBoundsTests(unittest.TestCase):
             ((0.0, 0.0, 0.0), (2.0, 4.0, 6.0)),
             parent=controller,
         )
-        controller.children.append(mesh)
         collection = SimpleNamespace(objects=FakeObjectCollection((controller, mesh)))
 
         self.adapter.BlenderAdapter._create_controller(
@@ -283,7 +580,6 @@ class BlenderControllerBoundsTests(unittest.TestCase):
             ((0.0, 0.0, 0.0), (0.0, 4.0, 6.0)),
             parent=controller,
         )
-        controller.children.append(mesh)
         collection = SimpleNamespace(objects=FakeObjectCollection((controller, mesh)))
         package = self._package()
         package.manifest.bounds_minimum_m = (0.0, 0.0, 0.0)
