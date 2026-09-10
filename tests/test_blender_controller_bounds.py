@@ -32,14 +32,100 @@ class FakeVector:
 
 
 class FakeMatrix:
-    def __init__(self, translation):
-        self.translation = FakeVector(translation)
+    """Homogeneous 4x4 matrix fake.
+
+    Mirrors the Blender relationships these tests depend on:
+    ``child.matrix_world = parent.matrix_world @ matrix_parent_inverse @
+    matrix_basis``. Bases are translation @ axis-aligned scale; rotations are
+    intentionally ignored because the adapter normalizes the controller
+    rotation before applying bounds scale.
+    """
+
+    def __init__(self, rows):
+        self.rows = tuple(tuple(float(value) for value in row) for row in rows)
+
+    @classmethod
+    def identity(cls):
+        return cls(
+            (
+                (1.0, 0.0, 0.0, 0.0),
+                (0.0, 1.0, 0.0, 0.0),
+                (0.0, 0.0, 1.0, 0.0),
+                (0.0, 0.0, 0.0, 1.0),
+            )
+        )
+
+    @classmethod
+    def translation_scale(cls, translation, scale):
+        tx, ty, tz = (float(value) for value in translation)
+        sx, sy, sz = (float(value) for value in scale)
+        return cls(
+            (
+                (sx, 0.0, 0.0, tx),
+                (0.0, sy, 0.0, ty),
+                (0.0, 0.0, sz, tz),
+                (0.0, 0.0, 0.0, 1.0),
+            )
+        )
+
+    @property
+    def translation(self):
+        return FakeVector((self.rows[0][3], self.rows[1][3], self.rows[2][3]))
+
+    @translation.setter
+    def translation(self, value):
+        rows = [list(row) for row in self.rows]
+        rows[0][3], rows[1][3], rows[2][3] = (
+            float(component) for component in value
+        )
+        self.rows = tuple(tuple(row) for row in rows)
 
     def copy(self):
-        return FakeMatrix(self.translation)
+        return FakeMatrix(self.rows)
 
-    def __matmul__(self, point):
-        return self.translation + point
+    def __matmul__(self, other):
+        if isinstance(other, FakeMatrix):
+            return FakeMatrix(
+                tuple(
+                    tuple(
+                        sum(self.rows[row][k] * other.rows[k][column] for k in range(4))
+                        for column in range(4)
+                    )
+                    for row in range(4)
+                )
+            )
+        if isinstance(other, FakeVector):
+            values = list(other) + [1.0]
+            return FakeVector(
+                sum(self.rows[row][k] * values[k] for k in range(4))
+                for row in range(3)
+            )
+        raise TypeError("FakeMatrix can only multiply FakeMatrix or FakeVector")
+
+    def inverted(self):
+        augmented = [
+            list(row) + list(identity_row)
+            for row, identity_row in zip(self.rows, FakeMatrix.identity().rows)
+        ]
+        for column in range(4):
+            pivot = max(
+                range(column, 4),
+                key=lambda row: abs(augmented[row][column]),
+            )
+            if abs(augmented[pivot][column]) < 1e-12:
+                raise ValueError("FakeMatrix is singular")
+            augmented[column], augmented[pivot] = augmented[pivot], augmented[column]
+            divisor = augmented[column][column]
+            augmented[column] = [value / divisor for value in augmented[column]]
+            for row in range(4):
+                if row == column:
+                    continue
+                factor = augmented[row][column]
+                augmented[row] = [
+                    left - factor * right
+                    for left, right in zip(augmented[row], augmented[column])
+                ]
+        return FakeMatrix(tuple(row[4:] for row in augmented))
 
 
 class FakeMeshObject:
@@ -51,20 +137,28 @@ class FakeMeshObject:
         self.bound_box = bound_box
         self.data = SimpleNamespace(vertices=(object(),))
         self.properties = {}
+        self.matrix_parent_inverse = FakeMatrix.identity()
+
+    @property
+    def matrix_basis(self):
+        return FakeMatrix.translation_scale(self.location, (1.0, 1.0, 1.0))
 
     @property
     def matrix_world(self):
-        location = self.location
-        if self.parent is not None:
-            location = self.parent.matrix_world.translation + location
-        return FakeMatrix(location)
+        basis = self.matrix_basis
+        if self.parent is None:
+            return basis
+        return self.parent.matrix_world @ self.matrix_parent_inverse @ basis
 
     @matrix_world.setter
     def matrix_world(self, value):
-        location = value.translation
-        if self.parent is not None:
-            location = location - self.parent.matrix_world.translation
-        self.location = FakeVector(location)
+        if self.parent is None:
+            self.location = FakeVector(value.translation)
+            return
+        parent_space = (
+            self.parent.matrix_world @ self.matrix_parent_inverse
+        ).inverted() @ value
+        self.location = FakeVector(parent_space.translation)
 
     def __setitem__(self, key, value):
         self.properties[key] = value
@@ -86,14 +180,30 @@ class FakeEmptyObject:
         self.hide_select = False
         self.hide_render = False
         self.properties = {}
+        self.matrix_parent_inverse = FakeMatrix.identity()
+
+    @property
+    def matrix_basis(self):
+        return FakeMatrix.translation_scale(self.location, self.scale)
 
     @property
     def matrix_world(self):
-        return FakeMatrix(self.location)
+        basis = self.matrix_basis
+        if self.parent is None:
+            return basis
+        return self.parent.matrix_world @ self.matrix_parent_inverse @ basis
 
     @matrix_world.setter
     def matrix_world(self, value):
-        self.location = value.translation
+        # Empties in these tests only appear as controllers, so a world write
+        # only needs to reposition them; scale and rotation stay authored.
+        if self.parent is None:
+            self.location = FakeVector(value.translation)
+            return
+        parent_space = (
+            self.parent.matrix_world @ self.matrix_parent_inverse
+        ).inverted() @ value
+        self.location = FakeVector(parent_space.translation)
 
     def __setitem__(self, key, value):
         self.properties[key] = value
@@ -195,17 +305,25 @@ class BlenderControllerBoundsTests(unittest.TestCase):
     def test_promoted_controller_is_the_selectable_bounds_cube(self):
         controller = FakeEmptyObject("Imported Group")
         controller.location = FakeVector((5.0, 6.0, 7.0))
-        controller.scale = FakeVector((2.0, 3.0, 4.0))
+        controller.scale = FakeVector((2.0, 4.0, 8.0))
         controller.rotation_euler = FakeVector((0.1, 0.2, 0.3))
 
         mesh = FakeMeshObject(
             (5.0, 14.0, 23.0),
-            ((0.0, 0.0, 0.0), (2.0, 4.0, 6.0)),
+            ((0.0, 0.0, 0.0), (2.0, 4.0, 8.0)),
             parent=controller,
+        )
+        # FBX-style parenting: the child's parent inverse cancels the
+        # controller's initial scale so its world corners sit exactly on the
+        # manifest bounds.
+        mesh.matrix_parent_inverse = FakeMatrix.translation_scale(
+            (0.0, 0.0, 0.0), (0.5, 0.25, 0.125)
         )
         controller.children.append(mesh)
         collection = SimpleNamespace(objects=FakeObjectCollection((controller, mesh)))
         package = self._package()
+        package.manifest.bounds_minimum_m = (10.0, 20.0, 30.0)
+        package.manifest.bounds_maximum_m = (12.0, 24.0, 38.0)
         warnings = []
 
         result = self.adapter.BlenderAdapter._create_controller(
@@ -221,9 +339,9 @@ class BlenderControllerBoundsTests(unittest.TestCase):
         self.assertEqual(controller.name, "Test Asset [BlendMax]")
         self.assertEqual(controller.empty_display_type, "CUBE")
         self.assertEqual(controller.empty_display_size, 0.5)
-        self.assertEqual(tuple(controller.location), (11.0, 22.0, 33.0))
+        self.assertEqual(tuple(controller.location), (11.0, 22.0, 34.0))
         self.assertEqual(tuple(controller.rotation_euler), (0.0, 0.0, 0.0))
-        self.assertEqual(tuple(controller.scale), (2.0, 4.0, 6.0))
+        self.assertEqual(tuple(controller.scale), (2.0, 4.0, 8.0))
         self.assertFalse(controller.hide_select)
         self.assertFalse(controller.hide_render)
         self.assertEqual(controller.properties["blendmax_original_name"], "Imported Group")
@@ -234,7 +352,7 @@ class BlenderControllerBoundsTests(unittest.TestCase):
         )
         self.assertEqual(
             controller.properties["blendmax_original_scale"],
-            (2.0, 3.0, 4.0),
+            (2.0, 4.0, 8.0),
         )
         self.assertEqual(tuple(mesh.matrix_world.translation), (10.0, 20.0, 30.0))
         self.assertIs(mesh.parent, controller)

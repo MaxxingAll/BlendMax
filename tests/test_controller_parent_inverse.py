@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import math
 import sys
+import unittest
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
@@ -213,51 +214,56 @@ def load_adapter():
     return module
 
 
-def test_anisotropic_bounds_scale_preserves_rotated_direct_child_and_grandchild_world_matrices():
-    adapter = load_adapter()
-    controller = FakeController()
-    child = FakeChild(
-        FakeMatrix.from_translation(2.0, -1.0, 4.0)
-        @ FakeMatrix.from_rotation_scale(
-            math.radians(23.0),
-            math.radians(-31.0),
-            math.radians(17.0),
-            1.2,
-            0.7,
-            1.8,
-        ),
-        parent=controller,
-    )
-    grandchild = FakeChild(
-        FakeMatrix.from_translation(-0.5, 0.25, 0.75)
-        @ FakeMatrix.from_rotation_scale(
-            math.radians(-11.0),
-            math.radians(9.0),
-            math.radians(28.0),
-            0.9,
-            1.1,
-            0.6,
-        ),
-        parent=child,
-    )
-    controller.children.append(child)
-    child.children.append(grandchild)
+class ControllerParentInverseBoundsTests(unittest.TestCase):
+    def test_anisotropic_bounds_scale_preserves_rotated_direct_child_and_grandchild_world_matrices(self):
+        adapter = load_adapter()
+        controller = FakeController()
+        child = FakeChild(
+            FakeMatrix.from_translation(2.0, -1.0, 4.0)
+            @ FakeMatrix.from_rotation_scale(
+                math.radians(23.0),
+                math.radians(-31.0),
+                math.radians(17.0),
+                1.2,
+                0.7,
+                1.8,
+            ),
+            parent=controller,
+        )
+        grandchild = FakeChild(
+            FakeMatrix.from_translation(-0.5, 0.25, 0.75)
+            @ FakeMatrix.from_rotation_scale(
+                math.radians(-11.0),
+                math.radians(9.0),
+                math.radians(28.0),
+                0.9,
+                1.1,
+                0.6,
+            ),
+            parent=child,
+        )
+        controller.children.append(child)
+        child.children.append(grandchild)
 
-    child_world_before = child.matrix_world.copy()
-    grandchild_world_before = grandchild.matrix_world.copy()
-    child_basis_before = child.matrix_basis.copy()
-    parent_inverse_before = child.matrix_parent_inverse.copy()
+        child_world_before = child.matrix_world.copy()
+        grandchild_world_before = grandchild.matrix_world.copy()
+        child_basis_before = child.matrix_basis.copy()
+        parent_inverse_before = child.matrix_parent_inverse.copy()
 
-    adapter.BlenderAdapter._apply_bounds_scale(
-        controller,
-        (2.0, 4.0, 6.0),
-    )
+        adapter.BlenderAdapter._apply_bounds_scale(
+            controller,
+            (2.0, 4.0, 6.0),
+        )
 
-    assert controller.scale == (2.0, 4.0, 6.0)
-    assert not child.matrix_parent_inverse.almost_equal(parent_inverse_before)
-    assert child.matrix_parent_inverse.almost_equal(
-        controller.matrix_world.inverted() @ FakeMatrix.from_translation(3.0, 5.0, 7.0)
-    )
-    assert child.matrix_basis.almost_equal(child_basis_before)
-    assert child.matrix_world.almost_equal(child_world_before)
-    assert grandchild.matrix_world.almost_equal(grandchild_world_before)
+        assert controller.scale == (2.0, 4.0, 6.0)
+        assert not child.matrix_parent_inverse.almost_equal(parent_inverse_before)
+        assert child.matrix_parent_inverse.almost_equal(
+            controller.matrix_world.inverted() @ FakeMatrix.from_translation(3.0, 5.0, 7.0)
+        )
+        assert child.matrix_basis.almost_equal(child_basis_before)
+        assert child.matrix_world.almost_equal(child_world_before)
+        assert grandchild.matrix_world.almost_equal(grandchild_world_before)
+
+
+if __name__ == "__main__":
+    unittest.main()
