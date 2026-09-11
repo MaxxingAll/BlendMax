@@ -186,6 +186,7 @@ class BlenderAdapter:
             raise BlendMaxImportError("The FBX importer created no objects.")
         fbx_materials = set(bpy.data.materials) - before_materials
         fbx_images = set(bpy.data.images) - before_images
+        self._reserve_fbx_material_names(fbx_materials)
 
         manifest = package.manifest
         index = ManifestIndex(manifest)
@@ -603,6 +604,25 @@ class BlenderAdapter:
 
         while len(slots) > len(materials):
             slots.pop(index=len(slots) - 1)
+
+    @staticmethod
+    def _reserve_fbx_material_names(fbx_materials) -> None:
+        """Move the FBX importer's materials out of the manifest's way.
+
+        These materials are only kept around so `_replace_material_slots`
+        has something to swap out of each mesh's slots; they get discarded
+        a few steps later in `_discard_fbx_material_data`. But until then
+        they still occupy their original names (e.g. "Wood Veneer 01"), and
+        `MaterialBuilder` wants those exact names for the manifest-authored
+        replacements. Left alone, Blender resolves the naming collision by
+        silently appending ".001" to the new material -- and that suffix
+        sticks around permanently, since removing the old FBX material
+        afterward does not rename the survivor back. Renaming the FBX
+        materials to a scratch prefix first frees the original names for
+        the real materials to claim outright.
+        """
+        for material in fbx_materials:
+            material.name = "__blendmax_fbx_import__{0}".format(material.name)
 
     @staticmethod
     def _discard_fbx_material_data(fbx_materials, fbx_images, builder) -> None:
