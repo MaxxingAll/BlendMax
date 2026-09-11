@@ -28,6 +28,11 @@ called out separately from automated coverage.
   assigned than the mesh's imported slot count. Those faces are remapped
   by Blender onto the mesh's last remaining slot rather than left correctly
   assigned, so this is now visible in the import summary instead of silent.
+- Prevented FBX-native material names from colliding with manifest-authored
+  material names and receiving Blender's automatic `.001` suffix. Freshly
+  imported FBX materials are temporarily renamed before manifest materials
+  are created, freeing the original names while preserving identity-based
+  cleanup of the native FBX material datablocks.
 
 ## Blender Importer 0.1.8 — 2026-09-08
 
