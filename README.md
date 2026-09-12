@@ -21,7 +21,7 @@ created automatically by Python.
 | Component | Version | Status |
 | --- | --- | --- |
 | 3ds Max exporter and cleanup | `0.1.0-alpha.4.3.0` | Host verified in 3ds Max 2025.3 |
-| Blender importer | `0.1.8` | Structured import summary and in-process hot reload |
+| Blender importer | `0.1.9` | Structured import summary and in-process hot reload |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
 | Automated suite | See CI | Python 3.11–3.13 |
 
@@ -80,8 +80,8 @@ When separate materials share a normalized name, cleanup fingerprints only
 that duplicate-name set. Physical Material fingerprints include every readable
 public value plus the complete recursive sub-material and texture-map graph;
 V-Ray fingerprints include conversion-relevant values, map controls, and the
-same recursive topology. Names, Max handles, Slate positions, and preview state
-do not affect equality. BlendMax offers to merge only structurally identical
+same recursive topology. Names, Max handles, Slate positions, and preview
+state do not affect equality. BlendMax offers to merge only structurally identical
 sets into a copied `<name>_MERGED` material. Refusing keeps the original
 material identities and separate output meshes. Same-name materials with
 different setups are never silently combined.
@@ -120,7 +120,7 @@ root group plus one mesh per material.
 1. Download a newer BlendMax release ZIP without extracting it.
 2. In 3ds Max, choose **BlendMax > Install Update from ZIP...**.
 3. Select the ZIP. The updated Python core is loaded by the next BlendMax
-   action; restart 3ds Max only when a release changes the menu layout.
+action; restart 3ds Max only when a release changes the menu layout.
 
 The updater validates the release structure, rejects unsafe archive paths,
 builds a new AppBundle in a staging directory, and replaces only the installed
@@ -132,7 +132,7 @@ an updated exporter or cleanup action cannot continue running stale code.
 
 ## Install the Blender importer
 
-Build or download `blendmax_importer-0.1.8.zip`, then in Blender:
+Build or download `blendmax_importer-0.1.9.zip`, then in Blender:
 
 1. Open **Edit > Preferences > Get Extensions**.
 2. Open the menu in the top-right and choose **Install from Disk**.
@@ -206,7 +206,9 @@ The complete original `manifest.json` is also stored as a Blender Text data
 block and referenced by the asset collection/controller. Parameters that do not
 yet have a native Blender equivalent therefore remain available for later
 converter improvements instead of being discarded. During a `VRayMtl` import,
-known unsupported fields are grouped into one informational note. Truly unexpected parameters remain warnings, so future exporter additions still surface without flooding normal imports with expected limitations.
+known unsupported fields are grouped into one informational note. Truly unexpected
+parameters remain warnings, so future exporter additions still surface without
+flooding normal imports with expected limitations.
 
 After a successful `.blendmax` import, BlendMax opens a compact **BlendMax Import Complete** dialog with the asset name and counts for imported objects, materials, packaged textures, warnings, and compatibility notes. Known limitations are grouped under **Compatibility Notes**, while actionable problems remain under **Warnings**. The existing console messages are retained for debugging.
 

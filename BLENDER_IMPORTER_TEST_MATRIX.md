@@ -1,4 +1,43 @@
-# BlendMax Blender Importer 0.1.8 Test Matrix
+# BlendMax Blender Importer 0.1.9 Test Matrix
+
+
+## Material-name collision reservation (`.001`) — PENDING HOST TEST
+
+**Purpose:** Verify that an FBX-native material name identical to a manifest
+material name does not cause the BlendMax-authored material to receive a
+Blender collision suffix such as `.001`.
+
+**Repro asset:** An FBX whose mesh includes a material named exactly
+`Wood Veneer 01`, paired with a `.blendmax` manifest assignment that builds a
+material with the same exact name. The mesh should also have at least two
+distinct per-face material assignments so material-index preservation can be
+checked independently.
+
+**Procedure:**
+
+1. Import the prepared `.blendmax` package through the normal BlendMax importer.
+2. In the Outliner / Material Properties, locate the final `Wood Veneer 01`
+   material.
+3. Confirm the manifest-driven material is named exactly `Wood Veneer 01` and
+   no unexpected `Wood Veneer 01.001` material was created by the collision.
+4. Confirm the mesh material slots reference the converted BlendMax materials.
+5. Compare the native FBX polygon `material_index` sequence with the values
+   after BlendMax slot rebuilding; each face must resolve to the same logical
+   material as the native import.
+6. Confirm temporary FBX-native materials are not left attached unexpectedly.
+
+**Expected:** Exact manifest material name is preserved; no `.001` suffix is
+introduced by the FBX/manifest name collision; material-slot ordering and
+per-face assignments remain intact.
+
+**Evidence:** Record Blender version, BlendMax build, repro package, final
+material names, final slot order, native/post-import material-index sequences,
+and a screenshot of the final material list.
+
+**Automation boundary:** The Python regression tests model Blender's
+collision-renaming behavior but do not execute Blender or `bpy`; this matrix
+entry is the real-host validation gate.
+
 
 ## Scope
 
@@ -7,7 +46,7 @@ maximum Blender version is declared; API variation is contained in the Blender
 adapter through operator, socket, and property feature detection.
 
 The importer does not run a background service, persistent handler, or polling
-loop. The 0.1.8 developer workflow adds one-shot use of `bpy.app.timers` only to
+loop. The 0.1.9 developer workflow adds one-shot use of `bpy.app.timers` only to
 defer the **Reload BlendMax** operation until the current Preferences operator
 has returned.
 
@@ -49,7 +88,7 @@ ground truth for renderer-specific host behavior.
 
 ### B. Blender extension ZIP layout — PENDING HOST TEST
 
-1. Build `blendmax_importer-0.1.8.zip` and install it through **Install from Disk**.
+1. Build `blendmax_importer-0.1.9.zip` and install it through **Install from Disk**.
 2. Confirm Blender registers the extension under its `bl_ext.*` package namespace.
 3. Open **Edit > Preferences > Extensions > BlendMax Importer** and confirm
    **Reload BlendMax** is available.

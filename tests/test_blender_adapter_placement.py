@@ -68,6 +68,59 @@ class FakeMeshObject:
         self.world_assignments += 1
 
 
+class FakeMaterialsCollection:
+    """Stands in for `bpy.data.materials`.
+
+    Blender's data-block collections auto-suffix a name with '.001' (or the
+    next free '.NNN') whenever it collides with an existing block of the
+    same type -- on both `.new(name=...)` and later `.name = ...`
+    assignment. That auto-suffixing is the actual mechanism behind the
+    ".001" regression, so the regression test needs it modeled here rather
+    than just trusting that a rename happened.
+    """
+
+    def __init__(self):
+        self._by_name = {}
+
+    def _unique_name(self, requested, exclude=None):
+        if requested not in self._by_name or self._by_name[requested] is exclude:
+            return requested
+        counter = 1
+        while True:
+            candidate = "{0}.{1:03d}".format(requested, counter)
+            if candidate not in self._by_name or self._by_name[candidate] is exclude:
+                return candidate
+            counter += 1
+
+    def _rename(self, material, requested):
+        current = getattr(material, "_name", None)
+        if current is not None and self._by_name.get(current) is material:
+            del self._by_name[current]
+        unique = self._unique_name(requested, exclude=material)
+        self._by_name[unique] = material
+        return unique
+
+    def new(self, name):
+        material = FakeMaterial.__new__(FakeMaterial)
+        material._collection = self
+        material._name = self._rename(material, name)
+        return material
+
+
+class FakeMaterial:
+    def __init__(self, name, collection):
+        self._collection = collection
+        self._name = collection._rename(self, name)
+
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, value):
+        self._name = self._collection._rename(self, value)
+
+
 class FakeImportedObject:
     def __init__(self, name, object_type="MESH", data=None):
         self.name = name
@@ -304,6 +357,54 @@ class BlenderAdapterPlacementTests(unittest.TestCase):
 
         self.assertEqual(objects.removed, [undeclared])
         self.assertEqual(meshes.removed, [mesh])
+
+    def test_reserve_fbx_material_names_frees_original_names(self):
+        class FakeMaterial:
+            def __init__(self, name):
+                self.name = name
+
+        wood = FakeMaterial("Wood Veneer 01")
+        empty = FakeMaterial("Empty material")
+
+        self.adapter.BlenderAdapter._reserve_fbx_material_names((wood, empty))
+
+        # Renamed off of their manifest-matching names so MaterialBuilder's
+        # later `bpy.data.materials.new(name=...)` call for the same name
+        # does not collide and get auto-suffixed with ".001".
+        self.assertNotEqual(wood.name, "Wood Veneer 01")
+        self.assertNotEqual(empty.name, "Empty material")
+        # Original names are still recoverable for debugging/traceability.
+        self.assertIn("Wood Veneer 01", wood.name)
+        self.assertIn("Empty material", empty.name)
+        # Distinct FBX materials must not collide with each other either.
+        self.assertNotEqual(wood.name, empty.name)
+
+    def test_reserving_fbx_names_lets_the_manifest_material_reclaim_them(self):
+        """End-to-end contract: reservation must actually stop the ".001".
+
+        The unit test above only proves the helper renames its input. This
+        test reproduces the full collision Blender itself would produce,
+        using a fake `bpy.data.materials` collection that auto-suffixes on
+        name collisions the same way Blender's real one does. Without the
+        fix (i.e. skipping the reservation step) this test fails with
+        `manifest_material.name == "Wood Veneer 01.001"`.
+        """
+        materials = FakeMaterialsCollection()
+        wood = materials.new("Wood Veneer 01")
+        self.assertEqual(wood.name, "Wood Veneer 01")
+
+        # Stands in for `_import`'s call right after the FBX import,
+        # before `MaterialBuilder` is ever constructed.
+        self.adapter.BlenderAdapter._reserve_fbx_material_names((wood,))
+        self.assertNotEqual(wood.name, "Wood Veneer 01")
+
+        # Mirrors `MaterialBuilder.build_material`'s
+        # `bpy.data.materials.new(name=name or ref)` call using the exact
+        # manifest name "Wood Veneer 01".
+        manifest_material = materials.new("Wood Veneer 01")
+
+        self.assertEqual(manifest_material.name, "Wood Veneer 01")
+        self.assertIsNot(manifest_material, wood)
 
 
 if __name__ == "__main__":
