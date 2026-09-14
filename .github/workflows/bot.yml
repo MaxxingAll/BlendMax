@@ -55,7 +55,8 @@ jobs:
       # ---- Replace this step with the actual change you want automated. ----
       - name: Make a change
         run: |
-          echo "Automated update by the BlendMax App at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> BOT_LOG.md
+          echo "TODO: this is a placeholder. Add the real automated change here."
+          exit 1
 
       - name: Commit and push
         run: |
