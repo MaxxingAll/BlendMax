@@ -1,0 +1,25 @@
+name: Bot
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to commit to
+        required: true
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+      - name: Configure git as the App
+        run: |
+          git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
+          git config user.email "${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
+      # ... your commit/push/PR steps, authenticated with ${{ steps.app-token.outputs.token }}
