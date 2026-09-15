@@ -69,17 +69,24 @@ jobs:
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
 
       - name: Configure git to author as the App
-        env:
-          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        # Pinned deliberately, NOT derived from steps.app-token.outputs.app-slug.
+        # The App was renamed, and a runtime-derived slug kept the pre-rename
+        # value, producing commits authored as a bot account that does not exist
+        # (GitHub showed them UNLINKED / type "-" instead of type "Bot").
+        # A rename must force an edit here rather than silently break authorship.
         run: |
-          git config user.name "${APP_SLUG}[bot]"
-          git config user.email "${APP_SLUG}[bot]@users.noreply.github.com"
+          git config user.name "deepseek-chan[bot]"
+          git config user.email "deepseek-chan[bot]@users.noreply.github.com"
 
       # ---- Replace this step with the actual change you want automated. ----
       - name: Make a change
         run: |
-          echo "TODO: this is a placeholder. Add the real automated change here."
-          exit 1
+          {
+            echo "# Bot identity smoke test"
+            echo
+            echo "Written by the BlendMax App at $(date -u +%Y-%m-%dT%H:%M:%SZ)."
+            echo "Delete this file once the App identity is confirmed linked."
+          } > BOT_IDENTITY_CHECK.md
 
       - name: Commit and push to the working branch
         env:
