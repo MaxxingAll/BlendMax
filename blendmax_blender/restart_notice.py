@@ -4,9 +4,19 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
+_IS_WINDOWS = sys.platform == "win32"
 _STATE_FILENAME = "blendmax_restart_notice.json"
+
+# Win32 constants for the non-destructive liveness probe. Deliberately NOT
+# PROCESS_TERMINATE: this code must never be able to end a process it only
+# means to observe. See _windows_pid_is_alive().
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_STILL_ACTIVE = 259
+_ERROR_INVALID_PARAMETER = 87
+_ERROR_ACCESS_DENIED = 5
 
 
 def _state_path(bpy) -> Path:
@@ -60,9 +70,56 @@ def _persist_state(path: Path, state: dict) -> bool:
     return True
 
 
+def _windows_pid_is_alive(pid: int) -> bool:
+    """Non-destructive liveness probe using a query-only process handle.
+
+    ``os.kill(pid, 0)`` is not a safe probe on Windows. Verified on CPython
+    3.11 (MSC v.1944, 64-bit): calling it against a live, unrelated child
+    process terminates it — the child reaped with exit status 3221225794
+    (``0xC0000142``, ``STATUS_DLL_INIT_FAILED``), the signature of
+    ``TerminateProcess``. Windows has no "signal 0" concept, so CPython's
+    ``os.kill`` maps the call onto a real termination.
+
+    Persisted PIDs from a previous Blender session can be recycled by an
+    unrelated process, and ``_pruned_consumed_pids`` calls this probe on those
+    persisted values — so the old implementation could kill a bystander.
+
+    This opens the process with ``PROCESS_QUERY_LIMITED_INFORMATION`` only, a
+    handle that cannot terminate or signal anything, and classifies the failure
+    by ``GetLastError``.
+    """
+
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+
+    handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        # ACCESS_DENIED means the process is there but owned by someone else:
+        # still alive. INVALID_PARAMETER means no such PID.
+        return ctypes.get_last_error() == _ERROR_ACCESS_DENIED
+    try:
+        exit_code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return False
+        return exit_code.value == _STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _pid_is_alive(pid: int) -> bool:
     if not isinstance(pid, int) or pid <= 0:
         return False
+    if _IS_WINDOWS:
+        return _windows_pid_is_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
