@@ -252,22 +252,22 @@ class FakeKernel32:
     Attributes are ``MagicMock``s so the ctypes ``argtypes``/``restype``
     assignments the probe performs are accepted. Models the Win32 contract the
     real API guarantees: OpenProcess returns a handle or NULL (with
-    GetLastError set), GetExitCodeProcess fills in STILL_ACTIVE (259) for a
-    live process or the real exit code otherwise.
+    GetLastError set); WaitForSingleObject returns WAIT_OBJECT_0 once the
+    process object is signaled (process terminated) and WAIT_TIMEOUT while it
+    is still running.
     """
 
-    def __init__(self, handle, *, exit_code=259, last_error=0, exit_code_ok=True):
+    def __init__(self, handle, *, wait_result=0x00000102, last_error=0):
         self._handle = handle
-        self._exit_code = exit_code
-        self._exit_code_ok = exit_code_ok
+        self._wait_result = wait_result
         self.last_error = last_error
         self.opened_with = []
         self.closed = []
-        self.queried = []
+        self.waited = []
 
         self.OpenProcess = MagicMock(side_effect=self._open_process)
         self.CloseHandle = MagicMock(side_effect=self._close_handle)
-        self.GetExitCodeProcess = MagicMock(side_effect=self._get_exit_code)
+        self.WaitForSingleObject = MagicMock(side_effect=self._wait)
 
     def _open_process(self, access, inherit, pid):
         self.opened_with.append((access, inherit, pid))
@@ -277,12 +277,9 @@ class FakeKernel32:
         self.closed.append(handle)
         return 1
 
-    def _get_exit_code(self, handle, out):
-        self.queried.append(handle)
-        if not self._exit_code_ok:
-            return 0
-        out._obj.value = self._exit_code
-        return 1
+    def _wait(self, handle, timeout):
+        self.waited.append((handle, timeout))
+        return self._wait_result
 
 
 class WindowsPidLivenessTests(unittest.TestCase):
@@ -299,14 +296,31 @@ class WindowsPidLivenessTests(unittest.TestCase):
                     return restart_notice._windows_pid_is_alive(pid)
 
     def test_live_process_is_alive(self):
-        kernel32 = FakeKernel32(handle=123, exit_code=restart_notice._STILL_ACTIVE)
+        """WAIT_TIMEOUT means the process object is not signaled: still running."""
+        kernel32 = FakeKernel32(handle=123, wait_result=restart_notice._WAIT_TIMEOUT)
         self.assertIs(self._probe(kernel32), True)
-        self.assertEqual(kernel32.queried, [123])
+        self.assertEqual(kernel32.waited, [(123, 0)])
         self.assertEqual(kernel32.closed, [123])
 
     def test_exited_process_is_dead(self):
-        kernel32 = FakeKernel32(handle=123, exit_code=0)
+        kernel32 = FakeKernel32(handle=123, wait_result=restart_notice._WAIT_OBJECT_0)
         self.assertIs(self._probe(kernel32), False)
+
+    def test_terminated_process_that_exited_with_259_is_dead(self):
+        """Regression: exit code 259 must not be mistaken for STILL_ACTIVE.
+
+        GetExitCodeProcess returns 259 both for a running process and for one
+        that exited with status 259, so liveness is read from the wait state.
+        A process that exited with 259 is signaled, hence WAIT_OBJECT_0.
+        """
+        kernel32 = FakeKernel32(handle=123, wait_result=restart_notice._WAIT_OBJECT_0)
+        self.assertIs(self._probe(kernel32), False)
+
+    def test_unexpected_wait_result_is_dead(self):
+        """Anything that is neither signaled nor timed out stays conservative."""
+        kernel32 = FakeKernel32(handle=123, wait_result=0xFFFFFFFF)  # WAIT_FAILED
+        self.assertIs(self._probe(kernel32), False)
+        self.assertEqual(kernel32.closed, [123])
 
     def test_nonexistent_process_is_dead(self):
         kernel32 = FakeKernel32(
@@ -319,22 +333,18 @@ class WindowsPidLivenessTests(unittest.TestCase):
         kernel32 = FakeKernel32(handle=0, last_error=restart_notice._ERROR_ACCESS_DENIED)
         self.assertIs(self._probe(kernel32), True)
 
-    def test_query_failure_is_dead_and_still_closes_the_handle(self):
-        kernel32 = FakeKernel32(handle=123, exit_code_ok=False)
-        self.assertIs(self._probe(kernel32), False)
-        self.assertEqual(kernel32.closed, [123])
-
-    def test_probe_requests_query_only_access(self):
+    def test_probe_requests_query_and_wait_access_only(self):
         """Regression: PROCESS_TERMINATE must never be requested."""
         kernel32 = FakeKernel32(handle=123)
         self._probe(kernel32)
         access = kernel32.opened_with[0][0]
-        self.assertEqual(access, restart_notice._PROCESS_QUERY_LIMITED_INFORMATION)
+        self.assertTrue(access & restart_notice._PROCESS_QUERY_LIMITED_INFORMATION)
+        self.assertTrue(access & restart_notice._SYNCHRONIZE)
         self.assertFalse(access & 0x0001, "PROCESS_TERMINATE bit must be clear")
 
     def test_windows_path_does_not_call_os_kill(self):
         """Regression: the Windows branch never touches os.kill."""
-        kernel32 = FakeKernel32(handle=123, exit_code=restart_notice._STILL_ACTIVE)
+        kernel32 = FakeKernel32(handle=123, wait_result=restart_notice._WAIT_TIMEOUT)
         with patch.object(restart_notice, "_IS_WINDOWS", True):
             with patch("ctypes.WinDLL", return_value=kernel32, create=True):
                 with patch.object(

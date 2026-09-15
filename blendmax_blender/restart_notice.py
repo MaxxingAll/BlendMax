@@ -13,8 +13,15 @@ _STATE_FILENAME = "blendmax_restart_notice.json"
 # Win32 constants for the non-destructive liveness probe. Deliberately NOT
 # PROCESS_TERMINATE: this code must never be able to end a process it only
 # means to observe. See _windows_pid_is_alive().
+#
+# SYNCHRONIZE is required to wait on the process object. The probe signals
+# liveness via the wait state rather than the exit code, because
+# GetExitCodeProcess cannot distinguish a running process from one that exited
+# with STILL_ACTIVE (259) — see _windows_pid_is_alive().
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-_STILL_ACTIVE = 259
+_SYNCHRONIZE = 0x00100000
+_WAIT_OBJECT_0 = 0x00000000
+_WAIT_TIMEOUT = 0x00000102
 _ERROR_INVALID_PARAMETER = 87
 _ERROR_ACCESS_DENIED = 5
 
@@ -84,9 +91,18 @@ def _windows_pid_is_alive(pid: int) -> bool:
     unrelated process, and ``_pruned_consumed_pids`` calls this probe on those
     persisted values — so the old implementation could kill a bystander.
 
-    This opens the process with ``PROCESS_QUERY_LIMITED_INFORMATION`` only, a
-    handle that cannot terminate or signal anything, and classifies the failure
-    by ``GetLastError``.
+    Liveness is decided by the **wait state** of the process object, not by its
+    exit code. ``GetExitCodeProcess`` returns ``STILL_ACTIVE`` (259) for a
+    running process, but 259 is also a legal exit code, so a process that
+    exited with status 259 is indistinguishable from a live one and would be
+    retained forever as a stale PID. ``WaitForSingleObject(handle, 0)`` returns
+    ``WAIT_OBJECT_0`` only once the process object is signaled — i.e. the
+    process has actually terminated — which stays correct whatever exit code it
+    used.
+
+    The handle is opened with ``PROCESS_QUERY_LIMITED_INFORMATION |
+    SYNCHRONIZE``: query and wait rights only, so it cannot terminate or signal
+    anything. Access failures are classified by ``GetLastError``.
     """
 
     import ctypes
@@ -98,19 +114,20 @@ def _windows_pid_is_alive(pid: int) -> bool:
     kernel32.OpenProcess.restype = wintypes.HANDLE
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel32.CloseHandle.restype = wintypes.BOOL
-    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
-    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
 
-    handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    access = _PROCESS_QUERY_LIMITED_INFORMATION | _SYNCHRONIZE
+    handle = kernel32.OpenProcess(access, False, pid)
     if not handle:
         # ACCESS_DENIED means the process is there but owned by someone else:
         # still alive. INVALID_PARAMETER means no such PID.
         return ctypes.get_last_error() == _ERROR_ACCESS_DENIED
     try:
-        exit_code = wintypes.DWORD()
-        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
-            return False
-        return exit_code.value == _STILL_ACTIVE
+        # WAIT_OBJECT_0 => signaled => the process has exited. WAIT_TIMEOUT =>
+        # still running. Anything else is treated as dead, matching the old
+        # probe's conservative handling of unexpected OS failures.
+        return kernel32.WaitForSingleObject(handle, 0) == _WAIT_TIMEOUT
     finally:
         kernel32.CloseHandle(handle)
 
