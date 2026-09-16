@@ -335,12 +335,18 @@ class MaxRuntimeAdapter:
             update = ""
             if index + 1 < len(values):
                 candidate = values[index + 1].strip()
-                # The host may return the update component with harmless suffix
-                # text, e.g. ".3 Update" rather than ".3". Match the numeric
-                # token at the start of the value and ignore any trailing text,
-                # so a suffixed value is not silently downgraded to year-only.
-                # A leading-junk value such as "x.3" still does not match.
-                match = re.match(r"\.\d+", candidate)
+                # The host may return the update component with harmless trailing
+                # TEXT (".3 Update" rather than ".3"), so the numeric token is
+                # matched at the start of the value and trailing text ignored.
+                #
+                # Trailing version NUMBERS are NOT ignored: a dotted suffix like
+                # ".3.1" is a real version component, not decoration. Matching it
+                # as ".3" would report a newer-than-target build as the target
+                # and suppress the compatibility warning that should fire. The
+                # lookahead makes such values fall back to year-only instead.
+                #
+                # A leading-junk value such as "x.3" does not match either.
+                match = re.match(r"\.\d+(?![\d.])", candidate)
                 if match:
                     update = match.group(0)
             return "{0}{1}".format(year, update)

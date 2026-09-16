@@ -544,7 +544,7 @@ class MaxVersionParserTests(unittest.TestCase):
     """
 
     def setUp(self):
-        self.adapter = MaxRuntimeAdapter.__new__(MaxRuntimeAdapter)
+        self.adapter = MaxRuntimeAdapter(runtime=FakeRuntime())
 
     def _parse(self, values):
         return self.adapter._parse_max_version(values)
@@ -577,6 +577,31 @@ class MaxVersionParserTests(unittest.TestCase):
     def test_leading_junk_is_not_accepted_as_an_update(self):
         """Only a numeric token at the START of the value counts."""
         self.assertEqual(self._parse(["2025", "x.3"]), "2025")
+
+    def test_trailing_text_after_the_number_is_tolerated(self):
+        """Harmless trailing text is decoration, so the token still parses."""
+        self.assertEqual(self._parse(["2025", ".3abc"]), "2025.3")
+
+    def test_dotted_sub_version_falls_back_to_year(self):
+        """A trailing version NUMBER is not decoration.
+
+        ".3.1" is a real version component: reporting it as ".3" would present a
+        newer-than-target build as the target and suppress the warning that
+        should fire. It must fall back to year-only instead.
+        """
+        self.assertEqual(self._parse(["2025", ".3.1"]), "2025")
+        self.assertEqual(self._parse(["2025", ".3.1.4"]), "2025")
+
+    def test_dotted_sub_version_still_warns_through_source_metadata(self):
+        class DottedRuntime(FakeRuntime):
+            @staticmethod
+            def maxVersion():
+                return [27000, 66, 0, 27, 3, 0, 30874, 2025, ".3.1"]
+
+        metadata = MaxRuntimeAdapter(runtime=DottedRuntime()).source_metadata()
+        self.assertEqual(metadata["max_version"], "2025")
+        self.assertFalse(metadata["compatibility"]["max_matches_target"])
+        self.assertTrue(metadata["compatibility"]["warnings"])
 
     def test_empty_trailing_value_is_ignored(self):
         self.assertEqual(self._parse(["2025", ""]), "2025")
