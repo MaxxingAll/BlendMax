@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import contextlib
+import io
+import sys
 import tempfile
 import tomllib
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
+import blendmax_blender
+from tools import build_blender_extension as builder
 from tools.build_blender_extension import build
 
 
@@ -32,6 +38,143 @@ class BlenderExtensionBuildTests(unittest.TestCase):
             first = build(root / "first.zip")
             second = build(root / "second.zip")
             self.assertEqual(first.read_bytes(), second.read_bytes())
+
+
+class BlenderVersionMetadataTests(unittest.TestCase):
+    """The Blender importer's version is declared in three production places.
+
+    Only ``blender_manifest.toml`` is consumed: Blender 4.2+ reads it for an
+    installed extension, and ``tools/build_blender_extension.py`` names the
+    built artifact from it. ``__init__.py``'s ``__version__`` and the legacy
+    ``bl_info`` dict are informational, and nothing in the repository reads
+    them -- which is why ``bl_info`` sat at ``0.1.8`` through the whole 0.1.9
+    release without anything noticing. Every test here fails if those three
+    disagree, so that drift cannot recur silently.
+
+    A fourth value must also move on release: the literal ``"0.1.9"`` asserted
+    by :class:`BlenderExtensionBuildTests`. It is an independent expectation
+    rather than a declaration, so it is deliberately left in step by hand.
+
+    The 3ds Max component is deliberately NOT compared against these values:
+    it versions as ``0.1.0-alpha.4.3.0``, a different scheme for a different
+    artifact.
+    """
+
+    @staticmethod
+    def _manifest_on_disk():
+        # Read through the builder's own root, so this compares the file the
+        # build actually consumes rather than wherever the package happens to
+        # be imported from.
+        return tomllib.loads(
+            (builder.SOURCE_ROOT / "blender_manifest.toml").read_text(
+                encoding="utf-8"
+            )
+        )
+
+    def _expected_bl_info_version(self):
+        """Parse __version__, failing cleanly if it is not major.minor.patch."""
+        version = blendmax_blender.__version__
+        parts = version.split(".")
+        self.assertEqual(len(parts), 3, version)
+        for part in parts:
+            self.assertTrue(part.isdigit(), version)
+        return tuple(int(part) for part in parts)
+
+    # -- the three declarations agree -------------------------------------
+
+    def test_dunder_version_matches_the_extension_manifest(self):
+        self.assertEqual(
+            blendmax_blender.__version__, self._manifest_on_disk()["version"]
+        )
+
+    def test_bl_info_version_matches_dunder_version(self):
+        self.assertEqual(
+            blendmax_blender.bl_info["version"], self._expected_bl_info_version()
+        )
+
+    def test_manifest_version_is_major_minor_patch(self):
+        """Blender requires a three-part numeric version for an extension."""
+        version = self._manifest_on_disk()["version"]
+        parts = version.split(".")
+        self.assertEqual(len(parts), 3, version)
+        for part in parts:
+            self.assertTrue(part.isdigit(), version)
+
+    def test_dunder_version_is_major_minor_patch(self):
+        """__version__ is parsed into bl_info's tuple, so it must be numeric.
+
+        Without this, a malformed __version__ would surface as a ValueError
+        raised inside the comparison test rather than as a clean failure.
+        """
+        version = blendmax_blender.__version__
+        parts = version.split(".")
+        self.assertEqual(len(parts), 3, version)
+        for part in parts:
+            with self.subTest(part=part):
+                self.assertTrue(part.isdigit(), version)
+
+    # -- the generated artifact and build agree with it -------------------
+
+    def test_generated_artifact_reports_the_manifest_version(self):
+        """Read the version out of the real artifact rather than a constant."""
+        expected = self._manifest_on_disk()["version"]
+        with tempfile.TemporaryDirectory() as temporary:
+            output = build(Path(temporary) / "artifact.zip")
+            with zipfile.ZipFile(output, "r") as archive:
+                built = tomllib.loads(
+                    archive.read("blender_manifest.toml").decode("utf-8")
+                )
+        self.assertEqual(built["version"], expected)
+
+    def _default_artifact_name(self):
+        # main() prints the build result; keep that out of the test output.
+        with mock.patch.object(builder, "build") as fake_build, \
+                mock.patch.object(
+                    sys, "argv", ["build_blender_extension.py"]
+                ), \
+                contextlib.redirect_stdout(io.StringIO()):
+            builder.main()
+        call = fake_build.call_args
+        target = call.kwargs.get("output")
+        if target is None and call.args:
+            target = call.args[0]
+        return target.name
+
+    def test_default_artifact_name_embeds_the_manifest_version(self):
+        expected = self._manifest_on_disk()["version"]
+        self.assertEqual(
+            self._default_artifact_name(),
+            "blendmax_importer-{0}.zip".format(expected),
+        )
+
+    def test_artifact_name_follows_the_manifest_rather_than_a_constant(self):
+        """Proves the build reads the version instead of hard-coding it."""
+        with mock.patch.object(
+            builder, "manifest", return_value={"version": "9.9.9"}
+        ):
+            self.assertEqual(
+                self._default_artifact_name(), "blendmax_importer-9.9.9.zip"
+            )
+
+    # -- the manifest stays valid for Blender ------------------------------
+
+    def test_extension_manifest_keeps_blenders_required_keys(self):
+        metadata = self._manifest_on_disk()
+        for key in (
+            "schema_version",
+            "id",
+            "version",
+            "name",
+            "tagline",
+            "maintainer",
+            "type",
+            "blender_version_min",
+            "license",
+        ):
+            with self.subTest(key=key):
+                self.assertIn(key, metadata)
+        self.assertEqual(metadata["id"], "blendmax_importer")
+        self.assertEqual(metadata["type"], "add-on")
 
 
 if __name__ == "__main__":
