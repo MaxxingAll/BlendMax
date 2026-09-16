@@ -14,7 +14,7 @@ __version__ = "0.1.9"
 # blendmax_blender/blender_manifest.toml instead, and nothing in this
 # repository reads bl_info. It is kept in step with __version__ by hand --
 # the 0.1.9 bump missed it -- and tests/test_blender_extension_build.py now
-# fails if any of the three version declarations disagree.
+# fails if the three Blender-side version declarations disagree.
 bl_info = {
     "name": "BlendMax Importer",
     "author": "MaxxingAll",

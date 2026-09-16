@@ -41,15 +41,19 @@ class BlenderExtensionBuildTests(unittest.TestCase):
 
 
 class BlenderVersionMetadataTests(unittest.TestCase):
-    """The Blender importer's version is declared in three places.
+    """The Blender importer's version is declared in three production places.
 
     Only ``blender_manifest.toml`` is consumed: Blender 4.2+ reads it for an
     installed extension, and ``tools/build_blender_extension.py`` names the
     built artifact from it. ``__init__.py``'s ``__version__`` and the legacy
     ``bl_info`` dict are informational, and nothing in the repository reads
     them -- which is why ``bl_info`` sat at ``0.1.8`` through the whole 0.1.9
-    release without anything noticing. Every test here fails if the three
-    declarations disagree, so that drift cannot recur silently.
+    release without anything noticing. Every test here fails if those three
+    disagree, so that drift cannot recur silently.
+
+    A fourth value must also move on release: the literal ``"0.1.9"`` asserted
+    by :class:`BlenderExtensionBuildTests`. It is an independent expectation
+    rather than a declaration, so it is deliberately left in step by hand.
 
     The 3ds Max component is deliberately NOT compared against these values:
     it versions as ``0.1.0-alpha.4.3.0``, a different scheme for a different
@@ -58,15 +62,23 @@ class BlenderVersionMetadataTests(unittest.TestCase):
 
     @staticmethod
     def _manifest_on_disk():
+        # Read through the builder's own root, so this compares the file the
+        # build actually consumes rather than wherever the package happens to
+        # be imported from.
         return tomllib.loads(
-            (
-                Path(blendmax_blender.__file__).parent / "blender_manifest.toml"
-            ).read_text(encoding="utf-8")
+            (builder.SOURCE_ROOT / "blender_manifest.toml").read_text(
+                encoding="utf-8"
+            )
         )
 
-    @staticmethod
-    def _expected_bl_info_version():
-        return tuple(int(part) for part in blendmax_blender.__version__.split("."))
+    def _expected_bl_info_version(self):
+        """Parse __version__, failing cleanly if it is not major.minor.patch."""
+        version = blendmax_blender.__version__
+        parts = version.split(".")
+        self.assertEqual(len(parts), 3, version)
+        for part in parts:
+            self.assertTrue(part.isdigit(), version)
+        return tuple(int(part) for part in parts)
 
     # -- the three declarations agree -------------------------------------
 
@@ -88,6 +100,19 @@ class BlenderVersionMetadataTests(unittest.TestCase):
         for part in parts:
             self.assertTrue(part.isdigit(), version)
 
+    def test_dunder_version_is_major_minor_patch(self):
+        """__version__ is parsed into bl_info's tuple, so it must be numeric.
+
+        Without this, a malformed __version__ would surface as a ValueError
+        raised inside the comparison test rather than as a clean failure.
+        """
+        version = blendmax_blender.__version__
+        parts = version.split(".")
+        self.assertEqual(len(parts), 3, version)
+        for part in parts:
+            with self.subTest(part=part):
+                self.assertTrue(part.isdigit(), version)
+
     # -- the generated artifact and build agree with it -------------------
 
     def test_generated_artifact_reports_the_manifest_version(self):
@@ -103,11 +128,17 @@ class BlenderVersionMetadataTests(unittest.TestCase):
 
     def _default_artifact_name(self):
         # main() prints the build result; keep that out of the test output.
-        with mock.patch.object(builder, "build") as fake_build:
-            with mock.patch.object(sys, "argv", ["build_blender_extension.py"]):
-                with contextlib.redirect_stdout(io.StringIO()):
-                    builder.main()
-        return fake_build.call_args[0][0].name
+        with mock.patch.object(builder, "build") as fake_build, \
+                mock.patch.object(
+                    sys, "argv", ["build_blender_extension.py"]
+                ), \
+                contextlib.redirect_stdout(io.StringIO()):
+            builder.main()
+        call = fake_build.call_args
+        target = call.kwargs.get("output")
+        if target is None and call.args:
+            target = call.args[0]
+        return target.name
 
     def test_default_artifact_name_embeds_the_manifest_version(self):
         expected = self._manifest_on_disk()["version"]
@@ -118,7 +149,9 @@ class BlenderVersionMetadataTests(unittest.TestCase):
 
     def test_artifact_name_follows_the_manifest_rather_than_a_constant(self):
         """Proves the build reads the version instead of hard-coding it."""
-        with mock.patch.object(builder, "manifest", lambda: {"version": "9.9.9"}):
+        with mock.patch.object(
+            builder, "manifest", return_value={"version": "9.9.9"}
+        ):
             self.assertEqual(
                 self._default_artifact_name(), "blendmax_importer-9.9.9.zip"
             )
