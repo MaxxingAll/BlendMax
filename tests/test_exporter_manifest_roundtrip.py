@@ -6,6 +6,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
+from blendmax_blender.errors import ManifestValidationError
 from blendmax_blender.manifest import ManifestIndex, parse_manifest
 from blendmax_max.exporter import BlendMaxExporter
 from blendmax_max.models import SceneNode
@@ -82,7 +83,19 @@ class NestedAdapter:
         }
 
     def discover_texture_references(self, material_data):
-        return []
+        # Must return at least one reference, otherwise the manifest carries no
+        # texture records and the graph_node_id assertion below silently
+        # asserts nothing. copy_texture_files still emits a record with a
+        # graph_node_id even when the file cannot be resolved, so no fixture
+        # image is needed.
+        return [
+            {
+                "graph_node_id": "tex_1",
+                "parameter": "filename",
+                "raw_path": "albedo.png",
+                "resolved_path": "albedo.png",
+            }
+        ]
 
     def prepared_export(self, export_ids, selection_ids=None):
         from contextlib import contextmanager
@@ -155,6 +168,42 @@ class ExporterManifestRoundTripTests(unittest.TestCase):
         for texture in manifest.textures:
             if texture.graph_node_id is not None:
                 self.assertIn(texture.graph_node_id, index.nodes_by_id)
+
+    def test_reference_assertions_are_not_vacuous(self):
+        """Guards the test above from asserting over empty collections.
+
+        The texture-pointer loop only runs if the manifest actually carries
+        texture records, and graph_node_id is the field the validation change
+        added -- so an empty list would make that assertion meaningless.
+        """
+        manifest = parse_manifest(self._manifest_from_export())
+
+        self.assertTrue(manifest.objects, "no objects emitted")
+        self.assertTrue(manifest.assignments, "no assignments emitted")
+        self.assertTrue(manifest.graph, "no graph nodes emitted")
+        self.assertTrue(
+            any(node.sub_textures for node in manifest.graph),
+            "no graph links emitted; the link loop would be vacuous",
+        )
+        self.assertTrue(
+            manifest.textures,
+            "no texture records emitted; the graph_node_id loop would be vacuous",
+        )
+        self.assertTrue(
+            any(item.graph_node_id is not None for item in manifest.textures),
+            "no texture carries a graph_node_id; the pointer check would be vacuous",
+        )
+
+    def test_dangling_texture_pointer_in_exporter_output_is_rejected(self):
+        """Dangering the emitted pointer proves the field is really validated."""
+        raw = self._manifest_from_export()
+        record = next(
+            item for item in raw["textures"] if item.get("graph_node_id") is not None
+        )
+        record["graph_node_id"] = "tex_nope"
+
+        with self.assertRaisesRegex(ManifestValidationError, "graph_node_id"):
+            parse_manifest(raw)
 
 
 if __name__ == "__main__":

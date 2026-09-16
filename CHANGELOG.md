@@ -33,8 +33,18 @@ called out separately from automated coverage.
   imported FBX materials are temporarily renamed before manifest materials
   are created, freeing the original names while preserving identity-based
   cleanup of the native FBX material datablocks.
+- Rejects manifests whose internal cross-references do not resolve. A manifest
+  could previously name a parent object, a material assignment target, a
+  `material_ref`, a `sub_materials`/`sub_textures` graph link, or a texture's
+  `graph_node_id` that did not exist, and the import continued with a warning
+  while silently dropping the affected parenting, material, or texture binding.
+  These are now reported as a manifest validation error naming the offending
+  field, index, and reference value, so a malformed package fails with a
+  precise message instead of importing partially. Empty-string values for
+  `parent_id` and `material_ref` are treated as absent, and a parent cycle is
+  reported as a manifest error rather than a bare `ValueError` from the
+  placement pass.
 
-## Blender Importer 0.1.8 — 2026-09-08
 
 ### Added
 
@@ -66,17 +76,6 @@ called out separately from automated coverage.
 - Reload failures print the full traceback, keep Hot Reload consumed, and
   restore the normal restart-notice state so a failed reload is not treated as
   successful. Restart Blender to recover.
-- Rejects manifests whose internal cross-references do not resolve. A manifest
-  could previously name a parent object, a material assignment target, a
-  `material_ref`, a `sub_materials`/`sub_textures` graph link, or a texture's
-  `graph_node_id` that did not exist, and the import continued with a warning
-  while silently dropping the affected parenting, material, or texture binding.
-  These are now reported as a manifest validation error naming the offending
-  field, index, and reference value, so a malformed package fails with a
-  precise message instead of importing partially. Empty-string values for
-  `parent_id` and `material_ref` are treated as absent, and a parent cycle is
-  reported as a manifest error rather than a bare `ValueError` from the
-  placement pass.
 
 ### Changed
 
