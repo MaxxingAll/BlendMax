@@ -212,7 +212,11 @@ class MaxCleanupAdapter(MaxRuntimeAdapter):
             materials = list(material.materialList)
         except Exception:
             return None
-        if not material_ids or not materials:
+        # Two empty lists mean "no Multi/Sub slots", which is not a mismatch and
+        # keeps the plain-material fallback. Any OTHER empty combination is an
+        # inconsistent pair and must reach the validator rather than short-circuit
+        # past it -- otherwise `[] / [m]` and `[1] / []` were silently accepted.
+        if not material_ids and not materials:
             return None
         return material_id_lookup(material_ids, materials)
 

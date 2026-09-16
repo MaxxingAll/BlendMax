@@ -150,6 +150,54 @@ class PiecesFromNodeSlotTests(unittest.TestCase):
                 self._source(material), created_nodes=[], warnings=[]
             )
 
+    def test_empty_ids_with_one_material_raises_through_the_adapter(self):
+        """Regression: the empty-list early return used to skip the validator.
+
+        ``_material_slots`` returned None whenever EITHER list was empty, so
+        ``[] / [m]`` and ``[1] / []`` were silently routed to the plain-material
+        fallback instead of being reported as an inconsistent pair.
+        """
+        material = SlotMaterial([], [LeafMaterial("Red")])
+
+        adapter, _ = self._adapter([(1, [0, 1])])
+        with self.assertRaisesRegex(CleanupError, "Multi/Sub material slot mismatch"):
+            adapter._pieces_from_node(
+                self._source(material), created_nodes=[], warnings=[]
+            )
+
+    def test_one_id_with_empty_materials_raises_through_the_adapter(self):
+        material = SlotMaterial([1], [])
+
+        adapter, _ = self._adapter([(1, [0, 1])])
+        with self.assertRaisesRegex(CleanupError, "Multi/Sub material slot mismatch"):
+            adapter._pieces_from_node(
+                self._source(material), created_nodes=[], warnings=[]
+            )
+
+    def test_both_lists_empty_is_not_a_mismatch(self):
+        """Two empty lists mean 'no Multi/Sub slots', keeping the fallback."""
+        material = SlotMaterial([], [])
+
+        adapter, _ = self._adapter([(1, [0, 1])])
+        pieces = adapter._pieces_from_node(
+            self._source(material), created_nodes=[], warnings=[]
+        )
+
+        # Plain-material fallback: the whole node is one piece, no warning.
+        self.assertEqual(len(pieces), 1)
+
+    def test_undefined_material_short_circuits_without_validating(self):
+        adapter, _ = self._adapter([(1, [0, 1])])
+
+        class Source:
+            name = "Source"
+
+        source = Source()
+        source.material = adapter.rt.undefined
+        pieces = adapter._pieces_from_node(source, created_nodes=[], warnings=[])
+
+        self.assertEqual(len(pieces), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
