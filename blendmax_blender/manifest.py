@@ -158,7 +158,10 @@ def _parse_objects(raw: Mapping[str, Any]) -> Tuple[ObjectRecord, ...]:
                     "objects[{0}].superclass".format(offset),
                     True,
                 ),
-                parent_id=str(parent) if parent is not None else None,
+                # Falsy normalises to None, matching textures[*].graph_node_id:
+                # "" is a plausible "no parent" sentinel in hand-authored
+                # manifests and must not become a dangling-reference error.
+                parent_id=str(parent) if parent else None,
                 is_group_head=bool(item.get("is_group_head", False)),
                 is_group_member=bool(item.get("is_group_member", False)),
             )
@@ -181,7 +184,8 @@ def _parse_assignments(materials: Mapping[str, Any]) -> Tuple[MaterialAssignment
                     item.get("object_id"),
                     "materials.assignments[{0}].object_id".format(offset),
                 ),
-                material_ref=(str(material_ref) if material_ref is not None else None),
+                # Falsy normalises to None for the same reason as parent_id.
+                material_ref=(str(material_ref) if material_ref else None),
             )
         )
     return tuple(assignments)
@@ -273,7 +277,7 @@ def _validate_references(manifest: BlendMaxManifest) -> None:
     for offset, item in enumerate(manifest.objects):
         if item.parent_id is not None and item.parent_id not in object_ids:
             raise ManifestValidationError(
-                "objects[{0}].parent_id references unknown object id: {1}.".format(
+                "objects[{0}].parent_id references unknown object id: {1!r}.".format(
                     offset, item.parent_id
                 )
             )
@@ -282,12 +286,12 @@ def _validate_references(manifest: BlendMaxManifest) -> None:
         if assignment.object_id not in object_ids:
             raise ManifestValidationError(
                 "materials.assignments[{0}].object_id references unknown object "
-                "id: {1}.".format(offset, assignment.object_id)
+                "id: {1!r}.".format(offset, assignment.object_id)
             )
         if assignment.material_ref is not None and assignment.material_ref not in node_ids:
             raise ManifestValidationError(
                 "materials.assignments[{0}].material_ref references unknown graph "
-                "id: {1}.".format(offset, assignment.material_ref)
+                "id: {1!r}.".format(offset, assignment.material_ref)
             )
 
     for node_offset, node in enumerate(manifest.graph):
@@ -296,10 +300,33 @@ def _validate_references(manifest: BlendMaxManifest) -> None:
                 if link.ref not in node_ids:
                     raise ManifestValidationError(
                         "materials.graph[{0}].{1}[{2}].ref references unknown graph "
-                        "id: {3}.".format(
+                        "id: {3!r}.".format(
                             node_offset, field_name, link_offset, link.ref
                         )
                     )
+
+    # Existence alone leaves parent_id half-validated: a cycle passes every
+    # target check above and only fails later in placement.hierarchy_bounds,
+    # which raises a bare ValueError outside the importer's error handling.
+    parents = {item.object_id: item.parent_id for item in manifest.objects}
+    for start in parents:
+        seen = set()
+        current = start
+        while current is not None:
+            if current in seen:
+                raise ManifestValidationError(
+                    "Object hierarchy contains a parent cycle at object id: "
+                    "{0!r}.".format(start)
+                )
+            seen.add(current)
+            current = parents.get(current)
+
+    for offset, texture in enumerate(manifest.textures):
+        if texture.graph_node_id is not None and texture.graph_node_id not in node_ids:
+            raise ManifestValidationError(
+                "textures[{0}].graph_node_id references unknown graph id: "
+                "{1!r}.".format(offset, texture.graph_node_id)
+            )
 
 
 def load_manifest(path: Path) -> BlendMaxManifest:

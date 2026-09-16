@@ -289,6 +289,100 @@ class ManifestReferenceTests(unittest.TestCase):
         self.assertEqual(index.objects_by_id["obj_2"].parent_id, "obj_1")
         self.assertEqual(index.nodes_by_id["mat_1"].class_name, "VRayMtl")
 
+    # --- empty-string sentinels must not hard-fail -------------------------
+
+    def test_empty_string_parent_id_is_treated_as_absent(self):
+        """`""` is a plausible "no parent" sentinel in hand-authored manifests.
+
+        The parser normalises ``textures[*].graph_node_id`` with truthiness, so
+        these two fields must match. Treating ``""`` as a reference made the
+        whole import cancel with a message rendering the value as nothing.
+        """
+        raw = valid_manifest()
+        raw["objects"][0]["parent_id"] = ""
+        manifest = parse_manifest(raw)
+        self.assertIsNone(manifest.objects[0].parent_id)
+
+    def test_empty_string_material_ref_is_treated_as_absent(self):
+        raw = valid_manifest()
+        raw["materials"]["assignments"][0]["material_ref"] = ""
+        manifest = parse_manifest(raw)
+        self.assertIsNone(manifest.assignments[0].material_ref)
+
+    def test_error_message_quotes_the_offending_ref(self):
+        """A bare value renders an empty string as nothing after the colon."""
+        raw = self._with_parent("obj_missing")
+        with self.assertRaisesRegex(
+            ManifestValidationError, r"unknown object id: 'obj_missing'\."
+        ):
+            parse_manifest(raw)
+
+    # --- textures[*].graph_node_id is the same class of pointer ------------
+
+    def test_valid_texture_graph_node_id_parses(self):
+        manifest = parse_manifest(valid_manifest())
+        self.assertEqual(manifest.textures[0].graph_node_id, "tex_1")
+
+    def test_dangling_texture_graph_node_id_is_rejected(self):
+        """Otherwise the index keys a texture under a node that does not exist
+        and the texture silently never binds."""
+        raw = valid_manifest()
+        raw["textures"][0]["graph_node_id"] = "tex_missing"
+        with self.assertRaisesRegex(
+            ManifestValidationError,
+            r"textures\[0\]\.graph_node_id references unknown graph id: 'tex_missing'\.",
+        ):
+            parse_manifest(raw)
+
+    def test_absent_texture_graph_node_id_is_allowed(self):
+        """Legacy 0.1.0 records have no graph_node_id at all."""
+        raw = valid_manifest()
+        del raw["textures"][0]["graph_node_id"]
+        manifest = parse_manifest(raw)
+        self.assertIsNone(manifest.textures[0].graph_node_id)
+
+    # --- existence is not enough for parent_id: cycles --------------------
+
+    def test_parent_cycle_is_rejected(self):
+        """Existence alone leaves parent_id half-validated: a cycle passed
+        every target check and only failed later in hierarchy_bounds, which
+        raises a bare ValueError outside the importer's error handling."""
+        raw = valid_manifest()
+        first = dict(raw["objects"][0])
+        first.update(id="obj_1", fbx_name="BM_a", parent_id="obj_2")
+        second = dict(raw["objects"][0])
+        second.update(id="obj_2", fbx_name="BM_b", parent_id="obj_1")
+        raw["objects"] = [first, second]
+        raw["asset"]["root_id"] = "obj_1"
+
+        with self.assertRaisesRegex(ManifestValidationError, "parent cycle"):
+            parse_manifest(raw)
+
+    def test_self_parent_is_rejected(self):
+        raw = valid_manifest()
+        raw["objects"][0]["parent_id"] = "obj_1"
+        with self.assertRaisesRegex(ManifestValidationError, "parent cycle"):
+            parse_manifest(raw)
+
+    def test_valid_nested_chain_is_not_a_cycle(self):
+        raw = valid_manifest()
+        chain = []
+        for index, parent in enumerate((None, "obj_1", "obj_2"), start=1):
+            item = dict(raw["objects"][0])
+            item.update(
+                id="obj_{0}".format(index),
+                fbx_name="BM_{0}".format(index),
+                parent_id=parent,
+            )
+            chain.append(item)
+        raw["objects"] = chain
+        raw["asset"]["root_id"] = "obj_1"
+
+        manifest = parse_manifest(raw)
+
+        parents = {item.object_id: item.parent_id for item in manifest.objects}
+        self.assertEqual(parents, {"obj_1": None, "obj_2": "obj_1", "obj_3": "obj_2"})
+
 
 if __name__ == "__main__":
     unittest.main()
