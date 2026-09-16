@@ -20,6 +20,48 @@ MAX_ARCHIVE_ENTRIES = 2048
 MAX_UNCOMPRESSED_BYTES = 16 * 1024 * 1024 * 1024
 
 
+# Names the Windows kernel resolves to a device rather than a file, whatever
+# the extension: "CON.txt" is still the console. Compared case-insensitively
+# against the part before the first dot.
+#
+# This is a static list, NOT a probe of the current machine. The devices a
+# given host actually exposes vary (a build machine may have COM1, a laptop
+# none), but a package must not be able to name a device on whichever host
+# later extracts it. COM0/LPT0 are deliberately excluded: Windows documents
+# COM1-COM9 and LPT1-LPT9, and COM10 is explicitly NOT reserved.
+_WINDOWS_RESERVED_NAMES = frozenset(
+    [
+        "con",
+        "prn",
+        "aux",
+        "nul",
+        "conin$",
+        "conout$",
+    ]
+    + ["com{0}".format(index) for index in range(1, 10)]
+    + ["lpt{0}".format(index) for index in range(1, 10)]
+)
+
+
+def _windows_hazard(part: str) -> str:
+    """Describe why ``part`` is unsafe as a Windows path component, else ""."""
+
+    # Windows silently strips a trailing dot or space when creating a name,
+    # so "report." and "report" are the same file: two archive entries can
+    # collide and one silently overwrites the other.
+    if part != part.rstrip(". "):
+        return "trailing dot or space"
+    # A colon introduces an NTFS alternate data stream or a device reference
+    # ("file.txt:ads"), and a drive-relative prefix ("C:file") resolves
+    # outside the destination on Windows.
+    if ":" in part:
+        return "colon is not allowed in a path component"
+    stem = part.split(".", 1)[0].casefold()
+    if stem in _WINDOWS_RESERVED_NAMES:
+        return "reserved Windows device name"
+    return ""
+
+
 def _safe_name(name: str) -> str:
     normalized = name.replace("\\", "/")
     if not normalized or "\x00" in normalized:
@@ -27,8 +69,16 @@ def _safe_name(name: str) -> str:
     path = PurePosixPath(normalized)
     if path.is_absolute() or ".." in path.parts:
         raise PackageValidationError("Unsafe archive path: {0}".format(name))
-    if path.parts and ":" in path.parts[0]:
-        raise PackageValidationError("Unsafe archive path: {0}".format(name))
+    # Every component is checked, not just the basename: a hazard in a middle
+    # directory ("dir/CON/file.txt") is extracted just the same.
+    for part in path.parts:
+        hazard = _windows_hazard(part)
+        if hazard:
+            raise PackageValidationError(
+                "Unsafe archive path: component {0!r} in {1} {2}".format(
+                    part, name, hazard
+                )
+            )
     cleaned = path.as_posix()
     if cleaned in {"", "."}:
         raise PackageValidationError("Unsafe archive path: {0}".format(name))
