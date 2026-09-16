@@ -289,25 +289,46 @@ class ManifestReferenceTests(unittest.TestCase):
         self.assertEqual(index.objects_by_id["obj_2"].parent_id, "obj_1")
         self.assertEqual(index.nodes_by_id["mat_1"].class_name, "VRayMtl")
 
-    # --- empty-string sentinels must not hard-fail -------------------------
+    # --- only None means "absent"; other falsy values are references -------
 
-    def test_empty_string_parent_id_is_treated_as_absent(self):
-        """`""` is a plausible "no parent" sentinel in hand-authored manifests.
+    def test_empty_string_parent_id_is_a_reference_not_absent(self):
+        """Only ``None`` means "no parent".
 
-        The parser normalises ``textures[*].graph_node_id`` with truthiness, so
-        these two fields must match. Treating ``""`` as a reference made the
-        whole import cancel with a message rendering the value as nothing.
+        Broadening this to any falsy value would also absorb a numeric ``0``,
+        which previously became the reference ``"0"`` and was validated. The
+        parser keeps ``is not None`` semantics for both fields.
         """
         raw = valid_manifest()
         raw["objects"][0]["parent_id"] = ""
-        manifest = parse_manifest(raw)
-        self.assertIsNone(manifest.objects[0].parent_id)
+        with self.assertRaisesRegex(
+            ManifestValidationError, r"parent_id references unknown object id: ''\."
+        ):
+            parse_manifest(raw)
 
-    def test_empty_string_material_ref_is_treated_as_absent(self):
+    def test_empty_string_material_ref_is_a_reference_not_absent(self):
         raw = valid_manifest()
         raw["materials"]["assignments"][0]["material_ref"] = ""
-        manifest = parse_manifest(raw)
-        self.assertIsNone(manifest.assignments[0].material_ref)
+        with self.assertRaisesRegex(
+            ManifestValidationError, r"material_ref references unknown graph id: ''\."
+        ):
+            parse_manifest(raw)
+
+    def test_numeric_zero_parent_id_is_a_reference_not_absent(self):
+        """A falsy-but-present value must not be silently absorbed."""
+        raw = valid_manifest()
+        raw["objects"][0]["parent_id"] = 0
+        with self.assertRaisesRegex(
+            ManifestValidationError, r"parent_id references unknown object id: '0'\."
+        ):
+            parse_manifest(raw)
+
+    def test_numeric_zero_material_ref_is_a_reference_not_absent(self):
+        raw = valid_manifest()
+        raw["materials"]["assignments"][0]["material_ref"] = 0
+        with self.assertRaisesRegex(
+            ManifestValidationError, r"material_ref references unknown graph id: '0'\."
+        ):
+            parse_manifest(raw)
 
     def test_error_message_quotes_the_offending_ref(self):
         """A bare value renders an empty string as nothing after the colon."""

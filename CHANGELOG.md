@@ -40,10 +40,11 @@ called out separately from automated coverage.
   while silently dropping the affected parenting, material, or texture binding.
   These are now reported as a manifest validation error naming the offending
   field, index, and reference value, so a malformed package fails with a
-  precise message instead of importing partially. Empty-string values for
-  `parent_id` and `material_ref` are treated as absent, and a parent cycle is
-  reported as a manifest error rather than a bare `ValueError` from the
-  placement pass.
+  precise message instead of importing partially. Only `null` means "no
+  parent" or "no material": a present-but-falsy value such as `0` or `""`
+  is still a reference and is reported rather than silently absorbed. A
+  parent cycle is reported as a manifest error rather than a bare
+  `ValueError` from the placement pass.
 
 ## Blender Importer 0.1.8 — 2026-09-08
 

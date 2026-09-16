@@ -158,10 +158,10 @@ def _parse_objects(raw: Mapping[str, Any]) -> Tuple[ObjectRecord, ...]:
                     "objects[{0}].superclass".format(offset),
                     True,
                 ),
-                # Falsy normalises to None, matching textures[*].graph_node_id:
-                # "" is a plausible "no parent" sentinel in hand-authored
-                # manifests and must not become a dangling-reference error.
-                parent_id=str(parent) if parent else None,
+                # Only None means "no parent". Any other value is a
+                # reference and is validated as one, so a hand-authored
+                # `0` or `""` is reported rather than silently absorbed.
+                parent_id=str(parent) if parent is not None else None,
                 is_group_head=bool(item.get("is_group_head", False)),
                 is_group_member=bool(item.get("is_group_member", False)),
             )
@@ -184,8 +184,7 @@ def _parse_assignments(materials: Mapping[str, Any]) -> Tuple[MaterialAssignment
                     item.get("object_id"),
                     "materials.assignments[{0}].object_id".format(offset),
                 ),
-                # Falsy normalises to None for the same reason as parent_id.
-                material_ref=(str(material_ref) if material_ref else None),
+                material_ref=(str(material_ref) if material_ref is not None else None),
             )
         )
     return tuple(assignments)
