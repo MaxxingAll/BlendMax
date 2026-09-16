@@ -244,7 +244,62 @@ def parse_manifest(raw: Mapping[str, Any]) -> BlendMaxManifest:
         raise ManifestValidationError(
             "asset.size_policy.recommended_blender_scale must be greater than zero."
         )
+    _validate_references(manifest)
     return manifest
+
+
+def _validate_references(manifest: BlendMaxManifest) -> None:
+    """Reject cross-references whose targets do not exist.
+
+    ``parent_id``, ``MaterialAssignment.object_id``, ``material_ref`` and the
+    graph link refs are all explicit pointers. Nothing downstream treats a
+    missing target as fatal -- the importer warns and skips
+    (``blender_materials.py`` resolves refs by ``class_name`` and warns on a
+    miss) -- so a dangling reference silently degrades the import instead of
+    reporting a bad manifest. Validate the targets here, while the offending
+    field and index are still known.
+
+    Only *existence* is validated. ``GraphLink.ref`` targets are deliberately
+    NOT checked against the expected ``kind``: consumers resolve a ref by the
+    target's ``class_name``, not its ``kind``, so a link to a node of
+    unexpected kind still resolves correctly. ``kind`` is read only for legacy
+    texture matching and material enumeration, neither of which involves these
+    links.
+    """
+
+    object_ids = {item.object_id for item in manifest.objects}
+    node_ids = {node.node_id for node in manifest.graph}
+
+    for offset, item in enumerate(manifest.objects):
+        if item.parent_id is not None and item.parent_id not in object_ids:
+            raise ManifestValidationError(
+                "objects[{0}].parent_id references unknown object id: {1}.".format(
+                    offset, item.parent_id
+                )
+            )
+
+    for offset, assignment in enumerate(manifest.assignments):
+        if assignment.object_id not in object_ids:
+            raise ManifestValidationError(
+                "materials.assignments[{0}].object_id references unknown object "
+                "id: {1}.".format(offset, assignment.object_id)
+            )
+        if assignment.material_ref is not None and assignment.material_ref not in node_ids:
+            raise ManifestValidationError(
+                "materials.assignments[{0}].material_ref references unknown graph "
+                "id: {1}.".format(offset, assignment.material_ref)
+            )
+
+    for node_offset, node in enumerate(manifest.graph):
+        for field_name in ("sub_materials", "sub_textures"):
+            for link_offset, link in enumerate(getattr(node, field_name)):
+                if link.ref not in node_ids:
+                    raise ManifestValidationError(
+                        "materials.graph[{0}].{1}[{2}].ref references unknown graph "
+                        "id: {3}.".format(
+                            node_offset, field_name, link_offset, link.ref
+                        )
+                    )
 
 
 def load_manifest(path: Path) -> BlendMaxManifest:
