@@ -134,7 +134,9 @@ Coverage includes:
 - explicit Multi/Sub material-ID lookup and compact BitArray generation;
 - update ZIP entry-count (`2048`) and declared-size (`16 GiB`) limits, refused
   before extraction begins, and the guarantee that a refusal leaves an
-  already-populated destination untouched (`tests/test_installer.py`);
+  already-populated destination untouched (`tests/test_installer.py`); this path
+  does not yet apply the Windows filename rules enforced on `.blendmax` packages
+  (#39);
 - Multi/Sub material-list length mismatch detection instead of silent truncation
   (`tests/test_max_cleanup_slots.py`);
 - 3ds Max version-string parsing, including an update token carrying trailing
