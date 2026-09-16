@@ -77,6 +77,9 @@ ground truth for renderer-specific host behavior.
   dict. Nothing in the repository reads those two, so
   `tests/test_blender_extension_build.py` (`BlenderVersionMetadataTests`) pins
   all three against each other and fails if any one moves alone.
+- A fourth value is a hand-maintained expectation rather than a declaration: the
+  literal `"0.1.9"` asserted by `BlenderExtensionBuildTests` in the same file. It
+  must move with the other three, or that test fails with no other explanation.
 
 ## Archive validation coverage
 

@@ -122,13 +122,15 @@ root group plus one mesh per material.
 3. Select the ZIP. The updated Python core is loaded by the next BlendMax
 action; restart 3ds Max only when a release changes the menu layout.
 
-The updater validates the release structure, rejects unsafe archive paths, and
-refuses an archive with more than 2048 entries or more than 16 GiB of declared
-uncompressed content before extracting anything. It builds a new AppBundle in a
-staging directory and replaces only the installed `BlendMax.bundle` folder. If
-installation fails, the previous bundle is restored. Each menu launcher
-invalidates Max's embedded-Python module cache so an updated exporter or cleanup
-action cannot continue running stale code.
+The updater validates the release structure, rejects unsafe archive paths
+(absolute, symlink and traversal) and refuses an archive with more than 2048
+entries or more than 16 GiB of declared uncompressed content before extracting
+anything. The Windows filename rules applied to `.blendmax` packages are not yet
+enforced on update archives. It builds a new AppBundle in a staging directory
+and replaces only the installed `BlendMax.bundle` folder. If installation fails,
+the previous bundle is restored. Each menu launcher invalidates Max's
+embedded-Python module cache so an updated exporter or cleanup action cannot
+continue running stale code.
 
 `run_blendmax_max.py` remains available as a development fallback.
 
