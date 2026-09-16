@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import json
+import stat
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
+from blendmax_blender import package as blender_package
 from blendmax_blender.errors import PackageValidationError
-from blendmax_blender.package import _safe_name, open_blendmax
+from blendmax_blender.package import (
+    MAX_ARCHIVE_ENTRIES,
+    _safe_name,
+    open_blendmax,
+)
 from test_blender_manifest import valid_manifest
 
 
@@ -277,6 +284,162 @@ class ArchiveFilenameHardeningTests(unittest.TestCase):
         for name in ("caf\u00e9\u00b9.png", "x\u00b2.txt", "dir\u00b3/file.txt"):
             with self.subTest(name=name):
                 self.assertEqual(self._accepts(name), name)
+
+
+class ArchiveSecurityRegressionTests(unittest.TestCase):
+    """Regression coverage for archive-security behaviour already enforced.
+
+    These pin protections that were implemented but not covered by tests:
+    traversal and absolute forms beyond a leading ``../``, symlink rejection in
+    the package validator, case-insensitive duplicate detection, the
+    package-side resource limits, and the no-write guarantee on refusal.
+
+    The validator's Windows policy is static, so those cases are asserted
+    against ``_safe_name`` rather than against host filesystem behaviour.
+    """
+
+    # How many members write_package() always adds: manifest.json,
+    # geometry.fbx and textures/wood.png.
+    FIXED_MEMBERS = 3
+
+    # -- B. traversal and absolute paths ----------------------------------
+
+    def test_rejects_traversal_and_absolute_names(self):
+        for name in (
+            "../file",
+            "a/../../file",
+            "..\\file",
+            "a/..\\..\\file",
+            "/tmp/file",
+            "C:\\file",
+            "C:file",
+            "C:/file",
+        ):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(
+                    PackageValidationError, "Unsafe archive path", msg=name
+                ):
+                    _safe_name(name)
+
+    def test_rejects_traversal_entries_before_extraction(self):
+        for name in ("../escape.txt", "a/../../escape.txt", "..\\escape.txt"):
+            with self.subTest(name=name):
+                with tempfile.TemporaryDirectory() as temporary:
+                    path = Path(temporary) / "Unsafe.blendmax"
+                    write_package(path, extra={name: b"bad"})
+
+                    yielded = False
+                    with self.assertRaises(PackageValidationError):
+                        with open_blendmax(path):
+                            yielded = True
+
+                    self.assertFalse(
+                        yielded, "contents were yielded for {0}".format(name)
+                    )
+
+    # -- C. symlinks ------------------------------------------------------
+
+    def test_rejects_symlink_member(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "Link.blendmax"
+            with zipfile.ZipFile(
+                path, "w", compression=zipfile.ZIP_DEFLATED
+            ) as archive:
+                archive.writestr("manifest.json", json.dumps(valid_manifest()))
+                archive.writestr("geometry.fbx", b"fbx")
+                archive.writestr("textures/wood.png", b"image")
+                info = zipfile.ZipInfo("link.txt")
+                info.external_attr = (stat.S_IFLNK | 0o777) << 16
+                archive.writestr(info, "elsewhere.txt")
+
+            yielded = False
+            with self.assertRaisesRegex(
+                PackageValidationError, "links are not supported"
+            ):
+                with open_blendmax(path):
+                    yielded = True
+
+            self.assertFalse(yielded)
+
+    # -- D. duplicate archive names ---------------------------------------
+
+    def test_rejects_case_insensitive_duplicate_entries(self):
+        cases = (
+            {"foo.txt": b"1", "FOO.TXT": b"2"},
+            {"Textures/wood.png": b"1"},          # collides with textures/wood.png
+            {"a/b/c.bin": b"1", "A/B/C.BIN": b"2"},
+        )
+        for extra in cases:
+            with self.subTest(entry=sorted(extra)):
+                with tempfile.TemporaryDirectory() as temporary:
+                    path = Path(temporary) / "Duplicate.blendmax"
+                    write_package(path, extra=extra)
+
+                    with self.assertRaisesRegex(
+                        PackageValidationError, "Duplicate archive path"
+                    ):
+                        with open_blendmax(path):
+                            pass
+
+    # -- E. package resource limits ---------------------------------------
+
+    def _write_with_extra_entries(self, path, extras):
+        """Write a valid package plus ``extras`` filler members; return the
+        real member count so a test can assert it rather than assume it."""
+        write_package(
+            path,
+            extra={"f{0}.txt".format(index): b"x" for index in range(extras)},
+        )
+        with zipfile.ZipFile(path) as archive:
+            return len(archive.infolist())
+
+    def test_accepts_package_at_entry_limit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "AtLimit.blendmax"
+            count = self._write_with_extra_entries(
+                path, MAX_ARCHIVE_ENTRIES - self.FIXED_MEMBERS
+            )
+            self.assertEqual(count, MAX_ARCHIVE_ENTRIES)
+
+            with open_blendmax(path):
+                pass
+
+    def test_rejects_package_above_entry_limit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "TooMany.blendmax"
+            count = self._write_with_extra_entries(path, MAX_ARCHIVE_ENTRIES)
+            self.assertGreater(count, MAX_ARCHIVE_ENTRIES)
+
+            yielded = False
+            with self.assertRaisesRegex(PackageValidationError, "too many entries"):
+                with open_blendmax(path):
+                    yielded = True
+
+            self.assertFalse(yielded)
+
+    def test_byte_budget_boundary(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "Bytes.blendmax"
+            write_package(path, extra={"blob.bin": b"x" * 1024})
+            with zipfile.ZipFile(path) as archive:
+                total = sum(info.file_size for info in archive.infolist())
+            self.assertGreater(total, 1024)
+
+            with mock.patch.object(
+                blender_package, "MAX_UNCOMPRESSED_BYTES", total
+            ):
+                with open_blendmax(path):
+                    pass
+
+            yielded = False
+            with mock.patch.object(
+                blender_package, "MAX_UNCOMPRESSED_BYTES", total - 1
+            ):
+                with self.assertRaisesRegex(PackageValidationError, "safety limit"):
+                    with open_blendmax(path):
+                        yielded = True
+
+            self.assertFalse(yielded)
 
 
 if __name__ == "__main__":
