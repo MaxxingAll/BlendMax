@@ -29,6 +29,15 @@ MAX_UNCOMPRESSED_BYTES = 16 * 1024 * 1024 * 1024
 # none), but a package must not be able to name a device on whichever host
 # later extracts it. COM0/LPT0 are deliberately excluded: Windows documents
 # COM1-COM9 and LPT1-LPT9, and COM10 is explicitly NOT reserved.
+#
+# Microsoft also reserves the ISO/IEC 8859-1 superscript digits as parts of
+# COM#/LPT# device names: "Windows recognizes the 8-bit ISO/IEC 8859-1
+# superscript digits [U+00B9], [U+00B2], and [U+00B3] as digits and treats
+# them as valid parts of COM# and LPT# device names, making them reserved in
+# every directory." So COM<U+00B9> is a device name exactly as COM1 is.
+# Only those three 8859-1 code points are named by the documentation; the
+# Unicode superscripts block (U+2070-U+2079) is NOT documented as reserved
+# and is deliberately not included.
 _WINDOWS_RESERVED_NAMES = frozenset(
     [
         "con",
@@ -40,6 +49,11 @@ _WINDOWS_RESERVED_NAMES = frozenset(
     ]
     + ["com{0}".format(index) for index in range(1, 10)]
     + ["lpt{0}".format(index) for index in range(1, 10)]
+    # Escapes rather than literal glyphs, so the code points are unambiguous
+    # and survive copy/paste: \u00b9 = superscript one, \u00b2 = two,
+    # \u00b3 = three.
+    + ["com\u00b9", "com\u00b2", "com\u00b3"]
+    + ["lpt\u00b9", "lpt\u00b2", "lpt\u00b3"]
 )
 
 

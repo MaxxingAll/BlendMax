@@ -225,6 +225,59 @@ class ArchiveFilenameHardeningTests(unittest.TestCase):
     def test_trailing_dot_with_interior_space_is_still_rejected(self):
         self._rejects("sp ace.", "trailing dot or space")
 
+    def test_rejects_superscript_device_names(self):
+        """Microsoft reserves the ISO/IEC 8859-1 superscript digits.
+
+        "Windows recognizes the 8-bit ISO/IEC 8859-1 superscript digits
+        [U+00B9], [U+00B2], and [U+00B3] as digits and treats them as valid
+        parts of COM# and LPT# device names, making them reserved in every
+        directory." Only those three code points are named.
+        """
+
+        for name in (
+            "COM\u00b9", "COM\u00b2", "COM\u00b3",
+            "LPT\u00b9", "LPT\u00b2", "LPT\u00b3",
+        ):
+            with self.subTest(name=name):
+                self._rejects(name, "reserved Windows device name")
+
+    def test_rejects_superscript_device_names_case_insensitively(self):
+        for name in ("com\u00b9", "Com\u00b2", "lPt\u00b3", "LPT\u00b9"):
+            with self.subTest(name=name):
+                self._rejects(name, "reserved Windows device name")
+
+    def test_rejects_superscript_device_names_with_extension(self):
+        for name in ("COM\u00b9.txt", "lpt\u00b2.fbx", "dir/COM\u00b3.png"):
+            with self.subTest(name=name):
+                self._rejects(name, "reserved Windows device name")
+
+    def test_rejects_superscript_device_name_in_middle_component(self):
+        self._rejects("COM\u00b9/file.txt", "reserved Windows device name")
+        self._rejects("dir/LPT\u00b3/asset.fbx", "reserved Windows device name")
+
+    def test_unicode_block_superscripts_are_not_reserved(self):
+        """Only the ISO/IEC 8859-1 superscripts are documented as reserved.
+
+        The Unicode superscripts block (U+2070-U+2079) is not named by
+        Microsoft, so rejecting it would over-restrict. This pins the
+        boundary of the change.
+        """
+
+        for name in ("COM\u2074", "COM\u2075", "LPT\u2079.txt"):
+            with self.subTest(name=name):
+                self.assertEqual(self._accepts(name), name)
+
+    def test_accepts_superscripts_in_ordinary_names(self):
+        """A superscript is only a hazard as part of a device name.
+
+        Rejecting every name containing one would over-restrict legitimate
+        textures and assets.
+        """
+
+        for name in ("caf\u00e9\u00b9.png", "x\u00b2.txt", "dir\u00b3/file.txt"):
+            with self.subTest(name=name):
+                self.assertEqual(self._accepts(name), name)
+
 
 if __name__ == "__main__":
     unittest.main()
