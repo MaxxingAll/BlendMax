@@ -1,22 +1,45 @@
 name: Bot
 
 # Manual trigger only. This workflow mints a short-lived installation token for
-# the BlendMax GitHub App and commits/pushes as <app-slug>[bot], so automated
+# the BlendMax GitHub App and commits/pushes as deepseek-chan[bot], so automated
 # changes carry a distinguishable identity instead of a personal account.
+#
+# Convention: BUG FIXES are authored by this App (objective acceptance, no
+# design judgment to attribute). NEW FEATURES are authored by the repository
+# owner, because a feature PR has to defend design intent. Tooling/infra changes
+# are outside this convention: they do not ship to users. Never mix authors
+# within one PR. Every bot PR assigns OWNER so it reaches a human decision — an
+# App cannot be @-mentioned, so without an assignee a bot PR can stall.
 on:
   workflow_dispatch:
     inputs:
       branch:
-        description: Branch to commit to
+        description: Working branch (created if it does not exist)
+        required: true
+        default: bot/fix-branch
+      base:
+        description: Branch to open the pull request against
         required: true
         default: main
       message:
         description: Commit message
         required: true
         default: "chore: automated update"
+      pr_title:
+        description: PR title (empty = commit-only, no PR is opened)
+        required: false
+        default: ""
+      pr_body:
+        description: PR body
+        required: false
+        default: ""
+      owner:
+        description: GitHub login to assign as PR owner/reviewer
+        required: true
+        default: MaxxingAll
 
 # The default GITHUB_TOKEN is not used for the push; permissions are declared
-# here only so the checkout step and any PR creation stay explicit.
+# here only so checkout, PR creation, and assignment stay explicit.
 permissions:
   contents: write
   pull-requests: write
@@ -31,10 +54,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout the target branch
+      - name: Checkout the base branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.branch }}
+          ref: ${{ inputs.base }}
           # A personal token must never be used to push here, otherwise the
           # commit is attributed to that person instead of the App.
           persist-credentials: false
@@ -47,24 +70,78 @@ jobs:
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
 
       - name: Configure git to author as the App
+        # Pinned deliberately, NOT derived from steps.app-token.outputs.app-slug.
+        # The App was renamed, and a runtime-derived slug kept the pre-rename
+        # value, producing commits authored as a bot account that does not exist
+        # (GitHub showed them UNLINKED / type "-" instead of type "Bot").
+        # A rename must force an edit here rather than silently break authorship.
         run: |
-          SLUG="${{ steps.app-token.outputs.app-slug }}"
-          git config user.name "${SLUG}[bot]"
-          git config user.email "${SLUG}[bot]@users.noreply.github.com"
+          git config user.name "deepseek-chan[bot]"
+          git config user.email "deepseek-chan[bot]@users.noreply.github.com"
 
       # ---- Replace this step with the actual change you want automated. ----
       - name: Make a change
         run: |
-          echo "TODO: this is a placeholder. Add the real automated change here."
-          exit 1
+          {
+            echo "# Bot identity smoke test"
+            echo
+            echo "Written by the BlendMax App at $(date -u +%Y-%m-%dT%H:%M:%SZ)."
+            echo "Delete this file once the App identity is confirmed linked."
+          } > BOT_IDENTITY_CHECK.md
 
-      - name: Commit and push
+      - name: Commit and push to the working branch
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ inputs.branch }}
+          MESSAGE: ${{ inputs.message }}
         run: |
+          set -euo pipefail
+          # main is protected (PRs required, no force-push, admins bound), so
+          # pushing to it fails with an opaque hook error. Fail early with the
+          # reason instead of burning a run.
+          if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
+            echo "::error::refusing to push to protected branch '$BRANCH'. Use a working branch and let the PR step open the pull request."
+            exit 1
+          fi
+          git checkout -B "$BRANCH"
           git add -A
           if git diff --cached --quiet; then
             echo "Nothing to commit."
             exit 0
           fi
-          git commit -m "${{ inputs.message }}"
-          git push "https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/${{ github.repository }}.git" \
-            "HEAD:${{ inputs.branch }}"
+          git commit -m "$MESSAGE"
+          # Push with the App token; the URL is never echoed to the log.
+          git remote set-url origin "https://x-access-token:${APP_TOKEN}@github.com/${REPO}.git"
+          git push --force-with-lease origin "HEAD:${BRANCH}"
+
+      - name: Open a pull request and assign the owner
+        if: ${{ inputs.pr_title != '' }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ inputs.branch }}
+          BASE: ${{ inputs.base }}
+          TITLE: ${{ inputs.pr_title }}
+          BODY: ${{ inputs.pr_body }}
+          OWNER: ${{ inputs.owner }}
+        run: |
+          set -euo pipefail
+          # Idempotent: reuse the open PR for this branch when one exists.
+          existing=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            echo "PR #$existing already open for $BRANCH; leaving it in place."
+            PR="$existing"
+          else
+            gh pr create --repo "$REPO" --base "$BASE" --head "$BRANCH" \
+              --title "$TITLE" --body "$BODY" >/dev/null
+            PR=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open \
+              --json number --jq '.[0].number')
+          fi
+          # An App cannot be @-mentioned, so assignment is how the PR reaches a
+          # human decision instead of stalling.
+          gh pr edit "$PR" --repo "$REPO" --add-assignee "$OWNER" \
+            --add-reviewer "$OWNER" || \
+            echo "::warning::could not assign $OWNER (check they have repo access)"
+          echo "Pull request: $(gh pr view "$PR" --repo "$REPO" --json url --jq .url)"
