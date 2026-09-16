@@ -112,8 +112,28 @@ def material_id_lookup(
     material_ids: Sequence[int],
     materials: Sequence[T],
 ) -> Dict[int, T]:
-    """Map Multi/Sub IDs to slots without assuming list position equals ID."""
+    """Map Multi/Sub IDs to slots without assuming list position equals ID.
 
+    ``materialIDList`` and ``materialList`` describe the same slot set, so a
+    length mismatch means the host reported an inconsistent pair. ``zip()``
+    would silently truncate to the shorter sequence, dropping IDs (or leaving
+    materials unreachable) with no signal, and the caller resolves face
+    material IDs through this mapping — so a truncated lookup would put faces
+    on the wrong slot while reporting success.
+
+    Fail loudly instead. The caller is expected to have validated the host
+    data; reaching here with unequal lengths is a genuine inconsistency.
+    """
+
+    if len(material_ids) != len(materials):
+        raise CleanupError(
+            "Multi/Sub material slot mismatch: materialIDList has {0} "
+            "entr{1} but materialList has {2}.".format(
+                len(material_ids),
+                "y" if len(material_ids) == 1 else "ies",
+                len(materials),
+            )
+        )
     return {
         int(material_id): material
         for material_id, material in zip(material_ids, materials)
