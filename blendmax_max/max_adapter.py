@@ -335,8 +335,14 @@ class MaxRuntimeAdapter:
             update = ""
             if index + 1 < len(values):
                 candidate = values[index + 1].strip()
-                if re.fullmatch(r"\.\d+", candidate):
-                    update = candidate
+                # The host may return the update component with harmless suffix
+                # text, e.g. ".3 Update" rather than ".3". Match the numeric
+                # token at the start of the value and ignore any trailing text,
+                # so a suffixed value is not silently downgraded to year-only.
+                # A leading-junk value such as "x.3" still does not match.
+                match = re.match(r"\.\d+", candidate)
+                if match:
+                    update = match.group(0)
             return "{0}{1}".format(year, update)
         return None
 

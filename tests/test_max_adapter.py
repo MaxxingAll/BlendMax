@@ -43,7 +43,9 @@ class FakeRuntime:
 
     @staticmethod
     def maxVersion():
-        return [27000, 66, 0, 27, 3, 0, 30874, 2025, ".3"]
+        # Host-style value: the update component carries trailing text rather
+        # than being a bare ".3". See MaxVersionParserTests for the variants.
+        return [27000, 66, 0, 27, 3, 0, 30874, 2025, ".3 Update"]
 
     @staticmethod
     def vrayVersion():
@@ -531,6 +533,82 @@ class MaxAdapterTests(unittest.TestCase):
         self.assertEqual(group.name, "AssetGroup")
         self.assertEqual(mesh.name, "Mesh")
         self.assertEqual(ignored.name, "IgnoredLight")
+
+
+class MaxVersionParserTests(unittest.TestCase):
+    """Version-token parsing for the host's maxVersion() array.
+
+    The host can return the update component with harmless trailing text
+    (".3 Update") rather than a bare ".3". Parsing it as year-only produced a
+    false "Untested 3ds Max version" warning against a supported install.
+    """
+
+    def setUp(self):
+        self.adapter = MaxRuntimeAdapter.__new__(MaxRuntimeAdapter)
+
+    def _parse(self, values):
+        return self.adapter._parse_max_version(values)
+
+    # --- the regression this test class exists for ---
+
+    def test_suffixed_update_component_is_parsed(self):
+        self.assertEqual(self._parse(["2025", ".3 Update"]), "2025.3")
+
+    def test_suffixed_update_component_with_extra_whitespace(self):
+        self.assertEqual(self._parse(["2025", ".3  Update"]), "2025.3")
+
+    def test_bare_update_component_still_parses(self):
+        self.assertEqual(self._parse(["2025", ".3"]), "2025.3")
+
+    def test_whitespace_around_update_value_is_tolerated(self):
+        self.assertEqual(self._parse(["2025", "  .3 Update  "]), "2025.3")
+
+    # --- existing behaviour that must not change ---
+
+    def test_year_only_version(self):
+        self.assertEqual(self._parse(["2025"]), "2025")
+
+    def test_non_update_trailing_value_is_ignored(self):
+        self.assertEqual(self._parse(["2025", "Update"]), "2025")
+
+    def test_malformed_update_value_falls_back_to_year(self):
+        self.assertEqual(self._parse(["2025", ".x"]), "2025")
+
+    def test_leading_junk_is_not_accepted_as_an_update(self):
+        """Only a numeric token at the START of the value counts."""
+        self.assertEqual(self._parse(["2025", "x.3"]), "2025")
+
+    def test_empty_trailing_value_is_ignored(self):
+        self.assertEqual(self._parse(["2025", ""]), "2025")
+
+    def test_no_year_present_returns_none(self):
+        self.assertIsNone(self._parse([]))
+        self.assertIsNone(self._parse(["not-a-year"]))
+
+    def test_year_outside_the_supported_band_is_rejected(self):
+        self.assertIsNone(self._parse(["1999"]))
+        self.assertIsNone(self._parse(["2101"]))
+
+    # --- end-to-end through source_metadata ---
+
+    def test_real_host_shaped_array_yields_target_version(self):
+        self.assertEqual(
+            self._parse(
+                ["27000", "66", "0", "27", "3", "0", "30874", "2025", ".3 Update"]
+            ),
+            "2025.3",
+        )
+
+    def test_suffixed_host_value_reports_no_compatibility_warning(self):
+        class SuffixedRuntime(FakeRuntime):
+            @staticmethod
+            def maxVersion():
+                return [27000, 66, 0, 27, 3, 0, 30874, 2025, ".3 Update"]
+
+        metadata = MaxRuntimeAdapter(runtime=SuffixedRuntime()).source_metadata()
+        self.assertEqual(metadata["max_version"], "2025.3")
+        self.assertTrue(metadata["compatibility"]["max_matches_target"])
+        self.assertEqual(metadata["compatibility"]["warnings"], [])
 
 
 if __name__ == "__main__":
