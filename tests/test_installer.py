@@ -2,16 +2,23 @@ from __future__ import annotations
 
 import runpy
 import shutil
+import stat
 import sys
 import tempfile
 import unittest
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from unittest import mock
 
+import blendmax_install
+from blendmax_blender import package as blender_package
 from blendmax_install import (
     BUNDLE_NAME,
+    MAX_ARCHIVE_ENTRIES,
+    MAX_UNCOMPRESSED_BYTES,
     InstallError,
+    _safe_extract,
     build_bundle,
     install_from_source,
     install_from_zip,
@@ -214,6 +221,201 @@ class InstallerTests(unittest.TestCase):
                     archive_path,
                     install_root=Path(temporary) / "ApplicationPlugins",
                 )
+
+
+class UpdateZipResourceLimitTests(unittest.TestCase):
+    """Resource limits for update ZIPs, enforced by _safe_extract().
+
+    Entry-count boundaries are exercised at the REAL constant -- 2048 tiny
+    entries is cheap. Byte-budget boundaries patch the constant down instead,
+    because testing the real one would mean building a 16 GiB archive; the
+    comparison is identical at any value, and the real magnitude is pinned by
+    the drift test at the end of this class.
+    """
+
+    @staticmethod
+    def _build(path, names, size=1):
+        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for name in names:
+                archive.writestr(name, b"x" * size)
+        return path
+
+    @staticmethod
+    def _numbered(count):
+        return ["f{0}.txt".format(index) for index in range(count)]
+
+    def _extract(self, archive_path, destination):
+        with zipfile.ZipFile(archive_path, "r") as archive:
+            _safe_extract(archive, destination)
+
+    # -- entry count ------------------------------------------------------
+
+    def test_accepts_archive_at_entry_limit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._build(
+                Path(temporary) / "ok.zip", self._numbered(MAX_ARCHIVE_ENTRIES)
+            )
+            destination = Path(temporary) / "out"
+            destination.mkdir()
+
+            self._extract(path, destination)
+
+            self.assertEqual(
+                len([p for p in destination.rglob("*") if p.is_file()]),
+                MAX_ARCHIVE_ENTRIES,
+            )
+
+    def test_rejects_archive_above_entry_limit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._build(
+                Path(temporary) / "many.zip", self._numbered(MAX_ARCHIVE_ENTRIES + 1)
+            )
+            destination = Path(temporary) / "out"
+            destination.mkdir()
+
+            with self.assertRaises(InstallError) as caught:
+                self._extract(path, destination)
+
+            self.assertIn("too many entries", str(caught.exception))
+
+    def test_directory_entries_count_towards_entry_limit(self):
+        """Directories consume the entry budget, matching package.py."""
+        directories = ["d{0}/".format(index) for index in range(MAX_ARCHIVE_ENTRIES)]
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "out"
+            destination.mkdir()
+
+            at_limit = self._build(
+                Path(temporary) / "dirs.zip", directories, size=0
+            )
+            self._extract(at_limit, destination)
+
+            over_limit = self._build(
+                Path(temporary) / "dirs_over.zip", directories + ["extra/"], size=0
+            )
+            with self.assertRaises(InstallError) as caught:
+                self._extract(over_limit, destination)
+
+            self.assertIn("too many entries", str(caught.exception))
+
+    # -- byte budget ------------------------------------------------------
+
+    def test_accepts_archive_at_byte_limit(self):
+        limit = 4096
+        with mock.patch.object(blendmax_install, "MAX_UNCOMPRESSED_BYTES", limit):
+            with tempfile.TemporaryDirectory() as temporary:
+                path = self._build(
+                    Path(temporary) / "exact.zip", ["a.bin"], size=limit
+                )
+                with zipfile.ZipFile(path, "r") as archive:
+                    declared = sum(info.file_size for info in archive.infolist())
+                self.assertEqual(declared, limit)
+                destination = Path(temporary) / "out"
+                destination.mkdir()
+
+                self._extract(path, destination)
+
+                self.assertEqual((destination / "a.bin").stat().st_size, limit)
+
+    def test_rejects_archive_above_byte_limit(self):
+        limit = 4096
+        with mock.patch.object(blendmax_install, "MAX_UNCOMPRESSED_BYTES", limit):
+            with tempfile.TemporaryDirectory() as temporary:
+                path = self._build(
+                    Path(temporary) / "over.zip", ["a.bin"], size=limit + 1
+                )
+                destination = Path(temporary) / "out"
+                destination.mkdir()
+
+                with self.assertRaises(InstallError) as caught:
+                    self._extract(path, destination)
+
+                self.assertIn("safety limit", str(caught.exception))
+
+    # -- nothing written when preflight fails ------------------------------
+
+    def test_destination_untouched_when_entry_limit_exceeded(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._build(
+                Path(temporary) / "many.zip", self._numbered(MAX_ARCHIVE_ENTRIES + 1)
+            )
+            destination = Path(temporary) / "out"
+            destination.mkdir()
+
+            with self.assertRaises(InstallError):
+                self._extract(path, destination)
+
+            self.assertEqual(list(destination.rglob("*")), [])
+
+    def test_destination_untouched_when_byte_budget_exceeded(self):
+        with mock.patch.object(blendmax_install, "MAX_UNCOMPRESSED_BYTES", 64):
+            with tempfile.TemporaryDirectory() as temporary:
+                path = self._build(
+                    Path(temporary) / "over.zip",
+                    ["small.txt", "big.bin"],
+                    size=65,
+                )
+                destination = Path(temporary) / "out"
+                destination.mkdir()
+
+                with self.assertRaises(InstallError):
+                    self._extract(path, destination)
+
+                self.assertEqual(list(destination.rglob("*")), [])
+
+    # -- existing protections preserved ------------------------------------
+
+    def test_rejects_symlink_entry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "link.zip"
+            with zipfile.ZipFile(path, "w") as archive:
+                info = zipfile.ZipInfo("link")
+                info.external_attr = (stat.S_IFLNK | 0o777) << 16
+                archive.writestr(info, "target.txt")
+            destination = Path(temporary) / "out"
+            destination.mkdir()
+
+            with self.assertRaises(InstallError) as caught:
+                self._extract(path, destination)
+
+            self.assertIn("symbolic link", str(caught.exception))
+
+    def test_rejects_path_traversal_entry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "escape.zip"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("../escape.txt", "nope")
+            destination = Path(temporary) / "out" / "inner"
+            destination.mkdir(parents=True)
+
+            with self.assertRaises(InstallError) as caught:
+                self._extract(path, destination)
+
+            self.assertIn("unsafe path", str(caught.exception))
+
+    # -- end to end, and the drift guard -----------------------------------
+
+    def test_install_from_zip_rejects_archive_above_byte_limit(self):
+        with mock.patch.object(blendmax_install, "MAX_UNCOMPRESSED_BYTES", 64):
+            with tempfile.TemporaryDirectory() as temporary:
+                path = self._build(
+                    Path(temporary) / "over.zip", ["big.bin"], size=65
+                )
+                plugins = Path(temporary) / "ApplicationPlugins"
+
+                with self.assertRaises(InstallError) as caught:
+                    install_from_zip(path, install_root=plugins)
+
+                self.assertIn("safety limit", str(caught.exception))
+                self.assertFalse((plugins / BUNDLE_NAME).exists())
+
+    def test_limits_match_the_canonical_package_limits(self):
+        """These constants are duplicated for deployment reasons; they must not
+        drift from blendmax_blender.package."""
+        self.assertEqual(MAX_ARCHIVE_ENTRIES, blender_package.MAX_ARCHIVE_ENTRIES)
+        self.assertEqual(
+            MAX_UNCOMPRESSED_BYTES, blender_package.MAX_UNCOMPRESSED_BYTES
+        )
 
 
 if __name__ == "__main__":

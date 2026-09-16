@@ -20,6 +20,18 @@ VERSION_FILE_RELATIVE = CORE_PACKAGE_RELATIVE / "__init__.py"
 VERSION_PATTERN = re.compile(r'^__version__\s*=\s*["\']([^"\']+)["\']', re.MULTILINE)
 
 
+# Archive resource limits for update ZIPs. These deliberately mirror the
+# canonical limits in blendmax_blender/package.py rather than importing them:
+# this installer runs inside the deployed 3ds Max bundle, whose Contents/python
+# holds only blendmax_max/, this file and the launch scripts. blendmax_blender
+# is a separate artifact (the Blender extension) and is not present, so
+# importing from it would raise ModuleNotFoundError at runtime on the very path
+# these limits protect. Keep the two in step -- tests/test_installer.py asserts
+# they are equal.
+MAX_ARCHIVE_ENTRIES = 2048
+MAX_UNCOMPRESSED_BYTES = 16 * 1024 * 1024 * 1024
+
+
 class InstallError(RuntimeError):
     """Raised when an install or update package is invalid."""
 
@@ -145,7 +157,27 @@ def install_from_source(
 
 def _safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
     root = destination.resolve()
-    for member in archive.infolist():
+    infos = archive.infolist()
+
+    # Resource limits first. Everything in this function is a pre-flight check,
+    # so nothing reaches the disk until the whole archive has passed.
+    # Directory entries count towards the entry limit but declare no bytes,
+    # matching blendmax_blender/package.py:_validated_members().
+    if len(infos) > MAX_ARCHIVE_ENTRIES:
+        raise InstallError(
+            "Update ZIP contains too many entries ({0} > {1}).".format(
+                len(infos), MAX_ARCHIVE_ENTRIES
+            )
+        )
+    declared_bytes = sum(info.file_size for info in infos)
+    if declared_bytes > MAX_UNCOMPRESSED_BYTES:
+        raise InstallError(
+            "Update ZIP expands beyond the {0} GiB safety limit.".format(
+                MAX_UNCOMPRESSED_BYTES // (1024 ** 3)
+            )
+        )
+
+    for member in infos:
         member_path = Path(member.filename)
         if member_path.is_absolute():
             raise InstallError("Update ZIP contains an absolute path: {0}".format(member.filename))
