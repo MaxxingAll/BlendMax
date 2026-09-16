@@ -131,7 +131,25 @@ class CleanupPlanningTests(unittest.TestCase):
         with self.assertRaisesRegex(CleanupError, "Root Group not Detected"):
             build_cleanup_plan([node("mesh")], "mesh")
 
-    def test_multi_sub_lookup_uses_explicit_material_ids(self):
+    def test_face_bitarray_is_sorted_unique_and_compact(self):
+        self.assertEqual(
+            format_face_bitarray([9, 3, 2, 1, 3, 7, 8]),
+            "#{1..3,7..9}",
+        )
+        self.assertEqual(format_face_bitarray([]), "#{}")
+
+
+class MultiSubMaterialLookupTests(unittest.TestCase):
+    """materialIDList / materialList pairing.
+
+    The two lists describe the same slot set. ``zip()`` truncates to the
+    shorter one silently, so a mismatch used to drop IDs (or leave materials
+    unreachable) with no signal, and face material IDs are resolved through the
+    returned mapping -- a truncated lookup puts faces on the wrong slot while
+    reporting success.
+    """
+
+    def test_uses_explicit_material_ids(self):
         red = object()
         blue = object()
 
@@ -140,12 +158,60 @@ class CleanupPlanningTests(unittest.TestCase):
         self.assertIs(lookup[19], red)
         self.assertIs(lookup[3], blue)
 
-    def test_face_bitarray_is_sorted_unique_and_compact(self):
-        self.assertEqual(
-            format_face_bitarray([9, 3, 2, 1, 3, 7, 8]),
-            "#{1..3,7..9}",
-        )
-        self.assertEqual(format_face_bitarray([]), "#{}")
+    def test_equal_lengths_behave_as_before(self):
+        materials = [object() for _ in range(4)]
+        ids = [7, 1, 3, 2]
+
+        lookup = material_id_lookup(ids, materials)
+
+        self.assertEqual(set(lookup), set(ids))
+        for material_id, material in zip(ids, materials):
+            self.assertIs(lookup[material_id], material)
+
+    def test_rejects_more_ids_than_materials(self):
+        with self.assertRaisesRegex(CleanupError, "Multi/Sub material slot mismatch"):
+            material_id_lookup([1, 2, 3], [object(), object()])
+
+    def test_rejects_more_materials_than_ids(self):
+        with self.assertRaisesRegex(CleanupError, "Multi/Sub material slot mismatch"):
+            material_id_lookup([1], [object(), object(), object()])
+
+    def test_does_not_silently_truncate(self):
+        """Regression: the trailing ID used to be dropped with no signal."""
+        materials = [object(), object()]
+
+        with self.assertRaises(CleanupError):
+            lookup = material_id_lookup([1, 2, 3], materials)
+            self.assertIn(3, lookup)  # unreachable
+
+    def test_mismatch_message_reports_both_lengths(self):
+        with self.assertRaisesRegex(
+            CleanupError, "has 3 entries but materialList has 2"
+        ):
+            material_id_lookup([1, 2, 3], [object(), object()])
+
+    def test_mismatch_message_uses_singular_for_one_entry(self):
+        with self.assertRaisesRegex(
+            CleanupError, "has 1 entry but materialList has 2"
+        ):
+            material_id_lookup([1], [object(), object()])
+
+    def test_equal_empty_sequences_are_allowed(self):
+        self.assertEqual(material_id_lookup([], []), {})
+
+    def test_empty_ids_with_materials_is_a_mismatch(self):
+        with self.assertRaisesRegex(CleanupError, "Multi/Sub material slot mismatch"):
+            material_id_lookup([], [object()])
+
+    def test_empty_materials_with_ids_is_a_mismatch(self):
+        with self.assertRaisesRegex(CleanupError, "Multi/Sub material slot mismatch"):
+            material_id_lookup([1], [])
+
+    def test_mismatch_message_uses_singular_for_one_id_to_zero_materials(self):
+        with self.assertRaisesRegex(
+            CleanupError, "has 1 entry but materialList has 0"
+        ):
+            material_id_lookup([1], [])
 
 
 if __name__ == "__main__":
