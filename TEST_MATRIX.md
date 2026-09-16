@@ -1,14 +1,15 @@
-# BlendMax Alpha.4.1.0 Test Matrix
+# BlendMax 0.1.0-alpha.4.3.0 Test Matrix
 
-Status: **Alpha.4.1.0 Max cleanup and duplicate-material merge host pass**
+Status: **0.1.0-alpha.4.3.0 automated baseline; newest host pass recorded below is Alpha.4.1.0**
 
 ## Reference environment
 
 - Autodesk 3ds Max 2025.3
 - V-Ray 7.00.02
-- BlendMax Max Exporter 0.1.0-alpha.4.1.0
+- BlendMax Max Exporter 0.1.0-alpha.4.3.0
 - BlendMax manifest schema 0.1.1
 - FBX binary, Z-up, metres, animation disabled
+- Automated suite: Python 3.11, 3.12 and 3.13 on `ubuntu-latest`, from the CI matrix
 
 The manual material tests below were performed with one isolated `VRayMtl`
 asset through Alpha.3.2. Alpha.3.3 repaired the Reflection Roughness control
@@ -17,6 +18,8 @@ selection. Alpha.3.5 replaced conservative rotated node bounds with exact
 evaluated-mesh bounds while keeping a safe fallback. Alpha.3.6 raises the
 grouped-asset geometry limit from 15 to 30 objects. Alpha.4.0 adds the explicit
 Join Mesh by Material cleanup and a strict hidden/frozen-object preflight.
+Alpha.4.2.0 raises the grouped-asset geometry limit from 30 to 500 objects.
+Alpha.4.3.0 adds alpha/opacity protection to the cleanup workflow.
 
 Manual evidence packages are not committed because they contain user-provided
 textures. Their filenames are recorded here so results can be traced to the
@@ -88,7 +91,7 @@ textures, and zero exporter warnings for the final accepted test case.
 | Shape nodes excluded from the v0.1 geometry contract | Pass | Pending |
 | Rotated geometry uses exact evaluated world-space bounds | Pass | Pass with `Basketbalv2l.blendmax`; maximum manifest-to-FBX dimension delta was 0.000000224 m |
 | Failed evaluated-mesh bounds clean up and fall back to node bounds | Pass | Runtime failure path covered automatically |
-| Grouped asset accepts 30 geometry nodes and rejects 31 | Pass | Existing 12-geometry production asset passes; exact 30/31 Max boundary test pending |
+| Grouped asset accepts 500 geometry nodes and rejects 501 | Pass | Existing 12-geometry production asset passes; exact 500/501 Max boundary test pending |
 | Hidden/frozen scene object aborts export before FBX processing | Pass | Pending |
 | Hidden/frozen scene object aborts cleanup before geometry processing | Pass | Pending |
 | Cleanup removes all nested groups but retains the selected root | Pass by planner | Pending |
@@ -97,11 +100,15 @@ textures, and zero exporter warnings for the final accepted test case.
 
 ## Automated regression suite
 
-Alpha.4.1.0 passes 92 automated tests across the Max exporter/cleanup and Blender
-importer, including:
+The suite currently runs **350 tests** across the Max exporter/cleanup and
+Blender importer. CI runs it on Python 3.11, 3.12 and 3.13 via
+`python -m unittest discover -s tests -v`; that run is the source of truth, and
+the figure here is a snapshot of the current suite rather than a fixed target.
+
+Coverage includes:
 
 - one-object and one-group scene rules;
-- the inclusive 30-object group limit and 31-object rejection boundary;
+- the inclusive 500-object group limit and 501-object rejection boundary;
 - tiny and oversized asset policies;
 - evaluated world-space mesh bounds, temporary mesh cleanup, and safe fallback;
 - material graph serialization and parameter pruning;
@@ -124,7 +131,17 @@ importer, including:
 - root-scoped Shape detection and refusal-before-cleanup behavior;
 - zero-polygon geometry classification as imported linework;
 - root-scoped cleanup planning and nested-group preservation;
-- explicit Multi/Sub material-ID lookup and compact BitArray generation; and
+- explicit Multi/Sub material-ID lookup and compact BitArray generation;
+- update ZIP entry-count (`2048`) and declared-size (`16 GiB`) limits, refused
+  before extraction begins, and the guarantee that a refusal leaves an
+  already-populated destination untouched (`tests/test_installer.py`); this path
+  does not yet apply the Windows filename rules enforced on `.blendmax` packages
+  (#39);
+- Multi/Sub material-list length mismatch detection instead of silent truncation
+  (`tests/test_max_cleanup_slots.py`);
+- 3ds Max version-string parsing, including an update token carrying trailing
+  text, and rejection of multi-component values such as `.3.1`
+  (`tests/test_max_adapter.py`); and
 - the Cleanup submenu/action launcher in the installable AppBundle.
 
 Run the suite from the project root:

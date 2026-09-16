@@ -67,6 +67,73 @@ that a running V-Ray host produced those exact values. They provide a fast
 regression layer for the importer pipeline; real Max/V-Ray A/B tests remain the
 ground truth for renderer-specific host behavior.
 
+## Version metadata
+
+- Extension version: **0.1.9** — declared in `blender_manifest.toml`, which is
+  the metadata Blender reads for an installed extension and the value the build
+  uses to name the artifact (`blendmax_importer-0.1.9.zip`).
+- `blender_version_min`: **4.2.0**.
+- `__init__.py` mirrors the version in `__version__` and in the legacy `bl_info`
+  dict. Nothing in the repository reads those two, so
+  `tests/test_blender_extension_build.py` (`BlenderVersionMetadataTests`) pins
+  all three against each other and fails if any one moves alone.
+- A fourth value is a hand-maintained expectation rather than a declaration: the
+  literal `"0.1.9"` asserted by `BlenderExtensionBuildTests` in the same file. It
+  must move with the other three, or that test fails with no other explanation.
+
+## Archive validation coverage
+
+The `.blendmax` validator (`blendmax_blender/package.py`) runs before any
+extraction: a rejected package yields no contents and no member is written.
+
+**Windows path components** — `_safe_name` / `_windows_hazard`, covered by
+`ArchiveFilenameHardeningTests` and `ArchiveSecurityRegressionTests` in
+`tests/test_blender_package.py`:
+
+- Windows reserved device names are rejected case-insensitively and regardless
+  of extension: `CON`, `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`, `COM1`–`COM9`,
+  `LPT1`–`LPT9`, plus the ISO/IEC 8859-1 superscript forms `COM¹`–`COM³` and
+  `LPT¹`–`LPT³` — 30 names.
+- A component with a trailing `.` or a trailing space is rejected, because
+  Windows strips those and two members would collapse onto one file.
+- A colon in any component is rejected (NTFS alternate data stream, or a
+  drive-relative path).
+- **Every** component is checked, not only the basename, so `dir/CON/file.txt`
+  and `a/b:c` are refused as well.
+- Boundaries deliberately left valid, and tested: `COM0`, `LPT0`, `COM10`,
+  `LPT10`, `CLOCK$`, the Unicode superscripts block (`COM⁴`), names that only
+  resemble hazards (`CONSOLE.txt`, `conartist.txt`), and superscripts in
+  ordinary names (`x².txt`).
+
+**Traversal, symlinks and duplicates:**
+
+- absolute paths, `..` in any component, and mixed-separator traversal such as
+  `a/..\..\file` are rejected;
+- symlink members (`S_IFLNK` set in `external_attr`) are rejected;
+- duplicate archive paths are rejected case-insensitively, including a nested
+  collision such as `Textures/wood.png` against `textures/wood.png`.
+
+**Resource limits** — `_validated_members`: at most `2048` entries and `16 GiB`
+of declared uncompressed size, evaluated from `ZipInfo.file_size` before
+extraction begins. Entry-count boundaries are exercised at the real limit; byte
+boundaries patch the limit down, because a real 16 GiB fixture is not built.
+
+**Manifest referential integrity** — `tests/test_blender_manifest.py`: dangling
+`parent_id`, assignment `object_id` / `material_ref`, `sub_materials[*].ref`,
+`sub_textures[*].ref` and `texture.graph_node_id` references are reported as
+manifest errors naming the field and value, and a parent cycle is reported as a
+manifest error rather than a bare `ValueError`.
+
+**Update ZIP path** — `blendmax_install._safe_extract`, covered by
+`tests/test_installer.py` (`UpdateZipResourceLimitTests`,
+`UpdateZipSecurityRegressionTests`): the same entry-count and byte limits, plus
+absolute-path, symlink and traversal rejection, and refusals that leave an
+already-populated destination untouched. This path does **not** yet apply the
+Windows filename rules; that gap is tracked separately as #39.
+
+**Automation boundary:** everything above is ordinary Python over `zipfile`, so
+it is unit-tested without `bpy`. None of it is host-verified inside Blender.
+
 ## Hot-reload manual verification
 
 ### A. Legacy add-on layout — PENDING HOST TEST

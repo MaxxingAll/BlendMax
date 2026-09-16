@@ -122,11 +122,15 @@ root group plus one mesh per material.
 3. Select the ZIP. The updated Python core is loaded by the next BlendMax
 action; restart 3ds Max only when a release changes the menu layout.
 
-The updater validates the release structure, rejects unsafe archive paths,
-builds a new AppBundle in a staging directory, and replaces only the installed
-`BlendMax.bundle` folder. If installation fails, the previous bundle is
-restored. Each menu launcher invalidates Max's embedded-Python module cache so
-an updated exporter or cleanup action cannot continue running stale code.
+The updater validates the release structure, rejects unsafe archive paths
+(absolute, symlink and traversal) and refuses an archive with more than 2048
+entries or more than 16 GiB of declared uncompressed content before extracting
+anything. The Windows filename rules applied to `.blendmax` packages are not yet
+enforced on update archives. It builds a new AppBundle in a staging directory
+and replaces only the installed `BlendMax.bundle` folder. If installation fails,
+the previous bundle is restored. Each menu launcher invalidates Max's
+embedded-Python module cache so an updated exporter or cleanup action cannot
+continue running stale code.
 
 `run_blendmax_max.py` remains available as a development fallback.
 
@@ -157,10 +161,14 @@ python tools/build_blender_extension.py
 
 ## Blender import behavior
 
-The importer validates archive paths before extracting, reads only the declared
-manifest/FBX/textures, calls Blender's FBX importer once, and then rebuilds the
-asset from indexed manifest data. A failed import removes the objects and data
-created by that attempt.
+The importer validates every archive member before extracting anything: unsafe
+paths and symlinks are rejected, as are names Windows would resolve to a device
+or silently rewrite (reserved device names such as `CON`, trailing dots or
+spaces, colons), case-insensitive duplicate paths, and archives beyond 2048
+entries or 16 GiB of declared uncompressed content. It then reads only the
+declared manifest/FBX/textures, calls Blender's FBX importer once, and rebuilds
+the asset from indexed manifest data. A failed import removes the objects and
+data created by that attempt.
 
 It currently:
 
