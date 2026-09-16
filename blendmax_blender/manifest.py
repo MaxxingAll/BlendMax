@@ -315,7 +315,7 @@ def _validate_references(manifest: BlendMaxManifest) -> None:
         while current is not None:
             if current in seen:
                 raise ManifestValidationError(
-                    "Object hierarchy contains a parent cycle at object id: "
+                    "Object hierarchy contains a parent cycle reachable from object id: "
                     "{0!r}.".format(start)
                 )
             seen.add(current)

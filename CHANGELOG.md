@@ -45,6 +45,7 @@ called out separately from automated coverage.
   reported as a manifest error rather than a bare `ValueError` from the
   placement pass.
 
+## Blender Importer 0.1.8 — 2026-09-08
 
 ### Added
 

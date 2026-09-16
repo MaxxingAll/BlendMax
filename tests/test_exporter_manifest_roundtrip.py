@@ -195,7 +195,7 @@ class ExporterManifestRoundTripTests(unittest.TestCase):
         )
 
     def test_dangling_texture_pointer_in_exporter_output_is_rejected(self):
-        """Dangering the emitted pointer proves the field is really validated."""
+        """Dangling the emitted pointer proves the field is really validated."""
         raw = self._manifest_from_export()
         record = next(
             item for item in raw["textures"] if item.get("graph_node_id") is not None
