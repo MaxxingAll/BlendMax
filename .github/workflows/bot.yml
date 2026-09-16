@@ -1,14 +1,15 @@
 name: Bot
 
 # Manual trigger only. This workflow mints a short-lived installation token for
-# the BlendMax GitHub App and commits/pushes as <app-slug>[bot], so automated
+# the BlendMax GitHub App and commits/pushes as deepseek-chan[bot], so automated
 # changes carry a distinguishable identity instead of a personal account.
 #
 # Convention: BUG FIXES are authored by this App (objective acceptance, no
 # design judgment to attribute). NEW FEATURES are authored by the repository
-# owner, because a feature PR has to defend design intent. Never mix authors
-# within one PR. Every bot PR assigns OWNER so it reaches a human decision —
-# an App cannot be @-mentioned, so without an assignee a bot PR can stall.
+# owner, because a feature PR has to defend design intent. Tooling/infra changes
+# are outside this convention: they do not ship to users. Never mix authors
+# within one PR. Every bot PR assigns OWNER so it reaches a human decision — an
+# App cannot be @-mentioned, so without an assignee a bot PR can stall.
 on:
   workflow_dispatch:
     inputs:
@@ -96,6 +97,13 @@ jobs:
           MESSAGE: ${{ inputs.message }}
         run: |
           set -euo pipefail
+          # main is protected (PRs required, no force-push, admins bound), so
+          # pushing to it fails with an opaque hook error. Fail early with the
+          # reason instead of burning a run.
+          if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
+            echo "::error::refusing to push to protected branch '$BRANCH'. Use a working branch and let the PR step open the pull request."
+            exit 1
+          fi
           git checkout -B "$BRANCH"
           git add -A
           if git diff --cached --quiet; then

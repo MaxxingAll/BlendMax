@@ -4,9 +4,26 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
+_IS_WINDOWS = sys.platform == "win32"
 _STATE_FILENAME = "blendmax_restart_notice.json"
+
+# Win32 constants for the non-destructive liveness probe. Deliberately NOT
+# PROCESS_TERMINATE: this code must never be able to end a process it only
+# means to observe. See _windows_pid_is_alive().
+#
+# SYNCHRONIZE is required to wait on the process object. The probe signals
+# liveness via the wait state rather than the exit code, because
+# GetExitCodeProcess cannot distinguish a running process from one that exited
+# with STILL_ACTIVE (259) — see _windows_pid_is_alive().
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_SYNCHRONIZE = 0x00100000
+_WAIT_OBJECT_0 = 0x00000000
+_WAIT_TIMEOUT = 0x00000102
+_ERROR_INVALID_PARAMETER = 87
+_ERROR_ACCESS_DENIED = 5
 
 
 def _state_path(bpy) -> Path:
@@ -60,9 +77,66 @@ def _persist_state(path: Path, state: dict) -> bool:
     return True
 
 
+def _windows_pid_is_alive(pid: int) -> bool:
+    """Non-destructive liveness probe using a query-only process handle.
+
+    ``os.kill(pid, 0)`` is not a safe probe on Windows. Verified on CPython
+    3.11 (MSC v.1944, 64-bit): calling it against a live, unrelated child
+    process terminates it — the child reaped with exit status 3221225794
+    (``0xC0000142``, ``STATUS_DLL_INIT_FAILED``), the signature of
+    ``TerminateProcess``. Windows has no "signal 0" concept, so CPython's
+    ``os.kill`` maps the call onto a real termination.
+
+    Persisted PIDs from a previous Blender session can be recycled by an
+    unrelated process, and ``_pruned_consumed_pids`` calls this probe on those
+    persisted values — so the old implementation could kill a bystander.
+
+    Liveness is decided by the **wait state** of the process object, not by its
+    exit code. ``GetExitCodeProcess`` returns ``STILL_ACTIVE`` (259) for a
+    running process, but 259 is also a legal exit code, so a process that
+    exited with status 259 is indistinguishable from a live one and would be
+    retained forever as a stale PID. ``WaitForSingleObject(handle, 0)`` returns
+    ``WAIT_OBJECT_0`` only once the process object is signaled — i.e. the
+    process has actually terminated — which stays correct whatever exit code it
+    used.
+
+    The handle is opened with ``PROCESS_QUERY_LIMITED_INFORMATION |
+    SYNCHRONIZE``: query and wait rights only, so it cannot terminate or signal
+    anything. Access failures are classified by ``GetLastError``.
+    """
+
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+
+    access = _PROCESS_QUERY_LIMITED_INFORMATION | _SYNCHRONIZE
+    handle = kernel32.OpenProcess(access, False, pid)
+    if not handle:
+        # ACCESS_DENIED means the process is there but owned by someone else:
+        # still alive. INVALID_PARAMETER means no such PID.
+        return ctypes.get_last_error() == _ERROR_ACCESS_DENIED
+    try:
+        # WAIT_OBJECT_0 => signaled => the process has exited. WAIT_TIMEOUT =>
+        # still running. Anything else is treated as dead, matching the old
+        # probe's conservative handling of unexpected OS failures.
+        return kernel32.WaitForSingleObject(handle, 0) == _WAIT_TIMEOUT
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _pid_is_alive(pid: int) -> bool:
     if not isinstance(pid, int) or pid <= 0:
         return False
+    if _IS_WINDOWS:
+        return _windows_pid_is_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
