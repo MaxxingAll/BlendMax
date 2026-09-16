@@ -418,5 +418,73 @@ class UpdateZipResourceLimitTests(unittest.TestCase):
         )
 
 
+class UpdateZipSecurityRegressionTests(unittest.TestCase):
+    """Security regressions on the update-ZIP path.
+
+    Symlink, absolute-path and leading-traversal rejection for this path live in
+    InstallerTests and UpdateZipResourceLimitTests. What is added here is a
+    nested traversal form, and the guarantee that a refusal leaves a destination
+    which already has contents exactly as it found it.
+    """
+
+    def _extract(self, archive_path, destination):
+        with zipfile.ZipFile(archive_path, "r") as archive:
+            _safe_extract(archive, destination)
+
+    @staticmethod
+    def _populated_destination(temporary):
+        destination = Path(temporary) / "out"
+        destination.mkdir()
+        existing = destination / "keep.txt"
+        existing.write_text("preexisting", encoding="utf-8")
+        return destination, existing
+
+    def test_rejects_nested_traversal_entry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "nested.zip"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("a/../../escape.txt", "nope")
+            destination = Path(temporary) / "out" / "inner"
+            destination.mkdir(parents=True)
+
+            with self.assertRaises(InstallError) as caught:
+                self._extract(path, destination)
+
+            self.assertIn("unsafe path", str(caught.exception))
+            self.assertEqual(list(destination.rglob("*")), [])
+
+    def test_existing_destination_unchanged_when_byte_budget_rejected(self):
+        with mock.patch.object(blendmax_install, "MAX_UNCOMPRESSED_BYTES", 64):
+            with tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "over.zip"
+                with zipfile.ZipFile(path, "w") as archive:
+                    archive.writestr("big.bin", b"x" * 65)
+                destination, existing = self._populated_destination(temporary)
+
+                with self.assertRaises(InstallError):
+                    self._extract(path, destination)
+
+                self.assertEqual(
+                    sorted(item.name for item in destination.iterdir()), ["keep.txt"]
+                )
+                self.assertEqual(existing.read_text(encoding="utf-8"), "preexisting")
+
+    def test_existing_destination_unchanged_when_entry_limit_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "many.zip"
+            with zipfile.ZipFile(path, "w") as archive:
+                for index in range(MAX_ARCHIVE_ENTRIES + 1):
+                    archive.writestr("f{0}.txt".format(index), b"x")
+            destination, existing = self._populated_destination(temporary)
+
+            with self.assertRaises(InstallError):
+                self._extract(path, destination)
+
+            self.assertEqual(
+                sorted(item.name for item in destination.iterdir()), ["keep.txt"]
+            )
+            self.assertEqual(existing.read_text(encoding="utf-8"), "preexisting")
+
+
 if __name__ == "__main__":
     unittest.main()
