@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Sequence, Set, Tuple, TypeVar
+from typing import Dict, Iterable, Sequence, Tuple, TypeVar
 
 from .errors import CleanupError
 from .models import SceneNode
+from .scene_graph import descendant_ids, is_geometry
 
 
 T = TypeVar("T")
@@ -25,10 +26,6 @@ class CleanupPlan:
     removable_group_ids: Tuple[str, ...]
 
 
-def _is_geometry(node: SceneNode) -> bool:
-    return not node.is_group_head and "geometryclass" in node.superclass.casefold()
-
-
 def _is_shape(node: SceneNode) -> bool:
     if node.is_group_head:
         return False
@@ -40,23 +37,6 @@ def _is_shape(node: SceneNode) -> bool:
         or "spline" in node_type
         or node_type == "line"
     )
-
-
-def _descendant_ids(root_id: str, nodes: Iterable[SceneNode]) -> Set[str]:
-    children: Dict[str, List[str]] = {}
-    for node in nodes:
-        if node.parent_id:
-            children.setdefault(node.parent_id, []).append(node.node_id)
-
-    found: Set[str] = set()
-    pending = list(children.get(root_id, ()))
-    while pending:
-        node_id = pending.pop()
-        if node_id in found:
-            continue
-        found.add(node_id)
-        pending.extend(children.get(node_id, ()))
-    return found
 
 
 def build_cleanup_plan(
@@ -77,11 +57,11 @@ def build_cleanup_plan(
             "Ensure all objects are visible and unfrozen before continuing."
         )
 
-    descendants = _descendant_ids(root_id, scene_nodes)
+    descendants = descendant_ids(root_id, scene_nodes)
     visible_geometry = [
         node.node_id
         for node in scene_nodes
-        if node.node_id in descendants and _is_geometry(node)
+        if node.node_id in descendants and is_geometry(node)
     ]
     shapes = [
         node.node_id

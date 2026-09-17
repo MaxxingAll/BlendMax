@@ -2,53 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Set
+from typing import Iterable
 
 from .errors import SceneValidationError
 from .models import SceneNode, SizePolicyResult, ValidationResult
+from .scene_graph import descendant_ids, has_group_ancestor, is_geometry
 
 
 DEFAULT_MAX_OBJECTS = 500
 DEFAULT_MAX_FOOTPRINT_M = 50.0
 DEFAULT_MIN_LARGEST_DIMENSION_M = 0.01
-
-
-def _descendant_ids(root_id: str, nodes: Iterable[SceneNode]) -> Set[str]:
-    children: Dict[str, List[str]] = {}
-    for node in nodes:
-        if node.parent_id:
-            children.setdefault(node.parent_id, []).append(node.node_id)
-
-    found: Set[str] = set()
-    pending = list(children.get(root_id, []))
-    while pending:
-        node_id = pending.pop()
-        if node_id in found:
-            continue
-        found.add(node_id)
-        pending.extend(children.get(node_id, []))
-    return found
-
-
-def _has_group_ancestor(
-    node: SceneNode,
-    node_by_id: Dict[str, SceneNode],
-) -> bool:
-    parent_id = node.parent_id
-    visited: Set[str] = set()
-    while parent_id and parent_id not in visited:
-        visited.add(parent_id)
-        parent = node_by_id.get(parent_id)
-        if parent is None:
-            return False
-        if parent.is_group_head:
-            return True
-        parent_id = parent.parent_id
-    return False
-
-
-def _is_geometry(node: SceneNode) -> bool:
-    return not node.is_group_head and "geometryclass" in node.superclass.casefold()
 
 
 def validate_scene(
@@ -73,7 +36,7 @@ def validate_scene(
     top_group_heads = [
         node
         for node in group_heads
-        if not _has_group_ancestor(node, node_by_id)
+        if not has_group_ancestor(node, node_by_id)
     ]
 
     if top_group_heads:
@@ -84,16 +47,16 @@ def validate_scene(
             )
 
         root = top_group_heads[0]
-        descendant_ids = _descendant_ids(root.node_id, scene_nodes)
+        descendants = descendant_ids(root.node_id, scene_nodes)
         payload = [
             node
             for node in exportable
-            if node.node_id in descendant_ids
+            if node.node_id in descendants
         ]
         extras = [
             node
             for node in exportable
-            if node.node_id not in descendant_ids
+            if node.node_id not in descendants
             and node.node_id != root.node_id
         ]
         if extras:
@@ -112,7 +75,7 @@ def validate_scene(
         export_ids.extend(
             node.node_id
             for node in scene_nodes
-            if node.node_id in descendant_ids
+            if node.node_id in descendants
             and node.is_group_head
         )
         mode = "group"
@@ -145,7 +108,7 @@ def validate_scene(
         for node in scene_nodes
         if not node.exportable
         and not node.is_group_head
-        and not _is_geometry(node)
+        and not is_geometry(node)
     ]
     warnings = []
     if ignored:
