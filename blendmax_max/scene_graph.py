@@ -19,13 +19,16 @@ from .models import SceneNode
 
 
 def descendant_ids(root_id: str, nodes: Iterable[SceneNode]) -> Set[str]:
-    """Return every descendant id of ``root_id``, excluding the root itself.
+    """Return every descendant id of ``root_id``, excluding ``root_id`` itself.
 
-    Walks child links built from each node's ``parent_id``. The ``found`` set
-    also provides cycle protection: a node already collected is skipped rather
-    than re-expanded, so a parent cycle terminates instead of looping forever.
-    Nodes whose ``parent_id`` is missing from ``nodes`` are never reached, and a
-    node that is its own ancestor appears once.
+    Exception: when a parent cycle makes ``root_id`` reachable from itself, it is
+    included, because the walk reaches it as an ordinary descendant. This is
+    pre-existing behaviour, pinned by ``test_cycle_terminates_instead_of_looping``.
+
+    Walks child links built from each node's ``parent_id``. The ``found`` set also
+    provides cycle protection: a node already collected is skipped rather than
+    re-expanded, so a parent cycle terminates instead of looping forever. Nodes
+    whose ``parent_id`` is missing from ``nodes`` are never reached.
     """
 
     children: Dict[str, List[str]] = {}
