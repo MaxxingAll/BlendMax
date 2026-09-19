@@ -5,12 +5,13 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import stat
 import tempfile
 import uuid
 import zipfile
 from pathlib import Path
 from typing import Dict, Mapping, Optional
+
+import blendmax_archive_policy as archive_policy
 
 
 BUNDLE_NAME = "BlendMax.bundle"
@@ -19,17 +20,19 @@ CORE_PACKAGE_RELATIVE = Path("blendmax_max")
 VERSION_FILE_RELATIVE = CORE_PACKAGE_RELATIVE / "__init__.py"
 VERSION_PATTERN = re.compile(r'^__version__\s*=\s*["\']([^"\']+)["\']', re.MULTILINE)
 
+# The shared archive policy module, shipped beside this file inside the bundle.
+# tools/build_release.py puts it at the release root and build_bundle() copies
+# it into Contents/python; it is imported as a top-level module because that
+# directory is what ends up on sys.path when the bundle runs.
+ARCHIVE_POLICY_FILE = "blendmax_archive_policy.py"
 
-# Archive resource limits for update ZIPs. These deliberately mirror the
-# canonical limits in blendmax_blender/package.py rather than importing them:
-# this installer runs inside the deployed 3ds Max bundle, whose Contents/python
-# holds only blendmax_max/, this file and the launch scripts. blendmax_blender
-# is a separate artifact (the Blender extension) and is not present, so
-# importing from it would raise ModuleNotFoundError at runtime on the very path
-# these limits protect. Keep the two in step -- tests/test_installer.py asserts
-# they are equal.
-MAX_ARCHIVE_ENTRIES = 2048
-MAX_UNCOMPRESSED_BYTES = 16 * 1024 * 1024 * 1024
+
+# Archive resource limits for update ZIPs, from the shared policy module the two
+# artifacts now have in common. Bound as module-level names rather than read
+# through archive_policy at each call site, so the tests can still lower them to
+# exercise the boundary without building a 16 GiB archive.
+MAX_ARCHIVE_ENTRIES = archive_policy.MAX_ARCHIVE_ENTRIES
+MAX_UNCOMPRESSED_BYTES = archive_policy.MAX_UNCOMPRESSED_BYTES
 
 
 class InstallError(RuntimeError):
@@ -63,6 +66,12 @@ def validate_source_root(source_root: Path) -> str:
     required = (
         root / VERSION_FILE_RELATIVE,
         root / "blendmax_install.py",
+        # The shared archive policy, copied into Contents/python by build_bundle.
+        # Required rather than optional: a bundle without it cannot import the
+        # module this file needs, so the install would produce something that
+        # fails on first use. A release ZIP predating this file is refused here,
+        # with a message naming it, rather than installing a broken bundle.
+        root / ARCHIVE_POLICY_FILE,
         root / TEMPLATE_RELATIVE / "PackageContents.xml",
         root / TEMPLATE_RELATIVE / "Contents" / "macroscripts" / "BlendMax.mcr",
         root
@@ -106,6 +115,10 @@ def build_bundle(source_root: Path, destination_bundle: Path) -> str:
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
         )
         shutil.copy2(source / "blendmax_install.py", python_root / "blendmax_install.py")
+        # The shared archive policy travels into the bundle beside this file, so
+        # the deployed installer can import it without blendmax_blender being
+        # present -- which it never is in a 3ds Max install.
+        shutil.copy2(source / ARCHIVE_POLICY_FILE, python_root / ARCHIVE_POLICY_FILE)
     except OSError as exc:
         shutil.rmtree(destination, ignore_errors=True)
         raise InstallError("Could not build BlendMax.bundle: {0}".format(exc))
@@ -155,6 +168,20 @@ def install_from_source(
     }
 
 
+def _unsafe_member_message(name: str, result) -> str:
+    """This consumer's wording for a member the shared policy rejects."""
+
+    if result.reason == archive_policy.REASON_EMPTY:
+        return "Update ZIP contains an invalid empty path: {0}".format(name)
+    if result.reason == archive_policy.REASON_ABSOLUTE:
+        return "Update ZIP contains an absolute path: {0}".format(name)
+    if result.reason == archive_policy.REASON_COMPONENT:
+        return "Update ZIP contains an unsafe path: component {0!r} in {1} {2}".format(
+            result.part, name, result.hazard
+        )
+    return "Update ZIP contains an unsafe path: {0}".format(name)
+
+
 def _safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
     root = destination.resolve()
     infos = archive.infolist()
@@ -169,7 +196,7 @@ def _safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
                 len(infos), MAX_ARCHIVE_ENTRIES
             )
         )
-    declared_bytes = sum(info.file_size for info in infos)
+    declared_bytes = archive_policy.declared_uncompressed_bytes(infos)
     if declared_bytes > MAX_UNCOMPRESSED_BYTES:
         raise InstallError(
             "Update ZIP expands beyond the {0} GiB safety limit.".format(
@@ -177,18 +204,43 @@ def _safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
             )
         )
 
+    folded_names = set()
     for member in infos:
-        member_path = Path(member.filename)
-        if member_path.is_absolute():
-            raise InstallError("Update ZIP contains an absolute path: {0}".format(member.filename))
-        unix_mode = member.external_attr >> 16
-        if stat.S_ISLNK(unix_mode):
-            raise InstallError("Update ZIP contains a symbolic link: {0}".format(member.filename))
-        resolved = (root / member_path).resolve()
+        # The Windows filename policy, shared with the Blender package path.
+        # This was the gap #39 reported: an update ZIP could carry "CON",
+        # "dir/NUL.txt", "name." or "a/b:c" and nothing objected.
+        #
+        # Check precedence is unchanged -- absolute, then symlink, then the
+        # generic unsafe-path verdict -- so no existing rejection changes its
+        # message. Only the set of rejected names grows.
+        result = archive_policy.check_member_path(member.filename)
+        if result.reason == archive_policy.REASON_ABSOLUTE:
+            raise InstallError(
+                "Update ZIP contains an absolute path: {0}".format(member.filename)
+            )
+        if archive_policy.is_symlink(member):
+            raise InstallError(
+                "Update ZIP contains a symbolic link: {0}".format(member.filename)
+            )
+        if result.reason:
+            raise InstallError(_unsafe_member_message(member.filename, result))
+        # Two entries that differ only by case are one file on Windows, so one
+        # would silently overwrite the other.
+        folded = archive_policy.folded_path(result.cleaned)
+        if folded in folded_names:
+            raise InstallError(
+                "Update ZIP contains a duplicate path: {0}".format(member.filename)
+            )
+        folded_names.add(folded)
+        # Belt and braces. The policy check above is lexical; this one resolves
+        # against the real destination, so anything it misses is still caught.
+        resolved = (root / result.cleaned).resolve()
         try:
             resolved.relative_to(root)
         except ValueError:
-            raise InstallError("Update ZIP contains an unsafe path: {0}".format(member.filename))
+            raise InstallError(
+                "Update ZIP contains an unsafe path: {0}".format(member.filename)
+            )
     archive.extractall(root)
 
 

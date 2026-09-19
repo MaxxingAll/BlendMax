@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import importlib
 import io
 import sys
 import tempfile
@@ -10,6 +11,7 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
+import blendmax_archive_policy as archive_policy
 import blendmax_blender
 from tools import build_blender_extension as builder
 from tools.build_blender_extension import build
@@ -175,6 +177,91 @@ class BlenderVersionMetadataTests(unittest.TestCase):
                 self.assertIn(key, metadata)
         self.assertEqual(metadata["id"], "blendmax_importer")
         self.assertEqual(metadata["type"], "add-on")
+
+
+class SharedPolicyPackagingTests(unittest.TestCase):
+    """The built extension must carry the shared archive policy and be able to use it.
+
+    The extension ships ``blendmax_blender/`` flattened to the archive root, and
+    that root becomes the import package. The shared policy therefore has to be
+    written to that root by the build, where package.py reaches it as a sibling
+    module. Importing it from the repository working tree would prove nothing.
+    """
+
+    @staticmethod
+    def _build_and_extract(temporary):
+        output = build(Path(temporary) / "blendmax_importer.zip")
+        root = Path(temporary) / "extroot"
+        with zipfile.ZipFile(output, "r") as archive:
+            names = archive.namelist()
+            archive.extractall(root / "extension")
+        return names, root
+
+    def test_shared_policy_is_in_the_built_extension(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            names, _ = self._build_and_extract(temporary)
+
+            self.assertIn("blendmax_archive_policy.py", names)
+
+    def test_shared_policy_sits_beside_the_package_modules(self):
+        """Flattened to the root, so the relative import in package.py resolves."""
+        with tempfile.TemporaryDirectory() as temporary:
+            names, _ = self._build_and_extract(temporary)
+
+            self.assertIn("package.py", names)
+            self.assertNotIn("blendmax_blender/blendmax_archive_policy.py", names)
+            self.assertFalse([name for name in names if name.startswith("blendmax_blender/")])
+
+    def test_extension_does_not_contain_max_deployment_code(self):
+        """The Blender artifact must not depend on the 3ds Max bundle."""
+        with tempfile.TemporaryDirectory() as temporary:
+            names, _ = self._build_and_extract(temporary)
+
+            self.assertFalse([name for name in names if name.startswith("blendmax_max")])
+            self.assertNotIn("blendmax_install.py", names)
+
+    def test_shipped_policy_is_byte_identical_to_the_canonical_file(self):
+        """The artifact must not carry a forked copy of the rules."""
+        with tempfile.TemporaryDirectory() as temporary:
+            output = build(Path(temporary) / "blendmax_importer.zip")
+            with zipfile.ZipFile(output, "r") as archive:
+                shipped = archive.read("blendmax_archive_policy.py")
+
+            canonical = (builder.PROJECT_ROOT / "blendmax_archive_policy.py").read_bytes()
+            self.assertEqual(shipped, canonical)
+
+    def test_built_extension_imports_and_uses_the_policy(self):
+        """Import the extracted extension as a package, the way Blender loads it."""
+        with tempfile.TemporaryDirectory() as temporary:
+            _, root = self._build_and_extract(temporary)
+            sys.path.insert(0, str(root))
+            try:
+                package = importlib.import_module("extension.package")
+                errors = importlib.import_module("extension.errors")
+
+                self.assertTrue(
+                    package.archive_policy.__file__.endswith("blendmax_archive_policy.py")
+                )
+                # Importing it is not enough: it has to be the module actually
+                # deciding, so exercise a rejection through the built package.
+                with self.assertRaises(errors.PackageValidationError):
+                    package._safe_name("CON")
+                with self.assertRaises(errors.PackageValidationError):
+                    package._safe_name("dir/NUL.txt")
+                self.assertEqual(
+                    package._safe_name("textures/wood.png"), "textures/wood.png"
+                )
+            finally:
+                sys.path.remove(str(root))
+                for name in [n for n in sys.modules if n == "extension"
+                             or n.startswith("extension.")]:
+                    del sys.modules[name]
+
+    def test_extension_policy_agrees_with_the_canonical_rules(self):
+        """A sample of the rules, checked against the imported shared module."""
+        self.assertEqual(archive_policy.windows_hazard("CON"),
+                         "reserved Windows device name")
+        self.assertEqual(archive_policy.windows_hazard("COM10"), "")
 
 
 if __name__ == "__main__":

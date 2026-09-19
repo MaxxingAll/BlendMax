@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 import runpy
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -11,6 +13,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest import mock
 
+import blendmax_archive_policy as archive_policy
 import blendmax_install
 from blendmax_blender import package as blender_package
 from blendmax_install import (
@@ -188,6 +191,7 @@ class InstallerTests(unittest.TestCase):
             included = (
                 "install_blendmax.py",
                 "blendmax_install.py",
+                "blendmax_archive_policy.py",
                 "blendmax_max",
                 "appbundle",
             )
@@ -409,9 +413,16 @@ class UpdateZipResourceLimitTests(unittest.TestCase):
                 self.assertIn("safety limit", str(caught.exception))
                 self.assertFalse((plugins / BUNDLE_NAME).exists())
 
-    def test_limits_match_the_canonical_package_limits(self):
-        """These constants are duplicated for deployment reasons; they must not
-        drift from blendmax_blender.package."""
+    def test_limits_come_from_the_shared_policy_module(self):
+        """These constants are no longer duplicated, so they cannot drift.
+
+        They used to be two literals in two artifacts held together by this
+        test. Both consumers now bind them from blendmax_archive_policy, so the
+        equality is a consequence of the sharing rather than a thing to
+        remember to maintain.
+        """
+        self.assertIs(MAX_ARCHIVE_ENTRIES, archive_policy.MAX_ARCHIVE_ENTRIES)
+        self.assertIs(MAX_UNCOMPRESSED_BYTES, archive_policy.MAX_UNCOMPRESSED_BYTES)
         self.assertEqual(MAX_ARCHIVE_ENTRIES, blender_package.MAX_ARCHIVE_ENTRIES)
         self.assertEqual(
             MAX_UNCOMPRESSED_BYTES, blender_package.MAX_UNCOMPRESSED_BYTES
@@ -484,6 +495,231 @@ class UpdateZipSecurityRegressionTests(unittest.TestCase):
                 sorted(item.name for item in destination.iterdir()), ["keep.txt"]
             )
             self.assertEqual(existing.read_text(encoding="utf-8"), "preexisting")
+
+
+class UpdateZipWindowsHazardTests(unittest.TestCase):
+    """The gap #39 reported: update ZIPs now apply the shared filename policy.
+
+    Before this change the update path rejected absolute paths, symlinks and
+    traversal, but accepted "CON", "dir/NUL.txt", "name." and "a/b:c". Every
+    rejection below fails against the pre-change _safe_extract.
+    """
+
+    def _extract(self, archive_path, destination):
+        with zipfile.ZipFile(archive_path, "r") as archive:
+            _safe_extract(archive, destination)
+
+    @staticmethod
+    def _archive(temporary, names):
+        path = Path(temporary) / "probe.zip"
+        with zipfile.ZipFile(path, "w") as archive:
+            for name in names:
+                archive.writestr(name, b"x")
+        return path
+
+    @staticmethod
+    def _destination(temporary):
+        destination = Path(temporary) / "out"
+        destination.mkdir()
+        return destination
+
+    def _assert_rejected(self, name, *expected_fragments):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._archive(temporary, [name])
+            destination = self._destination(temporary)
+
+            with self.assertRaises(InstallError) as caught:
+                self._extract(path, destination)
+
+            message = str(caught.exception)
+            for fragment in expected_fragments:
+                self.assertIn(fragment, message)
+            # A refusal is a pre-flight check: nothing may reach the disk.
+            self.assertEqual(sorted(item.name for item in destination.iterdir()), [])
+            return message
+
+    def test_rejects_reserved_device_name(self):
+        self._assert_rejected("CON", "unsafe path", "reserved Windows device name")
+
+    def test_rejects_reserved_device_name_case_insensitively(self):
+        self._assert_rejected("con", "reserved Windows device name")
+
+    def test_rejects_reserved_name_with_an_extension(self):
+        self._assert_rejected("NUL.txt", "reserved Windows device name")
+
+    def test_rejects_reserved_name_in_an_intermediate_directory(self):
+        message = self._assert_rejected(
+            "dir/NUL.txt", "unsafe path", "reserved Windows device name"
+        )
+        self.assertIn("'NUL.txt'", message)
+
+    def test_rejects_serial_device_names(self):
+        self._assert_rejected("COM1", "reserved Windows device name")
+
+    def test_rejects_superscript_device_name(self):
+        self._assert_rejected("COM\u00b9", "reserved Windows device name")
+
+    def test_rejects_trailing_dot(self):
+        self._assert_rejected("name.", "trailing dot or space")
+
+    def test_rejects_trailing_space(self):
+        self._assert_rejected("name ", "trailing dot or space")
+
+    def test_rejects_colon_in_a_component(self):
+        self._assert_rejected("a/b:c", "colon is not allowed in a path component")
+
+    def test_rejects_drive_relative_colon(self):
+        self._assert_rejected("C:file", "colon is not allowed in a path component")
+
+    def test_rejects_case_insensitive_duplicate_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._archive(temporary, ["Readme.md", "README.MD"])
+            destination = self._destination(temporary)
+
+            with self.assertRaises(InstallError) as caught:
+                self._extract(path, destination)
+
+            self.assertIn("duplicate path", str(caught.exception))
+            self.assertEqual(sorted(item.name for item in destination.iterdir()), [])
+
+    def test_existing_destination_untouched_when_a_hazard_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._archive(temporary, ["ok.txt", "CON"])
+            destination, existing = self._populated(temporary)
+
+            with self.assertRaises(InstallError):
+                self._extract(path, destination)
+
+            self.assertEqual(sorted(item.name for item in destination.iterdir()),
+                             ["keep.txt"])
+            self.assertEqual(existing.read_text(encoding="utf-8"), "preexisting")
+
+    @staticmethod
+    def _populated(temporary):
+        destination = Path(temporary) / "out"
+        destination.mkdir()
+        existing = destination / "keep.txt"
+        existing.write_text("preexisting", encoding="utf-8")
+        return destination, existing
+
+    # -- the policy must not over-block -----------------------------------
+
+    def test_accepts_ordinary_paths(self):
+        names = ["textures/wood.png", "a/b/c.txt", "readme.md", "dir\\win.txt"]
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._archive(temporary, names)
+            destination = self._destination(temporary)
+
+            self._extract(path, destination)
+
+            self.assertTrue((destination / "textures" / "wood.png").is_file())
+            self.assertTrue((destination / "a" / "b" / "c.txt").is_file())
+            # Backslashes from a Windows-written archive are separators.
+            self.assertTrue((destination / "dir" / "win.txt").is_file())
+
+    def test_accepts_the_documented_boundaries(self):
+        names = ["COM0", "LPT0", "COM10", "LPT10", "CLOCK$", "COM\u2074"]
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._archive(temporary, names)
+            destination = self._destination(temporary)
+
+            self._extract(path, destination)
+
+            for name in names:
+                self.assertTrue((destination / name).is_file(), name)
+
+
+class ArchivePolicyDeploymentTests(unittest.TestCase):
+    """Both SHIPPED artifacts must carry the shared policy and be able to use it.
+
+    A source-tree import proves nothing about the artifacts: the Blender
+    extension ships only blendmax_blender/ (flattened to the archive root) and
+    the Max bundle ships only Contents/python. These tests build both and check
+    them as artifacts, which is the only way to catch the shared module being
+    present in the repository but absent from a release.
+    """
+
+    def test_bundle_contains_the_shared_policy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = Path(temporary) / BUNDLE_NAME
+            build_bundle(SOURCE_ROOT, bundle)
+
+            self.assertTrue(
+                (bundle / "Contents" / "python" / "blendmax_archive_policy.py").is_file()
+            )
+
+    def test_bundle_does_not_contain_blender_code(self):
+        """The Max bundle must not depend on the Blender artifact."""
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = Path(temporary) / BUNDLE_NAME
+            build_bundle(SOURCE_ROOT, bundle)
+
+            self.assertFalse((bundle / "Contents" / "python" / "blendmax_blender").exists())
+
+    def test_shipped_policy_is_byte_identical_to_the_canonical_file(self):
+        """Neither artifact may carry a forked copy of the rules."""
+        canonical = (SOURCE_ROOT / "blendmax_archive_policy.py").read_bytes()
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = Path(temporary) / BUNDLE_NAME
+            build_bundle(SOURCE_ROOT, bundle)
+
+            shipped = (
+                bundle / "Contents" / "python" / "blendmax_archive_policy.py"
+            ).read_bytes()
+            self.assertEqual(shipped, canonical)
+
+    def test_deployed_installer_imports_and_enforces_the_policy(self):
+        """Run the installed bundle the way 3ds Max does: Contents/python only.
+
+        The subprocess deliberately has no repository on sys.path, so this
+        fails if the bundle is missing the shared module rather than silently
+        falling back to the developer's working tree.
+        """
+        probe = "\n".join([
+            "import sys, tempfile, zipfile",
+            "from pathlib import Path",
+            "import blendmax_install as installer",
+            "print('POLICY', Path(installer.archive_policy.__file__).name)",
+            "print('LIMITS', installer.MAX_ARCHIVE_ENTRIES)",
+            "verdicts = {}",
+            "with tempfile.TemporaryDirectory() as tmp:",
+            "    dest = Path(tmp) / 'out'",
+            "    dest.mkdir()",
+            "    for name in ('CON', 'textures/wood.png'):",
+            "        p = Path(tmp) / 'a.zip'",
+            "        with zipfile.ZipFile(p, 'w') as z:",
+            "            z.writestr(name, b'x')",
+            "        with zipfile.ZipFile(p) as z:",
+            "            try:",
+            "                installer._safe_extract(z, dest)",
+            "                verdicts[name] = 'ACCEPTED'",
+            "            except installer.InstallError:",
+            "                verdicts[name] = 'REJECTED'",
+            "print('VERDICT_CON', verdicts['CON'])",
+            "print('VERDICT_OK', verdicts['textures/wood.png'])",
+        ])
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = Path(temporary) / BUNDLE_NAME
+            build_bundle(SOURCE_ROOT, bundle)
+            python_root = bundle / "Contents" / "python"
+
+            environment = dict(os.environ)
+            environment.pop("PYTHONPATH", None)
+            environment["PYTHONDONTWRITEBYTECODE"] = "1"
+            completed = subprocess.run(
+                [sys.executable, "-c", probe],
+                cwd=str(python_root),
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr[-1200:])
+            self.assertIn("POLICY blendmax_archive_policy.py", completed.stdout)
+            self.assertIn("LIMITS 2048", completed.stdout)
+            # Enforced from inside the bundle, with the repository off sys.path.
+            self.assertIn("VERDICT_CON REJECTED", completed.stdout)
+            self.assertIn("VERDICT_OK ACCEPTED", completed.stdout)
 
 
 if __name__ == "__main__":

@@ -16,6 +16,10 @@ INCLUDED_ROOTS = (
     "TEST_MATRIX.md",
     "install_blendmax.py",
     "blendmax_install.py",
+    # Shared archive policy. It must be in the release because build_bundle()
+    # copies it into Contents/python from the extracted release, and because
+    # blendmax_install.py imports it as a top-level module.
+    "blendmax_archive_policy.py",
     "run_blendmax_max.py",
     "blendmax_max",
     "appbundle",
