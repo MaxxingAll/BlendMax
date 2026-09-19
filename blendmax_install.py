@@ -168,7 +168,7 @@ def install_from_source(
     }
 
 
-def _unsafe_member_message(name: str, result) -> str:
+def _unsafe_member_message(name: str, result: archive_policy.MemberPath) -> str:
     """This consumer's wording for a member the shared policy rejects."""
 
     if result.reason == archive_policy.REASON_EMPTY:

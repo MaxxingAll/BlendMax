@@ -27,7 +27,7 @@ from __future__ import annotations
 import stat
 import zipfile
 from pathlib import PurePosixPath
-from typing import Iterable, NamedTuple, Optional
+from typing import Iterable, NamedTuple
 
 # Enforced by both consumers before anything touches the disk. These used to be
 # duplicated in blendmax_blender/package.py and blendmax_install.py with a drift
@@ -165,22 +165,6 @@ def folded_path(cleaned: str) -> str:
     """
 
     return cleaned.casefold()
-
-
-def first_duplicate(names: Iterable[str]) -> Optional[str]:
-    """Return the second spelling of the first case-insensitively repeated path.
-
-    ``names`` must already be cleaned paths. Returns ``None`` when every path is
-    distinct under :func:`folded_path`.
-    """
-
-    seen = set()
-    for name in names:
-        folded = folded_path(name)
-        if folded in seen:
-            return name
-        seen.add(folded)
-    return None
 
 
 def declared_uncompressed_bytes(infos: Iterable[zipfile.ZipInfo]) -> int:
