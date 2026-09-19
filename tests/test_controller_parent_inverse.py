@@ -190,9 +190,9 @@ def load_adapter():
     fake_placement.hierarchy_bounds = lambda parent_ids, object_bounds: {}
     fake_placement.merge_bounds = lambda items: None
 
-    adapter_path = Path(__file__).resolve().parents[1] / "blendmax_blender" / "blender_adapter.py"
+    adapter_path = Path(__file__).resolve().parents[1] / "blendmax_blender" / "blender_scene.py"
     spec = importlib.util.spec_from_file_location(
-        "blendmax_blender._controller_parent_inverse_test",
+        "blendmax_blender.blender_scene",
         adapter_path,
     )
     if spec is None or spec.loader is None:
@@ -203,11 +203,6 @@ def load_adapter():
         {
             "bpy": fake_bpy,
             "mathutils": fake_mathutils,
-            "blendmax_blender.blender_materials": fake_materials,
-            "blendmax_blender.errors": fake_errors,
-            "blendmax_blender.manifest": fake_manifest,
-            "blendmax_blender.models": fake_models,
-            "blendmax_blender.placement": fake_placement,
         },
     ):
         spec.loader.exec_module(module)
@@ -250,7 +245,7 @@ class ControllerParentInverseBoundsTests(unittest.TestCase):
         child_basis_before = child.matrix_basis.copy()
         parent_inverse_before = child.matrix_parent_inverse.copy()
 
-        adapter.BlenderAdapter._apply_bounds_scale(
+        adapter._apply_bounds_scale(
             controller,
             (2.0, 4.0, 6.0),
         )

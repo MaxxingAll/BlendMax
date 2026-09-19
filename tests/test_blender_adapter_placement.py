@@ -142,10 +142,10 @@ def load_adapter():
     adapter_path = (
         Path(__file__).resolve().parents[1]
         / "blendmax_blender"
-        / "blender_adapter.py"
+        / "blender_scene.py"
     )
     spec = importlib.util.spec_from_file_location(
-        "blendmax_blender._placement_adapter_test",
+        "blendmax_blender.blender_scene",
         adapter_path,
     )
     if spec is None or spec.loader is None:
@@ -156,7 +156,35 @@ def load_adapter():
         {
             "bpy": fake_bpy,
             "mathutils": fake_mathutils,
-            "blendmax_blender.blender_materials": fake_materials,
+        },
+    ):
+        spec.loader.exec_module(module)
+    return module
+
+
+def load_materials():
+    """Load the owning module for the material seam used here."""
+
+    fake_bpy = ModuleType("bpy")
+    fake_mathutils = ModuleType("mathutils")
+    fake_mathutils.Vector = FakeVector
+    materials_path = (
+        Path(__file__).resolve().parents[1]
+        / "blendmax_blender"
+        / "blender_materials.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "blendmax_blender.blender_materials",
+        materials_path,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Could not load BlendMax Blender materials module.")
+    module = importlib.util.module_from_spec(spec)
+    with patch.dict(
+        sys.modules,
+        {
+            "bpy": fake_bpy,
+            "mathutils": fake_mathutils,
         },
     ):
         spec.loader.exec_module(module)
@@ -166,7 +194,8 @@ def load_adapter():
 class BlenderAdapterPlacementTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.adapter = load_adapter()
+        cls.scene = load_adapter()
+        cls.materials = load_materials()
 
     def test_nested_fbx_meshes_move_to_origin_by_translating_only_the_root(self):
         root = FakeMeshObject(
@@ -182,13 +211,13 @@ class BlenderAdapterPlacementTests(unittest.TestCase):
             child.matrix_world.translation - root.matrix_world.translation
         )
 
-        self.adapter.BlenderAdapter._rebase_imported_roots(
+        self.scene._rebase_imported_roots(
             (root, child),
             {"root": root, "child": child},
         )
 
-        bounds = self.adapter.merge_bounds(
-            (self.adapter._mesh_world_bounds(root), self.adapter._mesh_world_bounds(child))
+        bounds = self.scene.merge_bounds(
+            (self.scene._mesh_world_bounds(root), self.scene._mesh_world_bounds(child))
         )
         self.assertIsNotNone(bounds)
         minimum, maximum = bounds
@@ -216,13 +245,13 @@ class BlenderAdapterPlacementTests(unittest.TestCase):
             second.matrix_world.translation - first.matrix_world.translation
         )
 
-        self.adapter.BlenderAdapter._rebase_imported_roots(
+        self.scene._rebase_imported_roots(
             (first, second),
             {"first": first, "second": second},
         )
 
-        bounds = self.adapter.merge_bounds(
-            (self.adapter._mesh_world_bounds(first), self.adapter._mesh_world_bounds(second))
+        bounds = self.scene.merge_bounds(
+            (self.scene._mesh_world_bounds(first), self.scene._mesh_world_bounds(second))
         )
         self.assertIsNotNone(bounds)
         minimum, maximum = bounds
@@ -248,7 +277,7 @@ class BlenderAdapterPlacementTests(unittest.TestCase):
             superclass="GeometryClass",
         )
 
-        mapped, extras = self.adapter.BlenderAdapter._map_objects(
+        mapped, extras = self.scene._map_objects(
             (matched, undeclared),
             (record,),
             None,
@@ -272,7 +301,7 @@ class BlenderAdapterPlacementTests(unittest.TestCase):
         )
         generated = set()
 
-        mapped, extras = self.adapter.BlenderAdapter._map_objects(
+        mapped, extras = self.scene._map_objects(
             (imported_group,),
             (record,),
             None,
@@ -298,8 +327,8 @@ class BlenderAdapterPlacementTests(unittest.TestCase):
             created.append(created_object)
             return created_object
 
-        previous_data = getattr(self.adapter.bpy, "data", None)
-        self.adapter.bpy.data = SimpleNamespace(objects=SimpleNamespace(new=new_object))
+        previous_data = getattr(self.scene.bpy, "data", None)
+        self.scene.bpy.data = SimpleNamespace(objects=SimpleNamespace(new=new_object))
         try:
             record = ObjectRecord(
                 object_id="group_1",
@@ -309,7 +338,7 @@ class BlenderAdapterPlacementTests(unittest.TestCase):
                 superclass="helper",
                 is_group_head=True,
             )
-            mapped, extras = self.adapter.BlenderAdapter._map_objects(
+            mapped, extras = self.scene._map_objects(
                 (imported_mesh,),
                 (record,),
                 collection,
@@ -318,9 +347,9 @@ class BlenderAdapterPlacementTests(unittest.TestCase):
             )
         finally:
             if previous_data is None:
-                del self.adapter.bpy.data
+                del self.scene.bpy.data
             else:
-                self.adapter.bpy.data = previous_data
+                self.scene.bpy.data = previous_data
 
         self.assertEqual(extras, (imported_mesh,))
         self.assertEqual(warnings, [])
@@ -345,15 +374,15 @@ class BlenderAdapterPlacementTests(unittest.TestCase):
 
         objects.remove = remove_object
         meshes.remove = remove_mesh
-        previous_data = getattr(self.adapter.bpy, "data", None)
-        self.adapter.bpy.data = SimpleNamespace(objects=objects, meshes=meshes)
+        previous_data = getattr(self.scene.bpy, "data", None)
+        self.scene.bpy.data = SimpleNamespace(objects=objects, meshes=meshes)
         try:
-            self.adapter.BlenderAdapter._discard_undeclared_fbx_objects((undeclared,))
+            self.scene._discard_undeclared_fbx_objects((undeclared,))
         finally:
             if previous_data is None:
-                del self.adapter.bpy.data
+                del self.scene.bpy.data
             else:
-                self.adapter.bpy.data = previous_data
+                self.scene.bpy.data = previous_data
 
         self.assertEqual(objects.removed, [undeclared])
         self.assertEqual(meshes.removed, [mesh])
@@ -366,7 +395,7 @@ class BlenderAdapterPlacementTests(unittest.TestCase):
         wood = FakeMaterial("Wood Veneer 01")
         empty = FakeMaterial("Empty material")
 
-        self.adapter.BlenderAdapter._reserve_fbx_material_names((wood, empty))
+        self.materials._reserve_fbx_material_names((wood, empty))
 
         # Renamed off of their manifest-matching names so MaterialBuilder's
         # later `bpy.data.materials.new(name=...)` call for the same name
@@ -395,7 +424,7 @@ class BlenderAdapterPlacementTests(unittest.TestCase):
 
         # Stands in for `_import`'s call right after the FBX import,
         # before `MaterialBuilder` is ever constructed.
-        self.adapter.BlenderAdapter._reserve_fbx_material_names((wood,))
+        self.materials._reserve_fbx_material_names((wood,))
         self.assertNotEqual(wood.name, "Wood Veneer 01")
 
         # Mirrors `MaterialBuilder.build_material`'s

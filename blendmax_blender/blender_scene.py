@@ -1,0 +1,352 @@
+"""Scene, object, hierarchy and bounds helpers for the BlendMax importer.
+
+Everything here operates on plain Blender objects and the manifest records that
+describe them. Split out of ``blender_adapter``: this module imports neither the
+adapter facade nor any material code.
+
+``bpy`` is only touched inside function bodies. Several tests load this module
+with a bare ``bpy`` stub, so module-level ``bpy.<attribute>`` access would break
+them at import time.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Dict, Iterable, List, Optional, Set, Tuple
+
+import bpy
+from mathutils import Vector
+
+from .models import ObjectRecord, PackageContents
+from .placement import (
+    bounds_from_points,
+    grounded_anchor,
+    hierarchy_bounds,
+    merge_bounds,
+)
+
+
+_BLENDER_SUFFIX = re.compile(r"\.\d{3,}$")
+
+
+def _leaf_name(name: str) -> str:
+    return str(name).rsplit("::", 1)[-1]
+
+
+def _name_matches(blender_name: str, fbx_name: str) -> bool:
+    leaf = _leaf_name(blender_name)
+    return leaf == fbx_name or _BLENDER_SUFFIX.sub("", leaf) == fbx_name
+
+
+def _link_only_to(obj, collection) -> None:
+    if collection not in obj.users_collection:
+        collection.objects.link(obj)
+    for current in tuple(obj.users_collection):
+        if current != collection:
+            current.objects.unlink(obj)
+
+
+def _set_parent_preserve_world(child, parent) -> None:
+    world = child.matrix_world.copy()
+    child.parent = parent
+    child.matrix_world = world
+
+
+def _mesh_world_bounds(obj):
+    if obj.type != "MESH" or obj.data is None or not len(obj.data.vertices):
+        return None
+    return bounds_from_points(
+        tuple(obj.matrix_world @ Vector(corner)) for corner in obj.bound_box
+    )
+
+
+def _is_adoptable_group_node(obj) -> bool:
+    """Return True when an imported node can safely stand in for a Max group head."""
+    return getattr(obj, "type", None) == "EMPTY"
+
+
+def _map_objects(
+    imported: Iterable[object],
+    records: Iterable[ObjectRecord],
+    collection,
+    warnings: List[str],
+    generated_group_heads: Set[str],
+) -> Tuple[Dict[str, object], Tuple[object, ...]]:
+    available = list(imported)
+    mapped: Dict[str, object] = {}
+    for record in records:
+        match = next(
+            (
+                obj
+                for obj in available
+                if _name_matches(obj.name, record.fbx_name)
+                and (not record.is_group_head or _is_adoptable_group_node(obj))
+            ),
+            None,
+        )
+        if match is not None:
+            available.remove(match)
+            if record.is_group_head:
+                # Group-head helpers are visualized as plain axes until the
+                # final asset controller/bounds display is configured.
+                match.empty_display_type = "PLAIN_AXES"
+        elif record.is_group_head:
+            match = bpy.data.objects.new(record.fbx_name, None)
+            match.empty_display_type = "PLAIN_AXES"
+            collection.objects.link(match)
+            generated_group_heads.add(record.object_id)
+        else:
+            warnings.append(
+                "Manifest object {0} was not found in geometry.fbx.".format(
+                    record.original_name
+                )
+            )
+            continue
+
+        match["blendmax_object_id"] = record.object_id
+        match["blendmax_fbx_name"] = record.fbx_name
+        match["blendmax_node_type"] = record.node_type
+        match.name = record.original_name or record.fbx_name
+        mapped[record.object_id] = match
+
+    return mapped, tuple(available)
+
+
+def _discard_undeclared_fbx_objects(objects: Iterable[object]) -> None:
+    data_collection_names = {
+        "MESH": "meshes",
+        "CURVE": "curves",
+        "SURFACE": "curves",
+        "FONT": "curves",
+        "ARMATURE": "armatures",
+        "CAMERA": "cameras",
+        "LIGHT": "lights",
+    }
+    for obj in tuple(objects):
+        data = getattr(obj, "data", None)
+        collection_name = data_collection_names.get(getattr(obj, "type", ""))
+        bpy.data.objects.remove(obj, do_unlink=True)
+        if data is None or collection_name is None or getattr(data, "users", 0) != 0:
+            continue
+        getattr(bpy.data, collection_name).remove(data)
+
+
+def _rebase_imported_roots(
+    imported: Iterable[object],
+    mapped: Dict[str, object],
+) -> None:
+    actual_bounds = []
+    for obj in mapped.values():
+        bounds = _mesh_world_bounds(obj)
+        if bounds is not None:
+            actual_bounds.append(bounds)
+
+    bounds = merge_bounds(actual_bounds)
+    if bounds is None:
+        return
+
+    anchor = Vector(grounded_anchor(bounds))
+    imported_objects = set(imported)
+    for obj in imported_objects:
+        if obj.parent in imported_objects:
+            continue
+        world = obj.matrix_world.copy()
+        world.translation -= anchor
+        obj.matrix_world = world
+
+
+def _position_generated_group_heads(
+    mapped: Dict[str, object],
+    records: Iterable[ObjectRecord],
+    generated_group_heads: Set[str],
+) -> None:
+    if not generated_group_heads:
+        return
+
+    mesh_bounds = {}
+    for object_id, obj in mapped.items():
+        bounds = _mesh_world_bounds(obj)
+        if bounds is not None:
+            mesh_bounds[object_id] = bounds
+
+    branches = hierarchy_bounds(
+        {record.object_id: record.parent_id for record in records},
+        mesh_bounds,
+    )
+    for object_id in generated_group_heads:
+        bounds = branches.get(object_id)
+        if bounds is not None:
+            mapped[object_id].location = grounded_anchor(bounds)
+
+
+def _restore_hierarchy(
+    mapped: Dict[str, object],
+    records: Iterable[ObjectRecord],
+    warnings: List[str],
+) -> None:
+    for record in records:
+        child = mapped.get(record.object_id)
+        if child is None or not record.parent_id:
+            continue
+        parent = mapped.get(record.parent_id)
+        if parent is None:
+            warnings.append(
+                "Parent {0} for {1} is missing.".format(
+                    record.parent_id, record.original_name
+                )
+            )
+            continue
+        _set_parent_preserve_world(child, parent)
+
+
+def _apply_bounds_scale(controller, dimensions) -> None:
+    """Apply anisotropic bounds scale without shearing direct children.
+
+    The controller scale is display state for the CUBE Empty, but its
+    direct children are already authored in world space. Changing a
+    parent's scale normally introduces a shear for rotated children. The
+    parent-inverse matrix is an arbitrary 4x4 transform, so it can absorb
+    the exact parent-scale delta without forcing child world matrices back
+    through a lossy TRS decomposition.
+    """
+    previous_parent_matrix = controller.matrix_world.copy()
+    direct_children = tuple(controller.children)
+    controller.scale = tuple(max(abs(value), 1e-6) for value in dimensions)
+    bpy.context.view_layer.update()
+    compensation = controller.matrix_world.inverted() @ previous_parent_matrix
+    for child in direct_children:
+        child.matrix_parent_inverse = compensation @ child.matrix_parent_inverse
+    bpy.context.view_layer.update()
+
+
+def _create_controller(
+    collection,
+    package: PackageContents,
+    mapped: Dict[str, object],
+    apply_recommended_scale: bool,
+    manifest_text_name: str,
+    warnings: List[str],
+    generated_group_heads: Optional[Set[str]] = None,
+):
+    manifest = package.manifest
+    records_by_id = {item.object_id: item for item in manifest.objects}
+
+    # A Max asset root/group head imported from FBX is already the correct
+    # controller node. Promote it only when the manifest has one unparented
+    # group head; multiple roots must not be arbitrarily collapsed.
+    parentless_group_heads = [
+        obj
+        for object_id, obj in mapped.items()
+        if obj.type == "EMPTY"
+        and records_by_id[object_id].is_group_head
+        and not records_by_id[object_id].parent_id
+        and object_id not in (generated_group_heads or ())
+    ]
+    controller = parentless_group_heads[0] if len(parentless_group_heads) == 1 else None
+    promoted = controller is not None
+    original_name = controller.name if promoted else None
+    original_rotation = tuple(controller.rotation_euler) if promoted else None
+    original_scale = tuple(controller.scale) if promoted else None
+
+    if controller is None:
+        controller = bpy.data.objects.new("{0} [BlendMax]".format(manifest.asset_name), None)
+        collection.objects.link(controller)
+
+    # Bounds are computed before hierarchy restoration intentionally.
+    # `_set_parent_preserve_world()` preserves mesh world transforms, so
+    # these bounds are parenting-invariant; a future restore path that
+    # does not preserve world matrices would silently mis-size the
+    # controller. The controller is also positioned from the imported mesh
+    # bounds before preserve-world parenting is rebuilt.
+    actual_bounds = []
+    for obj in mapped.values():
+        bounds = _mesh_world_bounds(obj)
+        if bounds is not None:
+            actual_bounds.append(bounds)
+    minimum, maximum = merge_bounds(actual_bounds) or (
+        manifest.bounds_minimum_m,
+        manifest.bounds_maximum_m,
+    )
+    dimensions = tuple(
+        upper - lower for lower, upper in zip(minimum, maximum)
+    )
+    center = tuple(
+        (lower + upper) * 0.5 for lower, upper in zip(minimum, maximum)
+    )
+
+    # A promoted FBX Empty can already own imported children. Detach them
+    # while preserving their world transforms before normalizing the
+    # controller. This avoids applying non-uniform controller scale to a
+    # rotated child, which can introduce shear.
+    for child in tuple(controller.children):
+        _set_parent_preserve_world(child, None)
+
+    # The controller itself is the visible bounds display. Keep its initial
+    # transform normalized while the hierarchy is rebuilt, then apply the
+    # bounds scale with explicit parent-inverse compensation below.
+    controller.empty_display_type = "CUBE"
+    controller.empty_display_size = 0.5
+    controller.location = center
+    controller.rotation_mode = "XYZ"
+    controller.rotation_euler = (0.0, 0.0, 0.0)
+    controller.scale = (1.0, 1.0, 1.0)
+
+    # Blender defers dependency-graph evaluation after transform writes.
+    # Flush before any preserve-world parenting reads parent.matrix_world.
+    bpy.context.view_layer.update()
+
+    controller.name = "{0} [BlendMax]".format(manifest.asset_name)
+    controller["blendmax_asset"] = True
+    controller["blendmax_controller"] = True
+    controller["blendmax_controller_source"] = (
+        "imported_group_head" if promoted else "synthetic"
+    )
+    controller["blendmax_schema_version"] = manifest.schema_version
+    controller["blendmax_source_package"] = str(package.source_path)
+    controller["blendmax_manifest_text"] = manifest_text_name
+    controller["blendmax_recommended_scale"] = manifest.recommended_scale
+    if promoted:
+        controller["blendmax_original_name"] = original_name
+        controller["blendmax_original_rotation_euler"] = original_rotation
+        controller["blendmax_original_scale"] = original_scale
+
+    # Rebuild the manifest hierarchy after detaching the promoted
+    # controller's existing FBX children.
+    _restore_hierarchy(mapped, manifest.objects, warnings)
+    # The hierarchy restore updates parent transforms; flush the dependency
+    # graph before preserve-world parenting the remaining roots.
+    bpy.context.view_layer.update()
+
+    roots = []
+    for object_id, obj in mapped.items():
+        if obj is controller:
+            continue
+        record = records_by_id[object_id]
+        if not record.parent_id or record.parent_id not in mapped:
+            roots.append(obj)
+    for root in roots:
+        _set_parent_preserve_world(root, controller)
+    for obj in tuple(collection.objects):
+        if obj is not controller and obj.parent is None:
+            _set_parent_preserve_world(obj, controller)
+
+    # The controller's CUBE display uses its XYZ scale for the exact asset
+    # bounds. Apply that scale only after hierarchy reconstruction and keep
+    # direct children in their pre-scale world transforms via the raw 4x4
+    # parent-inverse matrix. Recommended scale is intentionally applied
+    # afterward so it remains a real controller scale operation.
+    _apply_bounds_scale(controller, dimensions)
+
+    if apply_recommended_scale and manifest.recommended_scale != 1.0:
+        scale = manifest.recommended_scale
+        controller.scale = tuple(value * scale for value in controller.scale)
+    return controller
+
+
+def _select_result(imported: Iterable[object], controller) -> None:
+    for obj in bpy.context.selected_objects:
+        obj.select_set(False)
+    for obj in imported:
+        obj.select_set(True)
+    controller.select_set(True)
+    bpy.context.view_layer.objects.active = controller
