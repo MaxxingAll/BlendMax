@@ -12,12 +12,12 @@ them at import time.
 from __future__ import annotations
 
 import re
-from typing import Dict, Iterable, List, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 import bpy
 from mathutils import Vector
 
-from .models import ObjectRecord
+from .models import ObjectRecord, PackageContents
 from .placement import (
     bounds_from_points,
     grounded_anchor,
