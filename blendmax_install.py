@@ -205,6 +205,7 @@ def _safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
         )
 
     folded_names = set()
+    validated = []
     for member in infos:
         # The Windows filename policy, shared with the Blender package path.
         # This was the gap #39 reported: an update ZIP could carry "CON",
@@ -241,7 +242,21 @@ def _safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
             raise InstallError(
                 "Update ZIP contains an unsafe path: {0}".format(member.filename)
             )
-    archive.extractall(root)
+        validated.append((member, result.cleaned))
+
+    # Write exactly the paths that were validated. extractall() would use each
+    # member's own filename, and on a POSIX host a backslash in that name is an
+    # ordinary character rather than a separator -- so the string checked above
+    # and the string written could differ. Extraction happens here, from the
+    # validated names, so what was checked is what lands on disk. Nothing has
+    # been written before this point: a refusal leaves the destination untouched.
+    for member, cleaned in validated:
+        if member.is_dir():
+            continue
+        target = root / Path(cleaned)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with archive.open(member) as source, open(str(target), "wb") as output:
+            shutil.copyfileobj(source, output)
 
 
 def find_source_root(extracted_root: Path) -> Path:
