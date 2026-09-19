@@ -46,6 +46,23 @@ class WindowsHazardTests(unittest.TestCase):
         for part in ("CON.txt", "NUL.log", "aux.dat", "PRN.old.txt"):
             self.assertTrue(policy.windows_hazard(part), part)
 
+    def test_reserved_names_with_a_space_before_the_extension(self):
+        """Windows trims trailing spaces from a name before device matching.
+
+        "AUX .txt" therefore resolves the same way "AUX" does. Note that this
+        is a conservative extension rather than a demonstrated hazard: on the
+        Windows host used to develop this, cmd.exe creates an ordinary file for
+        "AUX .txt", and for "NUL.txt" too. Rejecting them costs nothing a real
+        archive contains.
+        """
+        for part in ("AUX .txt", "NUL .txt", "CON .txt", "PRN .txt",
+                     "COM1 .txt", "LPT1 .txt", "aux .log", "NUL ."):
+            self.assertTrue(policy.windows_hazard(part), part)
+
+    def test_a_space_before_the_extension_is_not_a_hazard_by_itself(self):
+        for part in ("ordinary .txt", "my file .txt", "notes .md"):
+            self.assertEqual(policy.windows_hazard(part), "", part)
+
     def test_serial_and_parallel_device_names(self):
         for index in range(1, 10):
             self.assertTrue(policy.windows_hazard("COM{0}".format(index)))

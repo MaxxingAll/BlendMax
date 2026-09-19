@@ -106,7 +106,19 @@ def windows_hazard(part: str) -> str:
     # outside the destination on Windows.
     if ":" in part:
         return "colon is not allowed in a path component"
-    stem = part.split(".", 1)[0].casefold()
+    # Windows trims trailing spaces and dots from a name before deciding
+    # whether it names a device, so "AUX .txt" resolves the same way "AUX"
+    # does. The trailing dot/space rule above catches a component that ENDS in
+    # one; this catches one where the space or dot sits before the first dot.
+    #
+    # Note on the evidence: this is a conservative extension of the documented
+    # rule, not a demonstrated hazard. On the Windows host used to develop
+    # this, `cmd.exe echo > "AUX .txt"` creates an ordinary file, as does
+    # `NUL.txt` -- Microsoft's guidance calls extension-suffixed device names
+    # "not recommended" rather than impossible. Rejecting them costs nothing a
+    # real archive contains, and matches how the rest of this module treats
+    # documented-reserved names.
+    stem = part.split(".", 1)[0].rstrip(" .").casefold()
     if stem in WINDOWS_RESERVED_NAMES:
         return "reserved Windows device name"
     return ""

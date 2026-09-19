@@ -26,9 +26,52 @@ from blendmax_install import (
     install_from_source,
     install_from_zip,
 )
+from tools import build_release as release_builder
 
 
 SOURCE_ROOT = Path(__file__).resolve().parents[1]
+
+# Run inside a deployed bundle exactly as 3ds Max does: no repository on
+# sys.path, so a bundle missing its shared policy fails here instead of
+# silently falling back to the developer's working tree.
+DEPLOYED_BUNDLE_PROBE = "\n".join([
+    "import sys, tempfile, zipfile",
+    "from pathlib import Path",
+    "import blendmax_install as installer",
+    "print('POLICY', Path(installer.archive_policy.__file__).name)",
+    "print('LIMITS', installer.MAX_ARCHIVE_ENTRIES)",
+    "verdicts = {}",
+    "with tempfile.TemporaryDirectory() as tmp:",
+    "    dest = Path(tmp) / 'out'",
+    "    dest.mkdir()",
+    "    for name in ('CON', 'textures/wood.png'):",
+    "        p = Path(tmp) / 'a.zip'",
+    "        with zipfile.ZipFile(p, 'w') as z:",
+    "            z.writestr(name, b'x')",
+    "        with zipfile.ZipFile(p) as z:",
+    "            try:",
+    "                installer._safe_extract(z, dest)",
+    "                verdicts[name] = 'ACCEPTED'",
+    "            except installer.InstallError:",
+    "                verdicts[name] = 'REJECTED'",
+    "print('VERDICT_CON', verdicts['CON'])",
+    "print('VERDICT_OK', verdicts['textures/wood.png'])",
+])
+
+
+def run_in_deployed_bundle(python_root):
+    """Execute DEPLOYED_BUNDLE_PROBE with only Contents/python importable."""
+
+    environment = dict(os.environ)
+    environment.pop("PYTHONPATH", None)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    return subprocess.run(
+        [sys.executable, "-c", DEPLOYED_BUNDLE_PROBE],
+        cwd=str(python_root),
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
 
 
 class InstallerTests(unittest.TestCase):
@@ -559,6 +602,22 @@ class UpdateZipWindowsHazardTests(unittest.TestCase):
     def test_rejects_superscript_device_name(self):
         self._assert_rejected("COM\u00b9", "reserved Windows device name")
 
+    def test_rejects_reserved_name_with_a_space_before_the_extension(self):
+        # Windows trims the trailing space before matching the device name.
+        self._assert_rejected("AUX .txt", "reserved Windows device name")
+        self._assert_rejected("NUL .txt", "reserved Windows device name")
+        self._assert_rejected("CON .txt", "reserved Windows device name")
+        self._assert_rejected("PRN .txt", "reserved Windows device name")
+
+    def test_accepts_an_ordinary_name_with_a_space_before_the_extension(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._archive(temporary, ["ordinary .txt"])
+            destination = self._destination(temporary)
+
+            self._extract(path, destination)
+
+            self.assertTrue((destination / "ordinary .txt").is_file())
+
     def test_rejects_trailing_dot(self):
         self._assert_rejected("name.", "trailing dot or space")
 
@@ -675,44 +734,12 @@ class ArchivePolicyDeploymentTests(unittest.TestCase):
         fails if the bundle is missing the shared module rather than silently
         falling back to the developer's working tree.
         """
-        probe = "\n".join([
-            "import sys, tempfile, zipfile",
-            "from pathlib import Path",
-            "import blendmax_install as installer",
-            "print('POLICY', Path(installer.archive_policy.__file__).name)",
-            "print('LIMITS', installer.MAX_ARCHIVE_ENTRIES)",
-            "verdicts = {}",
-            "with tempfile.TemporaryDirectory() as tmp:",
-            "    dest = Path(tmp) / 'out'",
-            "    dest.mkdir()",
-            "    for name in ('CON', 'textures/wood.png'):",
-            "        p = Path(tmp) / 'a.zip'",
-            "        with zipfile.ZipFile(p, 'w') as z:",
-            "            z.writestr(name, b'x')",
-            "        with zipfile.ZipFile(p) as z:",
-            "            try:",
-            "                installer._safe_extract(z, dest)",
-            "                verdicts[name] = 'ACCEPTED'",
-            "            except installer.InstallError:",
-            "                verdicts[name] = 'REJECTED'",
-            "print('VERDICT_CON', verdicts['CON'])",
-            "print('VERDICT_OK', verdicts['textures/wood.png'])",
-        ])
         with tempfile.TemporaryDirectory() as temporary:
             bundle = Path(temporary) / BUNDLE_NAME
             build_bundle(SOURCE_ROOT, bundle)
             python_root = bundle / "Contents" / "python"
 
-            environment = dict(os.environ)
-            environment.pop("PYTHONPATH", None)
-            environment["PYTHONDONTWRITEBYTECODE"] = "1"
-            completed = subprocess.run(
-                [sys.executable, "-c", probe],
-                cwd=str(python_root),
-                env=environment,
-                capture_output=True,
-                text=True,
-            )
+            completed = run_in_deployed_bundle(python_root)
 
             self.assertEqual(completed.returncode, 0, completed.stderr[-1200:])
             self.assertIn("POLICY blendmax_archive_policy.py", completed.stdout)
@@ -720,6 +747,143 @@ class ArchivePolicyDeploymentTests(unittest.TestCase):
             # Enforced from inside the bundle, with the repository off sys.path.
             self.assertIn("VERDICT_CON REJECTED", completed.stdout)
             self.assertIn("VERDICT_OK ACCEPTED", completed.stdout)
+
+
+class ArchivePolicyUpgradePathTests(unittest.TestCase):
+    """Upgrading through an installer that predates the shared policy.
+
+    A deployed bundle is only ever rebuilt by the installer ALREADY on the
+    user's machine. An installer from before the shared policy copies the
+    appbundle template, ``blendmax_max/`` and ``blendmax_install.py`` -- and
+    knows nothing about ``blendmax_archive_policy.py``. If the release did not
+    carry the policy somewhere that recipe already copies, the upgrade would
+    deploy the new installer beside no policy at all and the bundle would die
+    on first launch.
+
+    That scenario was reproduced against the pre-change installer before these
+    tests were written: the old installer accepted the new release and produced
+    a bundle raising ``ModuleNotFoundError: No module named
+    'blendmax_archive_policy'``.
+    """
+
+    TEMPLATE_POLICY = (
+        "appbundle/BlendMax.bundle/Contents/python/blendmax_archive_policy.py"
+    )
+
+    @staticmethod
+    def _legacy_build_bundle(release_root, destination):
+        """The pre-change build_bundle(), reproduced.
+
+        Deliberately does NOT copy blendmax_archive_policy.py from the release
+        root: not knowing that file is exactly what made this a bug, so a test
+        that copied it would not be testing the upgrade path at all.
+        """
+        shutil.copytree(
+            release_root / "appbundle" / BUNDLE_NAME,
+            destination,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+        )
+        python_root = destination / "Contents" / "python"
+        shutil.copytree(
+            release_root / "blendmax_max",
+            python_root / "blendmax_max",
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+        )
+        shutil.copy2(
+            release_root / "blendmax_install.py",
+            python_root / "blendmax_install.py",
+        )
+
+    @staticmethod
+    def _extract_release(work):
+        release_zip = release_builder.build(work / "release.zip")
+        extracted = work / "extracted"
+        with zipfile.ZipFile(release_zip) as archive:
+            archive.extractall(extracted)
+        return extracted
+
+    def test_release_carries_the_policy_where_a_legacy_installer_copies(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            release_zip = release_builder.build(Path(temporary) / "release.zip")
+            with zipfile.ZipFile(release_zip) as archive:
+                names = archive.namelist()
+
+            self.assertIn("blendmax_archive_policy.py", names)
+            self.assertIn(self.TEMPLATE_POLICY, names)
+
+    def test_template_copy_is_identical_to_the_canonical_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            release_zip = release_builder.build(Path(temporary) / "release.zip")
+            with zipfile.ZipFile(release_zip) as archive:
+                in_template = archive.read(self.TEMPLATE_POLICY)
+                at_root = archive.read("blendmax_archive_policy.py")
+
+            canonical = (SOURCE_ROOT / "blendmax_archive_policy.py").read_bytes()
+            self.assertEqual(in_template, canonical)
+            self.assertEqual(at_root, canonical)
+
+    def test_legacy_installer_upgrade_deploys_a_usable_bundle(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            extracted = self._extract_release(work)
+
+            bundle = work / BUNDLE_NAME
+            self._legacy_build_bundle(extracted, bundle)
+            python_root = bundle / "Contents" / "python"
+
+            self.assertTrue((python_root / "blendmax_install.py").is_file())
+            self.assertTrue(
+                (python_root / "blendmax_archive_policy.py").is_file(),
+                "a pre-policy installer would deploy the new installer with no "
+                "shared policy, and the bundle would fail on first launch",
+            )
+            # Not just present: the deployed bundle must import it and enforce
+            # it, with the repository off sys.path.
+            completed = run_in_deployed_bundle(python_root)
+            self.assertEqual(completed.returncode, 0, completed.stderr[-1200:])
+            self.assertIn("POLICY blendmax_archive_policy.py", completed.stdout)
+            self.assertIn("VERDICT_CON REJECTED", completed.stdout)
+
+
+class UpdateZipDirectoryEntryTests(unittest.TestCase):
+    """Explicit directory entries in an update ZIP are still created.
+
+    extractall() created them; the per-member extraction that replaced it must
+    not silently drop empty directories.
+    """
+
+    def _extract(self, archive_path, destination):
+        with zipfile.ZipFile(archive_path, "r") as archive:
+            _safe_extract(archive, destination)
+
+    def test_explicit_empty_directory_entry_is_created(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "dirs.zip"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr(zipfile.ZipInfo("empty/"), b"")
+                archive.writestr(zipfile.ZipInfo("nested/"), b"")
+                archive.writestr("nested/file.txt", b"x")
+            destination = Path(temporary) / "out"
+            destination.mkdir()
+
+            self._extract(path, destination)
+
+            self.assertTrue((destination / "empty").is_dir())
+            self.assertTrue((destination / "nested").is_dir())
+            self.assertTrue((destination / "nested" / "file.txt").is_file())
+
+    def test_hazardous_directory_entry_is_still_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "bad.zip"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr(zipfile.ZipInfo("CON/"), b"")
+            destination = Path(temporary) / "out"
+            destination.mkdir()
+
+            with self.assertRaises(InstallError):
+                self._extract(path, destination)
+
+            self.assertEqual(sorted(item.name for item in destination.iterdir()), [])
 
 
 if __name__ == "__main__":

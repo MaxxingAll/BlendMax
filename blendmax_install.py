@@ -251,9 +251,13 @@ def _safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
     # validated names, so what was checked is what lands on disk. Nothing has
     # been written before this point: a refusal leaves the destination untouched.
     for member, cleaned in validated:
-        if member.is_dir():
-            continue
         target = root / Path(cleaned)
+        if member.is_dir():
+            # An archive that lists a directory explicitly gets it created, as
+            # extractall() used to do. Losing empty directories would be a
+            # silent behaviour change for archives that rely on them.
+            target.mkdir(parents=True, exist_ok=True)
+            continue
         target.parent.mkdir(parents=True, exist_ok=True)
         with archive.open(member) as source, open(str(target), "wb") as output:
             shutil.copyfileobj(source, output)
