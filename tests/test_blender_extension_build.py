@@ -9,6 +9,7 @@ import tomllib
 import unittest
 import zipfile
 from pathlib import Path
+from types import ModuleType
 from unittest import mock
 
 import blendmax_archive_policy as archive_policy
@@ -262,6 +263,74 @@ class SharedPolicyPackagingTests(unittest.TestCase):
         self.assertEqual(archive_policy.windows_hazard("CON"),
                          "reserved Windows device name")
         self.assertEqual(archive_policy.windows_hazard("COM10"), "")
+
+
+class DecomposedModulePackagingTests(unittest.TestCase):
+    """The extension must ship the new modules and import them from the artifact.
+
+    The builder walks ``blendmax_blender/`` recursively, so the split modules are
+    included without a hard-coded list. What needs asserting is that they are
+    importable *from the extracted artifact*: an import that quietly resolves
+    back to the repository source tree would pass while the shipped extension was
+    missing a module.
+    """
+
+    MODULES = ("blender_adapter", "blender_api", "blender_scene", "blender_materials")
+
+    @staticmethod
+    def _extract_extension(temporary):
+        fake_bpy = ModuleType("bpy")
+        fake_mathutils = ModuleType("mathutils")
+        fake_mathutils.Vector = object
+        output = build(Path(temporary) / "blendmax_importer.zip")
+        root = Path(temporary) / "extroot"
+        with zipfile.ZipFile(output, "r") as archive:
+            names = archive.namelist()
+            archive.extractall(root / "extension")
+        return names, root, fake_bpy, fake_mathutils
+
+    def test_every_module_is_in_the_archive(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            names, _, _, _ = self._extract_extension(temporary)
+
+            for module in self.MODULES:
+                self.assertIn("%s.py" % module, names)
+
+    def test_modules_import_from_the_extracted_artifact(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            _, root, fake_bpy, fake_mathutils = self._extract_extension(temporary)
+            sys.path.insert(0, str(root))
+            try:
+                with mock.patch.dict(
+                    sys.modules,
+                    {"bpy": fake_bpy, "mathutils": fake_mathutils},
+                ):
+                    modules = {
+                        name: importlib.import_module("extension.%s" % name)
+                        for name in self.MODULES
+                    }
+
+                for name, module in modules.items():
+                    # Resolved from the extracted archive, not the repository.
+                    self.assertTrue(
+                        module.__file__.replace("\\", "/").startswith(
+                            str(root).replace("\\", "/")),
+                        "%s imported from %s" % (name, module.__file__),
+                    )
+
+                self.assertTrue(callable(modules["blender_adapter"].BlenderAdapter))
+                # And the moved helpers really live where they are claimed to.
+                self.assertTrue(callable(modules["blender_api"]._import_fbx))
+                self.assertTrue(callable(modules["blender_scene"]._map_objects))
+                self.assertTrue(
+                    callable(modules["blender_materials"]._replace_material_slots)
+                )
+                self.assertEqual(modules["blender_scene"]._leaf_name("a::b"), "b")
+            finally:
+                sys.path.remove(str(root))
+                for name in [n for n in sys.modules if n == "extension"
+                             or n.startswith("extension.")]:
+                    del sys.modules[name]
 
 
 if __name__ == "__main__":

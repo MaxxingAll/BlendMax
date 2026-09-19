@@ -331,10 +331,10 @@ def load_adapter():
     adapter_path = (
         Path(__file__).resolve().parents[1]
         / "blendmax_blender"
-        / "blender_adapter.py"
+        / "blender_scene.py"
     )
     spec = importlib.util.spec_from_file_location(
-        "blendmax_blender._controller_bounds_test",
+        "blendmax_blender.blender_scene",
         adapter_path,
     )
     if spec is None or spec.loader is None:
@@ -345,7 +345,6 @@ def load_adapter():
         {
             "bpy": fake_bpy,
             "mathutils": fake_mathutils,
-            "blendmax_blender.blender_materials": fake_materials,
         },
     ):
         spec.loader.exec_module(module)
@@ -355,7 +354,7 @@ def load_adapter():
 class BlenderControllerBoundsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.adapter = load_adapter()
+        cls.scene = load_adapter()
 
     def _package(self, recommended_scale=1.0):
         group_record = ObjectRecord(
@@ -410,7 +409,7 @@ class BlenderControllerBoundsTests(unittest.TestCase):
         package.manifest.bounds_maximum_m = (12.0, 24.0, 38.0)
         warnings = []
 
-        result = self.adapter.BlenderAdapter._create_controller(
+        result = self.scene._create_controller(
             collection,
             package,
             {"group_1": controller, "mesh_1": mesh},
@@ -522,7 +521,7 @@ class BlenderControllerBoundsTests(unittest.TestCase):
         root_world_before = root_mesh.matrix_world.copy()
         child_world_before = child_mesh.matrix_world.copy()
 
-        controller = self.adapter.BlenderAdapter._create_controller(
+        controller = self.scene._create_controller(
             collection,
             package,
             {"mesh_root": root_mesh, "mesh_child": child_mesh},
@@ -554,7 +553,7 @@ class BlenderControllerBoundsTests(unittest.TestCase):
         )
         collection = SimpleNamespace(objects=FakeObjectCollection((controller, mesh)))
 
-        self.adapter.BlenderAdapter._create_controller(
+        self.scene._create_controller(
             collection,
             self._package(recommended_scale=1.5),
             {"group_1": controller, "mesh_1": mesh},
@@ -585,7 +584,7 @@ class BlenderControllerBoundsTests(unittest.TestCase):
         package.manifest.bounds_minimum_m = (0.0, 0.0, 0.0)
         package.manifest.bounds_maximum_m = (0.0, 4.0, 6.0)
 
-        self.adapter.BlenderAdapter._create_controller(
+        self.scene._create_controller(
             collection,
             package,
             {"group_1": controller, "mesh_1": mesh},

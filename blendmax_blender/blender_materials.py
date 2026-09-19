@@ -987,3 +987,88 @@ class MaterialBuilder:
         tree.links.new(texture_part.outputs[0], add.inputs[0])
         tree.links.new(base_part.outputs[0], add.inputs[1])
         return add.outputs[0]
+
+
+def _replace_material_slots(obj, materials: Tuple[object, ...], warnings: List[str]) -> None:
+    """Rebuild a mesh's material slots without clearing them first.
+
+    `Mesh.materials.clear()` resets every polygon's `material_index` to 0
+    as a side effect once the slot list it points into is emptied. The
+    FBX importer's per-face slot assignment is correct at this point in
+    the import; the only thing that needs to change is *which materials*
+    occupy each slot, not the face-to-slot relationship itself. Replacing
+    slot contents in place (and trimming any now-unused trailing slots)
+    preserves `polygon.material_index` exactly as Blender's FBX importer
+    set it.
+
+    A shorter `materials` list than the mesh's current slot count is a
+    genuine manifest/FBX mismatch worth surfacing. It has to be detected
+    *before* the trailing slots are popped: removing a slot does not
+    leave `polygon.material_index` pointing past the end of the list for
+    Blender to catch afterward -- Blender remaps every face that
+    referenced a removed slot down onto the new last slot as part of the
+    pop itself, so the out-of-range evidence is gone by the time the
+    slot list is back down to `len(materials)`.
+    """
+    slots = obj.data.materials
+    original_slot_count = len(slots)
+
+    for slot_index, material in enumerate(materials):
+        if slot_index < len(slots):
+            slots[slot_index] = material
+        else:
+            slots.append(material)
+
+    if len(materials) < original_slot_count:
+        removed_slot_count = original_slot_count - len(materials)
+        affected_face_count = sum(
+            1
+            for polygon in obj.data.polygons
+            if polygon.material_index >= len(materials)
+        )
+        if affected_face_count:
+            warnings.append(
+                "{0}: {1} imported material slot(s) removed during the "
+                "material rebuild ({2} slot(s) -> {3}); {4} face(s) that "
+                "referenced a removed slot will be remapped onto the "
+                "last remaining slot.".format(
+                    obj.name,
+                    removed_slot_count,
+                    original_slot_count,
+                    len(materials),
+                    affected_face_count,
+                )
+            )
+
+    while len(slots) > len(materials):
+        slots.pop(index=len(slots) - 1)
+
+
+def _reserve_fbx_material_names(fbx_materials) -> None:
+    """Move the FBX importer's materials out of the manifest's way.
+
+    These materials are only kept around so `_replace_material_slots`
+    has something to swap out of each mesh's slots; they get discarded
+    a few steps later in `_discard_fbx_material_data`. But until then
+    they still occupy their original names (e.g. "Wood Veneer 01"), and
+    `MaterialBuilder` wants those exact names for the manifest-authored
+    replacements. Left alone, Blender resolves the naming collision by
+    silently appending ".001" to the new material -- and that suffix
+    sticks around permanently, since removing the old FBX material
+    afterward does not rename the survivor back. Renaming the FBX
+    materials to a scratch prefix first frees the original names for
+    the real materials to claim outright.
+    """
+    for material in fbx_materials:
+        material.name = "__blendmax_fbx_import__{0}".format(material.name)
+
+
+def _discard_fbx_material_data(fbx_materials, fbx_images, builder) -> None:
+    built_materials = set(builder.created_materials)
+    built_images = set(builder.created_images)
+    for material in tuple(fbx_materials - built_materials):
+        if material.users == 0:
+            bpy.data.materials.remove(material)
+    for image in tuple(fbx_images - built_images):
+        if image.users == 0:
+            bpy.data.images.remove(image)

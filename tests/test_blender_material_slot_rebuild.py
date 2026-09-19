@@ -1,4 +1,4 @@
-"""Regression tests for BlenderAdapter._replace_material_slots.
+"""Regression tests for blender_materials._replace_material_slots.
 
 Background: `Mesh.materials.clear()` resets every polygon's
 `material_index` to 0 as a side effect once the slot list it points into
@@ -102,7 +102,7 @@ def _polygons_from_distribution(distribution):
 
 
 def load_adapter():
-    """Load blender_adapter.py with a fake `bpy` so it imports without Blender."""
+    """Load blender_materials.py with a fake `bpy` so it imports without Blender."""
     fake_bpy = ModuleType("bpy")
     fake_mathutils = ModuleType("mathutils")
     fake_mathutils.Vector = object
@@ -112,10 +112,10 @@ def load_adapter():
     adapter_path = (
         Path(__file__).resolve().parents[1]
         / "blendmax_blender"
-        / "blender_adapter.py"
+        / "blender_materials.py"
     )
     spec = importlib.util.spec_from_file_location(
-        "blendmax_blender._material_rebuild_adapter_test",
+        "blendmax_blender.blender_materials",
         adapter_path,
     )
     if spec is None or spec.loader is None:
@@ -126,7 +126,6 @@ def load_adapter():
         {
             "bpy": fake_bpy,
             "mathutils": fake_mathutils,
-            "blendmax_blender.blender_materials": fake_materials,
         },
     ):
         spec.loader.exec_module(module)
@@ -136,7 +135,7 @@ def load_adapter():
 class ReplaceMaterialSlotsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.adapter = load_adapter()
+        cls.materials = load_adapter()
 
     def _distribution(self, obj):
         return dict(Counter(p.material_index for p in obj.data.polygons))
@@ -153,7 +152,7 @@ class ReplaceMaterialSlotsTests(unittest.TestCase):
             "blendmax_mat_{0}".format(i) for i in range(6)
         )
         warnings = []
-        self.adapter.BlenderAdapter._replace_material_slots(
+        self.materials._replace_material_slots(
             obj, converted_materials, warnings
         )
 
@@ -181,7 +180,7 @@ class ReplaceMaterialSlotsTests(unittest.TestCase):
         converted_materials = tuple(
             "blendmax_mat_{0}".format(i) for i in range(6)
         )
-        self.adapter.BlenderAdapter._replace_material_slots(
+        self.materials._replace_material_slots(
             obj, converted_materials, []
         )
         self.assertEqual(
@@ -193,7 +192,7 @@ class ReplaceMaterialSlotsTests(unittest.TestCase):
         polygons = [FakePolygon(0), FakePolygon(1), FakePolygon(1)]
         obj = FakeMeshObject("simple_part", original_slots, polygons)
 
-        self.adapter.BlenderAdapter._replace_material_slots(
+        self.materials._replace_material_slots(
             obj, ("only_material",), []
         )
 
@@ -210,7 +209,7 @@ class ReplaceMaterialSlotsTests(unittest.TestCase):
         # for a mesh whose faces reference up to index 5. The defensive check
         # must run before Blender-style slot removal remaps those face indices.
         warnings = []
-        self.adapter.BlenderAdapter._replace_material_slots(
+        self.materials._replace_material_slots(
             obj, ("mat_a", "mat_b"), warnings
         )
 
@@ -229,7 +228,7 @@ class ReplaceMaterialSlotsTests(unittest.TestCase):
         obj = FakeMeshObject("simple_part", original_slots, polygons)
 
         warnings = []
-        self.adapter.BlenderAdapter._replace_material_slots(
+        self.materials._replace_material_slots(
             obj, ("mat_a", "mat_b"), warnings
         )
         self.assertEqual(warnings, [])
