@@ -99,6 +99,60 @@ class InstallerTests(unittest.TestCase):
             self.assertIn("BlendMaxJoinByMaterial`BlendMax", menu)
             self.assertIn("BlendMaxUpdate`BlendMax", menu)
 
+    def test_built_bundle_carries_and_imports_the_split_max_modules(self):
+        # Roadmap #4 split blendmax_max.max_adapter into sibling modules;
+        # build_bundle() copies the package wholesale, so the probe imports
+        # and exercises the new modules FROM the built artifact, with no
+        # repository on sys.path to fall back to.
+        probe = "\n".join([
+            "import blendmax_max.max_adapter as adapter",
+            "import blendmax_max.max_export as export_module",
+            "import blendmax_max.max_materials as materials",
+            "import blendmax_max.max_scene as scene",
+            "for module in (scene, materials, export_module, adapter):",
+            "    print('MODULE', module.__name__, module.__file__)",
+            "print('PARSE', scene._parse_max_version(None, ['2025', '.3 Update']))",
+            "print('FILTER', sorted(materials._filter_material_properties(",
+            "    None, 'VRayMtl', {'Diffuse': 1, 'unrelated_internal_value': 2})))",
+            "print('REEXPORT', adapter.VRAY_MTL_PROPERTIES is materials.VRAY_MTL_PROPERTIES)",
+        ])
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = Path(temporary) / BUNDLE_NAME
+            build_bundle(SOURCE_ROOT, bundle)
+            python_root = bundle / "Contents" / "python"
+            for name in ("max_scene.py", "max_materials.py", "max_export.py"):
+                self.assertTrue(
+                    (python_root / "blendmax_max" / name).is_file(),
+                    "bundle is missing blendmax_max/%s" % name,
+                )
+
+            environment = dict(os.environ)
+            environment.pop("PYTHONPATH", None)
+            environment["PYTHONDONTWRITEBYTECODE"] = "1"
+            result = subprocess.run(
+                [sys.executable, "-c", probe],
+                cwd=str(python_root),
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+            bundle_root = bundle.resolve()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        module_lines = [
+            line for line in result.stdout.splitlines() if line.startswith("MODULE ")
+        ]
+        self.assertEqual(len(module_lines), 4)
+        for line in module_lines:
+            module_path = Path(line.rsplit(" ", 1)[1]).resolve()
+            self.assertTrue(
+                module_path.is_relative_to(bundle_root),
+                "module resolved outside the bundle: %s" % module_path,
+            )
+        self.assertIn("PARSE 2025.3", result.stdout)
+        self.assertIn("FILTER ['Diffuse']", result.stdout)
+        self.assertIn("REEXPORT True", result.stdout)
+
     def test_manifest_uses_3ds_max_component_categories(self):
         manifest = ET.parse(
             SOURCE_ROOT
