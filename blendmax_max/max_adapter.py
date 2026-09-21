@@ -197,4 +197,3 @@ class MaxRuntimeAdapter:
             self.rt.messageBox(str(message), title=title)
         except Exception:
             print("{0}: {1}".format(title, message))
-
