@@ -117,7 +117,12 @@ class InstallerTests(unittest.TestCase):
             "print('REEXPORT', adapter.VRAY_MTL_PROPERTIES is materials.VRAY_MTL_PROPERTIES)",
         ])
         with tempfile.TemporaryDirectory() as temporary:
-            bundle = Path(temporary) / BUNDLE_NAME
+            # The bundle lives under a path containing spaces: a Windows
+            # user-profile temp path has them, and the probe output must
+            # survive them (rsplit-based parsing truncated such paths).
+            spaced_root = Path(temporary) / "bundle path with spaces"
+            spaced_root.mkdir()
+            bundle = spaced_root / BUNDLE_NAME
             build_bundle(SOURCE_ROOT, bundle)
             python_root = bundle / "Contents" / "python"
             for name in ("max_scene.py", "max_materials.py", "max_export.py"):
@@ -144,7 +149,7 @@ class InstallerTests(unittest.TestCase):
         ]
         self.assertEqual(len(module_lines), 4)
         for line in module_lines:
-            module_path = Path(line.rsplit(" ", 1)[1]).resolve()
+            module_path = Path(line.split(" ", 2)[2]).resolve()
             self.assertTrue(
                 module_path.is_relative_to(bundle_root),
                 "module resolved outside the bundle: %s" % module_path,
