@@ -82,7 +82,7 @@ def source_metadata(adapter) -> Dict[str, Any]:
         units_per_meter = 1.0
 
     scene_name = str(getattr(adapter.rt, "maxFileName", "")) or "Untitled.max"
-    detected_max_version = _parse_max_version(adapter, version)
+    detected_max_version = adapter._parse_max_version(version)
     renderer_class = None
     try:
         renderer_class = adapter._class_name(adapter.rt.renderers.current)
@@ -104,7 +104,7 @@ def source_metadata(adapter) -> Dict[str, Any]:
         pass
 
     max_matches_target = detected_max_version == TARGET_MAX_VERSION
-    parsed_vray_version = _parse_vray_version(adapter, detected_vray_version)
+    parsed_vray_version = adapter._parse_vray_version(detected_vray_version)
     vray_release = (
         parsed_vray_version[:2]
         if parsed_vray_version is not None
@@ -231,10 +231,10 @@ def bounds_in_meters(
     for node_id in payload_ids:
         node = adapter._nodes_by_id[node_id]
         try:
-            values_min, values_max = _evaluated_mesh_bounds(adapter, node)
+            values_min, values_max = adapter._evaluated_mesh_bounds(node)
         except Exception as evaluated_exc:
             try:
-                values_min, values_max = _node_bounds(node)
+                values_min, values_max = adapter._node_bounds(node)
             except Exception as node_exc:
                 raise ExportError(
                     "Could not calculate the bounding box for {0}: "

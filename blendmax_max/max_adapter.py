@@ -13,7 +13,10 @@ the focused sibling modules:
 
 The moved methods keep thin delegations on :class:`MaxRuntimeAdapter` because
 ``MaxCleanupAdapter`` inherits this class: every moved method must stay
-resolvable here or the inheritance boundary (and its subclasses) break.
+resolvable here or the inheritance boundary (and its subclasses) break. The
+extracted modules reach each other through the adapter instance as well
+(``adapter._resolve_texture_path(...)``), so a subclass override is still the
+implementation that runs; the modules never call each other directly.
 Nothing in the sibling modules imports this one.
 """
 

@@ -129,7 +129,7 @@ def _primitive_properties(adapter, animatable) -> Dict[str, Any]:
             continue
         try:
             value = adapter.rt.getProperty(animatable, property_name)
-            supported, encoded = _primitive_value(adapter, value)
+            supported, encoded = adapter._primitive_value(value)
             if supported:
                 properties[key] = encoded
         except Exception:
@@ -204,14 +204,13 @@ def capture_material_graph(
             return reference
 
         class_name = adapter._class_name(animatable)
-        all_properties = _primitive_properties(adapter, animatable)
+        all_properties = adapter._primitive_properties(animatable)
         entry: Dict[str, Any] = {
             "id": reference,
             "kind": kind,
             "name": str(getattr(animatable, "name", reference)),
             "class": class_name,
-            "parameters": _filter_material_properties(
-                adapter,
+            "parameters": adapter._filter_material_properties(
                 class_name,
                 all_properties,
             ),
@@ -260,8 +259,7 @@ def capture_material_graph(
             except Exception:
                 continue
         entry["parameters"].update(
-            _connected_map_controls(
-                adapter,
+            adapter._connected_map_controls(
                 class_name,
                 all_properties,
                 connected_slot_names,
@@ -303,7 +301,7 @@ def discover_texture_references(
                 continue
             if any(token in key.casefold() for token in likely_path_tokens):
                 raw_path = value.strip()
-                resolved_path = _resolve_texture_path(adapter, raw_path)
+                resolved_path = adapter._resolve_texture_path(raw_path)
                 if resolved_path:
                     candidates.append(
                         {
