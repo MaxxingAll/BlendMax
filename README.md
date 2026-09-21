@@ -30,6 +30,12 @@ See [CHANGELOG.md](CHANGELOG.md) for release history,
 [BLENDER_IMPORTER_TEST_MATRIX.md](BLENDER_IMPORTER_TEST_MATRIX.md) for Blender
 coverage.
 
+## Roadmap
+
+### Blender workflow tools
+
+- [ ] [#53](https://github.com/MaxxingAll/BlendMax/issues/53) **Camera-Projected Curve to SVG Export** — export existing Blender Curve geometry using the active camera projection, with Perspective/Orthographic support and camera-frame clipping. Intended for the **Line Art → Curve → SVG** workflow.
+
 ## Target environment
 
 - Max exporter: Autodesk 3ds Max 2025.3, its supplied Python 3.11, and V-Ray
