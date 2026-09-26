@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 import tempfile
 import zipfile
 from contextlib import contextmanager
@@ -28,6 +27,15 @@ except ImportError:  # pragma: no cover - exercised by the source-tree checkout
 # boundary without building a 16 GiB archive.
 MAX_ARCHIVE_ENTRIES = archive_policy.MAX_ARCHIVE_ENTRIES
 MAX_UNCOMPRESSED_BYTES = archive_policy.MAX_UNCOMPRESSED_BYTES
+
+# Chunk size for streamed reads: bounded memory no matter how large a member
+# claims (or turns out) to be.
+_STREAM_CHUNK_BYTES = 1024 * 1024
+
+# One sentence for both ways the size limit refuses an archive: the declared
+# total from the preflight, and the actual decompressed bytes during
+# extraction (#50).
+_EXPANSION_LIMIT_MESSAGE = "The archive expands beyond the 16 GiB safety limit."
 
 
 def _safe_name(name: str) -> str:
@@ -56,19 +64,38 @@ def _safe_name(name: str) -> str:
     return result.cleaned
 
 
+def _collision_message(collision: archive_policy.PathCollision) -> str:
+    """This consumer's wording for a file/path collision the policy reports."""
+
+    if collision.file_path == collision.other_path:
+        return (
+            "Archive path collision: {0} is both a file and a directory.".format(
+                collision.file_path
+            )
+        )
+    return (
+        "Archive path collision: {0} is a file, and {1} requires it to be a "
+        "directory.".format(collision.file_path, collision.other_path)
+    )
+
+
 def _validated_members(archive: zipfile.ZipFile) -> Dict[str, zipfile.ZipInfo]:
     infos = archive.infolist()
     if len(infos) > MAX_ARCHIVE_ENTRIES:
         raise PackageValidationError("The archive contains too many entries.")
     if archive_policy.declared_uncompressed_bytes(infos) > MAX_UNCOMPRESSED_BYTES:
-        raise PackageValidationError("The archive expands beyond the 16 GiB safety limit.")
+        raise PackageValidationError(_EXPANSION_LIMIT_MESSAGE)
 
     members: Dict[str, zipfile.ZipInfo] = {}
     folded_names = set()
+    layout = []
     for info in infos:
         name = _safe_name(info.filename)
         if archive_policy.is_symlink(info):
             raise PackageValidationError("Archive links are not supported: {0}".format(name))
+        # Every entry (directories included) feeds the layout check below;
+        # `members` itself intentionally holds files only.
+        layout.append((name, info.is_dir()))
         if info.is_dir():
             continue
         # Duplicate detection stays interleaved with the other per-member
@@ -79,15 +106,47 @@ def _validated_members(archive: zipfile.ZipFile) -> Dict[str, zipfile.ZipInfo]:
             raise PackageValidationError("Duplicate archive path: {0}".format(name))
         folded_names.add(folded)
         members[name] = info
+
+    # A file path may not also be a directory for another entry (#50). This
+    # runs after the per-member loop so every rejection above keeps its
+    # precedence: archives that were rejected before are rejected with the
+    # same reason. It only adds rejections for layouts that used to pass
+    # validation and then die mid-extraction with a raw OSError.
+    collision = archive_policy.find_path_collision(layout)
+    if collision is not None:
+        raise PackageValidationError(_collision_message(collision))
     return members
 
 
-def _read_manifest(archive: zipfile.ZipFile, members: Dict[str, zipfile.ZipInfo]):
+def _read_member_bytes(
+    archive: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+    budget: archive_policy.ByteBudget,
+) -> bytes:
+    """Read one member fully, charging its decompressed bytes to ``budget``."""
+
+    chunks = []
+    with archive.open(info, "r") as source:
+        while True:
+            chunk = source.read(_STREAM_CHUNK_BYTES)
+            if not chunk:
+                break
+            if not budget.reserve(len(chunk)):
+                raise PackageValidationError(_EXPANSION_LIMIT_MESSAGE)
+            chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _read_manifest(
+    archive: zipfile.ZipFile,
+    members: Dict[str, zipfile.ZipInfo],
+    budget: archive_policy.ByteBudget,
+):
     info = members.get("manifest.json")
     if info is None:
         raise PackageValidationError("The package does not contain manifest.json.")
     try:
-        raw = json.loads(archive.read(info).decode("utf-8"))
+        raw = json.loads(_read_member_bytes(archive, info, budget).decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ManifestValidationError("Could not decode manifest.json: {0}".format(exc)) from exc
     return parse_manifest(raw)
@@ -97,11 +156,20 @@ def _extract_member(
     archive: zipfile.ZipFile,
     info: zipfile.ZipInfo,
     destination: Path,
+    budget: archive_policy.ByteBudget,
 ) -> Path:
     target = destination.joinpath(*PurePosixPath(_safe_name(info.filename)).parts)
     target.parent.mkdir(parents=True, exist_ok=True)
     with archive.open(info, "r") as source, target.open("wb") as output:
-        shutil.copyfileobj(source, output, length=1024 * 1024)
+        while True:
+            chunk = source.read(_STREAM_CHUNK_BYTES)
+            if not chunk:
+                break
+            # Check before writing: bytes that would cross the limit never
+            # reach the disk, so the total written stays within the budget.
+            if not budget.reserve(len(chunk)):
+                raise PackageValidationError(_EXPANSION_LIMIT_MESSAGE)
+            output.write(chunk)
     return target
 
 
@@ -120,7 +188,12 @@ def open_blendmax(path) -> Iterator[PackageContents]:
 
     with archive:
         members = _validated_members(archive)
-        manifest = _read_manifest(archive, members)
+        # One cumulative budget for every decompressed stream this operation
+        # reads (#50): the manifest and each extracted member -- not every
+        # entry the archive happens to contain, which the declared-size
+        # preflight above still covers in full.
+        budget = archive_policy.ByteBudget(MAX_UNCOMPRESSED_BYTES)
+        manifest = _read_manifest(archive, members, budget)
         geometry_name = _safe_name(manifest.geometry_file)
         geometry_info = members.get(geometry_name)
         if geometry_info is None:
@@ -147,9 +220,9 @@ def open_blendmax(path) -> Iterator[PackageContents]:
                 json.dumps(manifest.raw, indent=2, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
-            geometry_path = _extract_member(archive, geometry_info, root)
+            geometry_path = _extract_member(archive, geometry_info, root, budget)
             texture_paths = {
-                member_name: _extract_member(archive, info, root)
+                member_name: _extract_member(archive, info, root, budget)
                 for member_name, info in texture_infos.items()
             }
             yield PackageContents(

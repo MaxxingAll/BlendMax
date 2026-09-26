@@ -442,5 +442,351 @@ class ArchiveSecurityRegressionTests(unittest.TestCase):
             self.assertFalse(yielded)
 
 
+class _WitnessDirectory:
+    """A temp directory that survives its context, for inspecting writes.
+
+    open_blendmax() normally extracts into a TemporaryDirectory that is
+    deleted when the context exits -- including on the exception path. These
+    tests need to see what had been written at the moment a check refused the
+    next write, so they patch the module's tempfile with a witness.
+    """
+
+    def __init__(self, root):
+        self.root = Path(root)
+
+    def __enter__(self):
+        self.root.mkdir(parents=True, exist_ok=True)
+        return str(self.root)
+
+    def __exit__(self, *exc_info):
+        return False
+
+
+class _InflatingStream:
+    """A member stream whose read() returns more bytes than it consumed."""
+
+    def __init__(self, inner, factor):
+        self._inner = inner
+        self._factor = factor
+
+    def read(self, size=-1):
+        data = self._inner.read(size)
+        return data * self._factor if data else data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+
+class _PumpingStream:
+    """A member stream that emits ``total`` bytes in fixed-size pieces."""
+
+    def __init__(self, total, piece):
+        self._left = total
+        self._piece = piece
+
+    def read(self, size=-1):
+        if self._left <= 0:
+            return b""
+        allowed = self._piece if size is None or size < 0 else min(self._piece, size)
+        allowed = min(allowed, self._left)
+        self._left -= allowed
+        return b"z" * allowed
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+
+def _stream_for(target, build):
+    """Patch ZipFile.open so ``target``'s stream is replaced by build(stream).
+
+    Used by the #50 lying-header tests. Real zipfile verifies CRC and declared
+    sizes when a member is read to the end, so a stream that lies about its
+    size can only be simulated at the stream boundary -- which is exactly the
+    layer the actual-byte budget sits above.
+    """
+
+    real_open = zipfile.ZipFile.open
+
+    def wrapper(self, name_or_info, *args, **kwargs):
+        stream = real_open(self, name_or_info, *args, **kwargs)
+        name = getattr(name_or_info, "filename", name_or_info)
+        if name == target:
+            return build(stream)
+        return stream
+
+    return mock.patch.object(zipfile.ZipFile, "open", wrapper)
+
+
+class ArchivePathCollisionTests(unittest.TestCase):
+    """#50: a file member may not also be a directory for another member.
+
+    Both shapes below passed every existing check and died mid-extraction with
+    a raw FileExistsError after part of the archive had been written; the fix
+    detects them in the preflight that already ran before the first write.
+    """
+
+    def test_rejects_file_member_used_as_a_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "Collision.blendmax"
+            write_package(path, extra={"a": b"file", "a/b": b"nested"})
+
+            with self.assertRaisesRegex(PackageValidationError, "path collision"):
+                with open_blendmax(path):
+                    pass
+
+    def test_rejects_deep_file_prefix(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "Deep.blendmax"
+            write_package(path, extra={"a/b": b"file", "a/b/c": b"nested"})
+
+            with self.assertRaisesRegex(PackageValidationError, "path collision"):
+                with open_blendmax(path):
+                    pass
+
+    def test_child_listed_before_the_file_is_still_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "Reversed.blendmax"
+            write_package(path, extra={"b/c": b"nested", "b": b"file"})
+
+            with self.assertRaisesRegex(PackageValidationError, "path collision"):
+                with open_blendmax(path):
+                    pass
+
+    def test_file_used_as_a_directory_for_real_extraction_is_refused_pre_flight(self):
+        # The shape from issue #50's reproduction: geometry "a.fbx" is a real
+        # extracted member and texture "a.fbx/x" needs it as a directory.
+        # Before the fix this died with a raw FileExistsError after geometry
+        # had been written; now it is refused before the temp root exists.
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "Geometry.blendmax"
+            raw = valid_manifest()
+            raw["geometry"]["file"] = "a.fbx"
+            raw["textures"][0]["package_path"] = "a.fbx/x"
+            with zipfile.ZipFile(
+                path, "w", compression=zipfile.ZIP_DEFLATED
+            ) as archive:
+                archive.writestr("manifest.json", json.dumps(raw))
+                archive.writestr("a.fbx", b"geometry")
+                archive.writestr("a.fbx/x", b"texture")
+            witness = Path(temporary) / "witness"
+            stub = mock.Mock()
+            stub.TemporaryDirectory = lambda **kwargs: _WitnessDirectory(witness)
+
+            with mock.patch.object(blender_package, "tempfile", stub):
+                with self.assertRaisesRegex(PackageValidationError, "path collision"):
+                    with open_blendmax(path):
+                        pass
+
+            self.assertFalse(witness.exists())
+
+    def test_accepts_explicit_directory_with_contents(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "Dirs.blendmax"
+            write_package(path, extra={"dir/": b"", "dir/file.txt": b"x"})
+
+            with open_blendmax(path) as package:
+                self.assertEqual(
+                    package.texture_paths["textures/wood.png"].read_bytes(), b"image"
+                )
+
+    def test_accepts_directory_hierarchy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "Hierarchy.blendmax"
+            write_package(path, extra={"a/": b"", "a/b/": b"", "a/b/c": b"y"})
+
+            with open_blendmax(path) as package:
+                self.assertEqual(package.geometry_path.read_bytes(), b"fbx")
+
+    def test_existing_duplicate_rejection_keeps_its_precedence(self):
+        # Precedence guard, not a new-behaviour test: the duplicate check is
+        # interleaved per-member while the collision check runs after the
+        # loop, so an archive carrying both defects is rejected exactly as it
+        # was before #50 -- existing rejections must not be reordered.
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "Both.blendmax"
+            write_package(
+                path,
+                extra={"dup.bin": b"1", "DUP.BIN": b"2", "a": b"x", "a/b": b"y"},
+            )
+
+            with self.assertRaisesRegex(
+                PackageValidationError, "Duplicate archive path"
+            ):
+                with open_blendmax(path):
+                    pass
+
+
+class ArchiveActualByteBudgetTests(unittest.TestCase):
+    """#50: the decompressed bytes actually consumed by one open_blendmax().
+
+    The declared-size preflight is unchanged and still covers every member;
+    these tests drive the second, actual-byte check -- streams that return
+    more bytes than their headers declared. The budget is cumulative over the
+    members actually read by the operation (manifest, geometry, textures).
+    """
+
+    TEXTURE = "textures/wood.png"
+
+    @staticmethod
+    def _write_package(path, texture_bytes):
+        raw = valid_manifest()
+        with zipfile.ZipFile(
+            path, "w", compression=zipfile.ZIP_DEFLATED
+        ) as archive:
+            archive.writestr("manifest.json", json.dumps(raw))
+            archive.writestr("geometry.fbx", b"fbx")
+            archive.writestr("textures/wood.png", texture_bytes)
+        return raw
+
+    @staticmethod
+    def _sizes(path):
+        with zipfile.ZipFile(path) as archive:
+            return {info.filename: info.file_size for info in archive.infolist()}
+
+    def _witness(self, root):
+        stub = mock.Mock()
+        stub.TemporaryDirectory = lambda **kwargs: _WitnessDirectory(root)
+        return mock.patch.object(blender_package, "tempfile", stub)
+
+    def test_manifest_stream_counts_toward_the_budget(self):
+        # The budget covers every decompressed stream this operation reads --
+        # the manifest included. A lying manifest is refused before the temp
+        # root even exists.
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "Manifest.blendmax"
+            self._write_package(path, b"x" * 100)
+            sizes = self._sizes(path)
+            limit = sum(sizes.values()) + 300
+            self.assertGreater(8 * sizes["manifest.json"], limit)
+            witness = Path(temporary) / "witness"
+
+            with self._witness(witness):
+                with mock.patch.object(
+                    blender_package, "MAX_UNCOMPRESSED_BYTES", limit
+                ):
+                    with _stream_for(
+                        "manifest.json", lambda stream: _InflatingStream(stream, 8)
+                    ):
+                        with self.assertRaisesRegex(
+                            PackageValidationError, "safety limit"
+                        ):
+                            with open_blendmax(path):
+                                pass
+
+            self.assertFalse(witness.exists())
+
+    def test_rejects_a_stream_that_exceeds_the_limit_while_declared_under(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "Lying.blendmax"
+            self._write_package(path, b"x" * 100)
+            limit = sum(self._sizes(path).values()) + 300
+            self.assertGreater(20 * 100, limit)
+            witness = Path(temporary) / "witness"
+
+            with self._witness(witness):
+                with mock.patch.object(
+                    blender_package, "MAX_UNCOMPRESSED_BYTES", limit
+                ):
+                    with _stream_for(
+                        self.TEXTURE, lambda stream: _InflatingStream(stream, 20)
+                    ):
+                        with self.assertRaisesRegex(
+                            PackageValidationError, "safety limit"
+                        ):
+                            with open_blendmax(path):
+                                pass
+
+            texture = witness / "textures" / "wood.png"
+            self.assertTrue(texture.exists())
+            self.assertEqual(texture.stat().st_size, 0)
+
+    def test_actual_bytes_are_cumulative_across_extracted_members(self):
+        # Premise made explicit: after inflation the texture alone (800
+        # bytes) would still fit the limit, so a refusal can only come from
+        # counting the bytes already consumed by the manifest and geometry.
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "Cumulative.blendmax"
+            self._write_package(path, b"x" * 100)
+            sizes = self._sizes(path)
+            limit = sum(sizes.values()) + 300
+            self.assertLessEqual(8 * 100, limit)
+            self.assertGreater(sizes["manifest.json"] + 3 + 8 * 100, limit)
+            witness = Path(temporary) / "witness"
+
+            with self._witness(witness):
+                with mock.patch.object(
+                    blender_package, "MAX_UNCOMPRESSED_BYTES", limit
+                ):
+                    with _stream_for(
+                        self.TEXTURE, lambda stream: _InflatingStream(stream, 8)
+                    ):
+                        with self.assertRaisesRegex(
+                            PackageValidationError, "safety limit"
+                        ):
+                            with open_blendmax(path):
+                                pass
+
+            self.assertEqual((witness / "geometry.fbx").stat().st_size, 3)
+            texture = witness / "textures" / "wood.png"
+            self.assertTrue(texture.exists())
+            self.assertEqual(texture.stat().st_size, 0)
+
+    def test_accepts_a_lying_stream_that_lands_exactly_on_the_limit(self):
+        # Actual bytes exactly on the limit are accepted: the comparison is
+        # "> limit", not ">= limit", and every byte still gets written.
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "AtLimit.blendmax"
+            self._write_package(path, b"x" * 100)
+            limit = sum(self._sizes(path).values()) + 2000
+            witness = Path(temporary) / "witness"
+
+            with self._witness(witness):
+                with mock.patch.object(
+                    blender_package, "MAX_UNCOMPRESSED_BYTES", limit
+                ):
+                    with _stream_for(
+                        self.TEXTURE, lambda stream: _PumpingStream(2100, 1000)
+                    ):
+                        with open_blendmax(path) as package:
+                            written = (
+                                package.texture_paths[self.TEXTURE].stat().st_size
+                            )
+
+            self.assertEqual(written, 2100)
+
+    def test_no_bytes_beyond_the_limit_are_written(self):
+        # A stream that keeps producing: the write loop must stop BEFORE the
+        # chunk that would cross the limit, leaving a partial member whose
+        # size is still within the budget.
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "Overflow.blendmax"
+            self._write_package(path, b"x" * 100)
+            limit = sum(self._sizes(path).values()) + 4500
+            witness = Path(temporary) / "witness"
+
+            with self._witness(witness):
+                with mock.patch.object(
+                    blender_package, "MAX_UNCOMPRESSED_BYTES", limit
+                ):
+                    with _stream_for(
+                        self.TEXTURE, lambda stream: _PumpingStream(10000, 1000)
+                    ):
+                        with self.assertRaisesRegex(
+                            PackageValidationError, "safety limit"
+                        ):
+                            with open_blendmax(path):
+                                pass
+
+            written = (witness / "textures" / "wood.png").stat().st_size
+            self.assertEqual(written, 4000)
+            self.assertLessEqual(3 + written, limit)
+
+
 if __name__ == "__main__":
     unittest.main()

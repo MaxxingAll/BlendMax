@@ -211,5 +211,128 @@ class DuplicatePolicyTests(unittest.TestCase):
         self.assertNotEqual(policy.folded_path("a/b"), policy.folded_path("a_b"))
 
 
+class ByteBudgetTests(unittest.TestCase):
+    """#50: cumulative decompressed-byte accounting, exception-neutral.
+
+    ByteBudget is the shared half of the actual-byte limit: it decides whether
+    a chunk fits, and each consumer keeps its own exception type and wording.
+    """
+
+    def test_budget_starts_empty_and_keeps_its_limit(self):
+        budget = policy.ByteBudget(100)
+        self.assertEqual(budget.limit, 100)
+        self.assertEqual(budget.used, 0)
+
+    def test_reserve_accepts_until_the_limit(self):
+        budget = policy.ByteBudget(100)
+        self.assertTrue(budget.reserve(60))
+        self.assertTrue(budget.reserve(40))
+        self.assertEqual(budget.used, 100)
+
+    def test_reserve_accepts_a_chunk_landing_exactly_on_the_limit(self):
+        # The comparison is "> limit", not ">= limit": an archive at exactly
+        # the limit is valid.
+        budget = policy.ByteBudget(100)
+        self.assertTrue(budget.reserve(100))
+        self.assertFalse(budget.reserve(1))
+
+    def test_reserve_refuses_oversized_chunk_and_changes_nothing(self):
+        budget = policy.ByteBudget(100)
+        self.assertTrue(budget.reserve(90))
+        self.assertFalse(budget.reserve(11))
+        self.assertEqual(budget.used, 90)
+
+    def test_used_never_exceeds_the_limit_under_any_sequence(self):
+        budget = policy.ByteBudget(10)
+        for size in (3, 3, 3, 3, 1, 1, 5, 10):
+            budget.reserve(size)
+        self.assertLessEqual(budget.used, budget.limit)
+
+    def test_zero_limit_accepts_only_zero(self):
+        budget = policy.ByteBudget(0)
+        self.assertTrue(budget.reserve(0))
+        self.assertFalse(budget.reserve(1))
+
+
+class PathCollisionTests(unittest.TestCase):
+    """#50: a file path may not also be a directory for another entry.
+
+    Entries are (cleaned_path, is_directory) pairs in archive order, which is
+    what both consumers collect while they validate members. The helper is
+    deliberately stricter than nothing but weaker than every path rule: exact
+    duplicate names are the duplicate checks' concern, not this one's.
+    """
+
+    def collision(self, entries):
+        return policy.find_path_collision(entries)
+
+    # -- the must-reject shapes -------------------------------------------
+
+    def test_file_followed_by_a_path_beneath_it_collides(self):
+        result = self.collision([("a", False), ("a/b", False)])
+        self.assertEqual(result, policy.PathCollision("a", "a/b"))
+
+    def test_deep_file_prefix_collides(self):
+        result = self.collision([("a/b", False), ("a/b/c", False)])
+        self.assertEqual(result, policy.PathCollision("a/b", "a/b/c"))
+
+    def test_child_listed_before_the_file_still_collides(self):
+        result = self.collision([("a/b", False), ("a", False)])
+        self.assertEqual(result, policy.PathCollision("a", "a/b"))
+
+    def test_file_against_an_explicit_directory_of_the_same_path(self):
+        result = self.collision([("a", True), ("a", False)])
+        self.assertEqual(result, policy.PathCollision("a", "a"))
+
+    def test_file_prefix_of_an_explicit_directory_entry(self):
+        result = self.collision([("a", False), ("a/b", True), ("a/b/c", False)])
+        self.assertEqual(result, policy.PathCollision("a", "a/b"))
+
+    # -- the must-stay-valid shapes ---------------------------------------
+
+    def test_directory_entry_before_its_contents_is_valid(self):
+        self.assertIsNone(self.collision([("a", True), ("a/b", False)]))
+
+    def test_directory_hierarchy_is_valid(self):
+        self.assertIsNone(
+            self.collision([("a", True), ("a/b", True), ("a/b/c", False)])
+        )
+
+    def test_similar_but_not_prefix_paths_are_valid(self):
+        # "a" must not swallow "ab/c": the comparison is per path component.
+        self.assertIsNone(self.collision([("a", False), ("ab/c", False)]))
+        self.assertIsNone(self.collision([("a.txt", False), ("a.txts", False)]))
+
+    def test_single_file_is_valid(self):
+        self.assertIsNone(self.collision([("a", False)]))
+
+    def test_no_entries_is_valid(self):
+        self.assertIsNone(self.collision([]))
+
+    def test_exact_duplicate_names_are_left_to_the_duplicate_checks(self):
+        # Both consumers already reject these; this helper must not claim
+        # them, so the existing duplicate check's precedence is unchanged.
+        self.assertIsNone(self.collision([("a", False), ("a", False)]))
+
+    # -- comparison rules --------------------------------------------------
+
+    def test_collisions_are_found_case_insensitively(self):
+        # Same reason folded_path folds duplicates: Windows and macOS resolve
+        # "A" and "a/b" to the same pair of paths.
+        for entries in (
+            [("A", False), ("a/b", False)],
+            [("a", False), ("A/b", False)],
+            [("A", True), ("a", False)],
+        ):
+            with self.subTest(entries=entries):
+                self.assertIsNotNone(self.collision(entries))
+
+    def test_the_first_collision_in_archive_order_is_reported(self):
+        result = self.collision(
+            [("z", False), ("a", False), ("a/b", False), ("c", False), ("c/d", False)]
+        )
+        self.assertEqual(result, policy.PathCollision("a", "a/b"))
+
+
 if __name__ == "__main__":
     unittest.main()

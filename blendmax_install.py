@@ -34,6 +34,9 @@ ARCHIVE_POLICY_FILE = "blendmax_archive_policy.py"
 MAX_ARCHIVE_ENTRIES = archive_policy.MAX_ARCHIVE_ENTRIES
 MAX_UNCOMPRESSED_BYTES = archive_policy.MAX_UNCOMPRESSED_BYTES
 
+# Chunk size for streamed extraction reads; bounds memory for any member size.
+_STREAM_CHUNK_BYTES = 1024 * 1024
+
 
 class InstallError(RuntimeError):
     """Raised when an install or update package is invalid."""
@@ -182,6 +185,28 @@ def _unsafe_member_message(name: str, result: archive_policy.MemberPath) -> str:
     return "Update ZIP contains an unsafe path: {0}".format(name)
 
 
+def _collision_message(collision: archive_policy.PathCollision) -> str:
+    """This consumer's wording for a file/path collision the policy reports."""
+
+    if collision.file_path == collision.other_path:
+        return (
+            "Update ZIP contains a path collision: {0} is both a file and a "
+            "directory.".format(collision.file_path)
+        )
+    return (
+        "Update ZIP contains a path collision: {0} is a file, and {1} requires "
+        "it to be a directory.".format(collision.file_path, collision.other_path)
+    )
+
+
+def _size_limit_message() -> str:
+    """This consumer's wording for the shared size limit being exceeded."""
+
+    return "Update ZIP expands beyond the {0} GiB safety limit.".format(
+        MAX_UNCOMPRESSED_BYTES // (1024 ** 3)
+    )
+
+
 def _safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
     root = destination.resolve()
     infos = archive.infolist()
@@ -198,11 +223,7 @@ def _safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
         )
     declared_bytes = archive_policy.declared_uncompressed_bytes(infos)
     if declared_bytes > MAX_UNCOMPRESSED_BYTES:
-        raise InstallError(
-            "Update ZIP expands beyond the {0} GiB safety limit.".format(
-                MAX_UNCOMPRESSED_BYTES // (1024 ** 3)
-            )
-        )
+        raise InstallError(_size_limit_message())
 
     folded_names = set()
     validated = []
@@ -244,12 +265,28 @@ def _safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
             )
         validated.append((member, result.cleaned))
 
+    # A file entry may not also be a directory for another entry (#50). This
+    # runs after the per-member loop so every rejection above keeps its
+    # precedence: archives that were rejected before are rejected with the
+    # same reason, and this only adds rejections for layouts that used to die
+    # mid-extraction with a raw OSError.
+    collision = archive_policy.find_path_collision(
+        [(cleaned, member.is_dir()) for member, cleaned in validated]
+    )
+    if collision is not None:
+        raise InstallError(_collision_message(collision))
+
     # Write exactly the paths that were validated. extractall() would use each
     # member's own filename, and on a POSIX host a backslash in that name is an
     # ordinary character rather than a separator -- so the string checked above
     # and the string written could differ. Extraction happens here, from the
     # validated names, so what was checked is what lands on disk. Nothing has
     # been written before this point: a refusal leaves the destination untouched.
+    # Actual decompressed bytes are also bounded, cumulatively for the whole
+    # operation (#50): the declared-size preflight above still covers every
+    # member, and this second check covers streams that out-produce their
+    # headers.
+    budget = archive_policy.ByteBudget(MAX_UNCOMPRESSED_BYTES)
     for member, cleaned in validated:
         target = root / Path(cleaned)
         if member.is_dir():
@@ -260,7 +297,15 @@ def _safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         with archive.open(member) as source, open(str(target), "wb") as output:
-            shutil.copyfileobj(source, output)
+            while True:
+                chunk = source.read(_STREAM_CHUNK_BYTES)
+                if not chunk:
+                    break
+                # Check before writing: bytes that would cross the limit never
+                # reach the disk, so the total written stays within the budget.
+                if not budget.reserve(len(chunk)):
+                    raise InstallError(_size_limit_message())
+                output.write(chunk)
 
 
 def find_source_root(extracted_root: Path) -> Path:

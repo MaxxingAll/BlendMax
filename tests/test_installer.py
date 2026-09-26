@@ -945,5 +945,296 @@ class UpdateZipDirectoryEntryTests(unittest.TestCase):
             self.assertEqual(sorted(item.name for item in destination.iterdir()), [])
 
 
+class _InflatingStream:
+    """A member stream whose read() returns more bytes than it consumed."""
+
+    def __init__(self, inner, factor):
+        self._inner = inner
+        self._factor = factor
+
+    def read(self, size=-1):
+        data = self._inner.read(size)
+        return data * self._factor if data else data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+
+class _PumpingStream:
+    """A member stream that emits ``total`` bytes in fixed-size pieces."""
+
+    def __init__(self, total, piece):
+        self._left = total
+        self._piece = piece
+
+    def read(self, size=-1):
+        if self._left <= 0:
+            return b""
+        allowed = self._piece if size is None or size < 0 else min(self._piece, size)
+        allowed = min(allowed, self._left)
+        self._left -= allowed
+        return b"z" * allowed
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+
+def _stream_for(target, build):
+    """Patch ZipFile.open so ``target``'s stream is replaced by build(stream).
+
+    Used by the #50 lying-header tests. Real zipfile verifies CRC and declared
+    sizes when a member is read to the end, so a stream that lies about its
+    size can only be simulated at the stream boundary -- which is exactly the
+    layer the actual-byte budget sits above.
+    """
+
+    real_open = zipfile.ZipFile.open
+
+    def wrapper(self, name_or_info, *args, **kwargs):
+        stream = real_open(self, name_or_info, *args, **kwargs)
+        name = getattr(name_or_info, "filename", name_or_info)
+        if name == target:
+            return build(stream)
+        return stream
+
+    return mock.patch.object(zipfile.ZipFile, "open", wrapper)
+
+
+class UpdateZipPathCollisionTests(unittest.TestCase):
+    """#50: a file entry may not also be a directory for another entry.
+
+    Both shapes below passed the old preflight and died mid-extraction with a
+    raw FileExistsError after part of the archive had been written; the fix
+    detects them in the preflight that already ran before the first write.
+    """
+
+    def _extract(self, archive_path, destination):
+        with zipfile.ZipFile(archive_path, "r") as archive:
+            _safe_extract(archive, destination)
+
+    @staticmethod
+    def _archive(temporary, names):
+        path = Path(temporary) / "probe.zip"
+        with zipfile.ZipFile(path, "w") as archive:
+            for name in names:
+                archive.writestr(name, b"x")
+        return path
+
+    @staticmethod
+    def _destination(temporary):
+        destination = Path(temporary) / "out"
+        destination.mkdir()
+        return destination
+
+    def test_rejects_file_entry_used_as_a_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._archive(temporary, ["a", "a/b"])
+            destination = self._destination(temporary)
+
+            with self.assertRaises(InstallError) as caught:
+                self._extract(path, destination)
+
+            self.assertIn("path collision", str(caught.exception))
+            self.assertEqual(sorted(item.name for item in destination.iterdir()), [])
+
+    def test_rejects_deep_file_prefix(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._archive(temporary, ["a/b", "a/b/c"])
+            destination = self._destination(temporary)
+
+            with self.assertRaises(InstallError) as caught:
+                self._extract(path, destination)
+
+            self.assertIn("path collision", str(caught.exception))
+            self.assertEqual(sorted(item.name for item in destination.iterdir()), [])
+
+    def test_child_listed_before_the_file_is_still_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._archive(temporary, ["b/c", "b"])
+            destination = self._destination(temporary)
+
+            with self.assertRaises(InstallError) as caught:
+                self._extract(path, destination)
+
+            self.assertIn("path collision", str(caught.exception))
+            self.assertEqual(sorted(item.name for item in destination.iterdir()), [])
+
+    def test_collision_leaves_a_populated_destination_untouched(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._archive(temporary, ["a", "a/b"])
+            destination = Path(temporary) / "out"
+            destination.mkdir()
+            existing = destination / "keep.txt"
+            existing.write_text("preexisting", encoding="utf-8")
+
+            with self.assertRaises(InstallError):
+                self._extract(path, destination)
+
+            self.assertEqual(
+                sorted(item.name for item in destination.iterdir()), ["keep.txt"]
+            )
+            self.assertEqual(existing.read_text(encoding="utf-8"), "preexisting")
+
+    def test_accepts_explicit_directory_hierarchy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._archive(temporary, ["a/", "a/b/", "a/b/c"])
+            destination = self._destination(temporary)
+
+            self._extract(path, destination)
+
+            self.assertTrue((destination / "a").is_dir())
+            self.assertTrue((destination / "a" / "b").is_dir())
+            self.assertTrue((destination / "a" / "b" / "c").is_file())
+
+    def test_accepts_directory_entry_before_its_contents(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._archive(temporary, ["dir/", "dir/file.txt"])
+            destination = self._destination(temporary)
+
+            self._extract(path, destination)
+
+            self.assertTrue((destination / "dir" / "file.txt").is_file())
+
+    def test_file_and_directory_entry_for_the_same_name_keep_their_rejection(self):
+        # "a/" and "a" fold to the same path, which the existing duplicate
+        # check already rejects -- precedence unchanged, and the new collision
+        # check never sees this archive shape.
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._archive(temporary, ["a/", "a"])
+            destination = self._destination(temporary)
+
+            with self.assertRaises(InstallError) as caught:
+                self._extract(path, destination)
+
+            self.assertIn("duplicate path", str(caught.exception))
+
+    def test_existing_duplicate_rejection_keeps_its_precedence(self):
+        # Precedence guard, not a new-behaviour test: the duplicate check is
+        # interleaved per-member while the collision check runs after the
+        # loop, so an archive carrying both is rejected exactly as before.
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._archive(temporary, ["a", "a/b", "dup", "DUP"])
+            destination = self._destination(temporary)
+
+            with self.assertRaises(InstallError) as caught:
+                self._extract(path, destination)
+
+            self.assertIn("duplicate path", str(caught.exception))
+
+
+class UpdateZipActualByteBudgetTests(unittest.TestCase):
+    """#50: actual decompressed bytes, cumulative over one _safe_extract().
+
+    The declared-size preflight is unchanged and still covers every member;
+    these tests drive the second, actual-byte check -- streams that return
+    more bytes than their headers declared. Real zipfile verifies CRC and
+    declared sizes when a member is read to the end, so the lying stream is
+    simulated at ZipFile.open, the layer the new budget sits above.
+    """
+
+    def _extract(self, archive_path, destination):
+        with zipfile.ZipFile(archive_path, "r") as archive:
+            _safe_extract(archive, destination)
+
+    @staticmethod
+    def _archive(temporary, members):
+        path = Path(temporary) / "probe.zip"
+        with zipfile.ZipFile(path, "w") as archive:
+            for name, payload in members.items():
+                archive.writestr(name, payload)
+        return path
+
+    @staticmethod
+    def _destination(temporary):
+        destination = Path(temporary) / "out"
+        destination.mkdir()
+        return destination
+
+    @staticmethod
+    def _written_bytes(destination):
+        return sum(
+            item.stat().st_size for item in destination.rglob("*") if item.is_file()
+        )
+
+    def test_rejects_a_stream_that_exceeds_the_limit_while_declared_under(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._archive(temporary, {"big.bin": b"x" * 100})
+            limit = 100 + 300
+            self.assertGreater(20 * 100, limit)
+            destination = self._destination(temporary)
+
+            with mock.patch.object(blendmax_install, "MAX_UNCOMPRESSED_BYTES", limit):
+                with _stream_for(
+                    "big.bin", lambda stream: _InflatingStream(stream, 20)
+                ):
+                    with self.assertRaises(InstallError) as caught:
+                        self._extract(path, destination)
+
+            self.assertIn("safety limit", str(caught.exception))
+            self.assertEqual(self._written_bytes(destination), 0)
+
+    def test_actual_bytes_are_cumulative_across_members(self):
+        # Premise made explicit: after inflation the second member alone
+        # (160 bytes) would still fit the limit, so a refusal can only come
+        # from counting the bytes already written for the first member.
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._archive(temporary, {"a.bin": b"x" * 300, "b.bin": b"x" * 20})
+            limit = 400
+            self.assertLessEqual(8 * 20, limit)
+            self.assertGreater(300 + 8 * 20, limit)
+            destination = self._destination(temporary)
+
+            with mock.patch.object(blendmax_install, "MAX_UNCOMPRESSED_BYTES", limit):
+                with _stream_for("b.bin", lambda stream: _InflatingStream(stream, 8)):
+                    with self.assertRaises(InstallError) as caught:
+                        self._extract(path, destination)
+
+            self.assertIn("safety limit", str(caught.exception))
+            self.assertEqual((destination / "a.bin").stat().st_size, 300)
+            self.assertEqual((destination / "b.bin").stat().st_size, 0)
+
+    def test_accepts_a_lying_stream_that_lands_exactly_on_the_limit(self):
+        # Actual bytes exactly on the limit are accepted: the comparison is
+        # "> limit", not ">= limit", and every byte still gets written.
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._archive(temporary, {"big.bin": b"x" * 100})
+            limit = 100 + 2000
+            destination = self._destination(temporary)
+
+            with mock.patch.object(blendmax_install, "MAX_UNCOMPRESSED_BYTES", limit):
+                with _stream_for(
+                    "big.bin", lambda stream: _PumpingStream(2100, 1000)
+                ):
+                    self._extract(path, destination)
+
+            self.assertEqual((destination / "big.bin").stat().st_size, 2100)
+
+    def test_no_bytes_beyond_the_limit_are_written(self):
+        # A stream that keeps producing: the write loop must stop BEFORE the
+        # chunk that would cross the limit, leaving a partial member whose
+        # size is still within the budget.
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._archive(temporary, {"big.bin": b"x" * 100})
+            limit = 100 + 4500
+            destination = self._destination(temporary)
+
+            with mock.patch.object(blendmax_install, "MAX_UNCOMPRESSED_BYTES", limit):
+                with _stream_for(
+                    "big.bin", lambda stream: _PumpingStream(10000, 1000)
+                ):
+                    with self.assertRaises(InstallError):
+                        self._extract(path, destination)
+
+            written = (destination / "big.bin").stat().st_size
+            self.assertEqual(written, 4000)
+            self.assertLessEqual(written, limit)
+
+
 if __name__ == "__main__":
     unittest.main()
