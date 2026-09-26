@@ -119,6 +119,62 @@ class BlenderManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ManifestValidationError, "Duplicate object id"):
             parse_manifest(raw)
 
+    def test_rejects_duplicate_assignments_for_one_object(self):
+        raw = valid_manifest()
+        raw["materials"]["assignments"].append(
+            {"object_id": "obj_1", "material_ref": "tex_1"}
+        )
+        with self.assertRaisesRegex(
+            ManifestValidationError,
+            r"Duplicate material assignment for object id: obj_1 "
+            r"\(materials\.assignments\[0\] and materials\.assignments\[1\]\)\.",
+        ):
+            parse_manifest(raw)
+
+    def test_rejects_exact_duplicate_assignments(self):
+        """Two identical entries are still two assignments for one object."""
+        raw = valid_manifest()
+        raw["materials"]["assignments"].append(
+            {"object_id": "obj_1", "material_ref": "mat_1"}
+        )
+        with self.assertRaisesRegex(
+            ManifestValidationError, r"Duplicate material assignment"
+        ):
+            parse_manifest(raw)
+
+    def test_duplicate_assignment_error_identifies_both_entries(self):
+        """Both indices are reported, not just adjacent duplicates."""
+        raw = valid_manifest()
+        child = dict(raw["objects"][0])
+        child.update(id="obj_2", fbx_name="BM_other")
+        raw["objects"].append(child)
+        raw["materials"]["assignments"].append(
+            {"object_id": "obj_2", "material_ref": "mat_1"}
+        )
+        raw["materials"]["assignments"].append(
+            {"object_id": "obj_1", "material_ref": "tex_1"}
+        )
+        with self.assertRaisesRegex(
+            ManifestValidationError,
+            r"obj_1 \(materials\.assignments\[0\] and materials\.assignments\[2\]\)\.",
+        ):
+            parse_manifest(raw)
+
+    def test_distinct_objects_with_assignments_remain_valid(self):
+        raw = valid_manifest()
+        child = dict(raw["objects"][0])
+        child.update(id="obj_2", fbx_name="BM_other")
+        raw["objects"].append(child)
+        raw["materials"]["assignments"].append(
+            {"object_id": "obj_2", "material_ref": "mat_1"}
+        )
+
+        manifest = parse_manifest(raw)
+
+        self.assertEqual(
+            [item.object_id for item in manifest.assignments], ["obj_1", "obj_2"]
+        )
+
 
 class ManifestReferenceTests(unittest.TestCase):
     """Cross-references must resolve, or the manifest is rejected.
@@ -361,6 +417,41 @@ class ManifestReferenceTests(unittest.TestCase):
         del raw["textures"][0]["graph_node_id"]
         manifest = parse_manifest(raw)
         self.assertIsNone(manifest.textures[0].graph_node_id)
+
+    def test_null_graph_node_id_remains_absent(self):
+        raw = valid_manifest()
+        raw["textures"][0]["graph_node_id"] = None
+        manifest = parse_manifest(raw)
+        self.assertIsNone(manifest.textures[0].graph_node_id)
+
+    def test_empty_string_graph_node_id_is_a_reference_not_absent(self):
+        """Only ``None`` means "no graph id", matching parent_id.
+
+        Under the old truthiness check ``""`` was silently absent; now it is
+        a present-but-invalid reference and must be reported.
+        """
+        raw = valid_manifest()
+        raw["textures"][0]["graph_node_id"] = ""
+        with self.assertRaisesRegex(
+            ManifestValidationError,
+            r"textures\[0\]\.graph_node_id references unknown graph id: ''\.",
+        ):
+            parse_manifest(raw)
+
+    def test_numeric_zero_graph_node_id_is_a_reference_not_absent(self):
+        """``0`` must become the reference ``"0"`` and be validated.
+
+        Under the old truthiness check it silently became absent; asserting
+        the unknown-reference error (rather than merely that no TypeError
+        occurs) is what proves the semantic change.
+        """
+        raw = valid_manifest()
+        raw["textures"][0]["graph_node_id"] = 0
+        with self.assertRaisesRegex(
+            ManifestValidationError,
+            r"textures\[0\]\.graph_node_id references unknown graph id: '0'\.",
+        ):
+            parse_manifest(raw)
 
     # --- existence is not enough for parent_id: cycles --------------------
 

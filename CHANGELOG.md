@@ -41,10 +41,17 @@ called out separately from automated coverage.
   These are now reported as a manifest validation error naming the offending
   field, index, and reference value, so a malformed package fails with a
   precise message instead of importing partially. Only `null` means "no
-  parent" or "no material": a present-but-falsy value such as `0` or `""`
-  is still a reference and is reported rather than silently absorbed. A
-  parent cycle is reported as a manifest error rather than a bare
-  `ValueError` from the placement pass.
+  parent", "no material", or "no graph node": a present-but-falsy value
+  such as `0` or `""` is still a reference and is reported rather than
+  silently absorbed, including for a texture's `graph_node_id`. A parent
+  cycle is reported as a manifest error rather than a bare `ValueError` from
+  the placement pass.
+- Rejects manifests that assign more than one material to the same object,
+  including exact duplicates, naming the object id and both offending entry
+  indices. Duplicate assignments previously imported with a silent
+  last-assignment-wins outcome; normal exporter output cannot contain them
+  (node ids are unique by construction), so this only affects hand-authored
+  or third-party manifests.
 
 ## Blender Importer 0.1.8 — 2026-09-08
 
