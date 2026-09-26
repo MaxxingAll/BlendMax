@@ -14,7 +14,6 @@ from bpy_extras.io_utils import ImportHelper
 
 from .errors import BlendMaxImportError
 from .importer import import_blendmax
-from .blender_presentation import create_measurement_cage
 from .models import ImportSummary
 from .restart_notice import (
     hot_reload_consumed_for_current_process,
@@ -339,6 +338,8 @@ class BLENDMAX_OT_create_measurement_cage(bpy.types.Operator):
     )
 
     def execute(self, context):
+        from .blender_presentation import create_measurement_cage
+
         try:
             _cage, bounds = create_measurement_cage(
                 context,
