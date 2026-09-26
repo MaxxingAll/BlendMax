@@ -28,8 +28,10 @@ except ImportError:  # pragma: no cover - exercised by the source-tree checkout
 MAX_ARCHIVE_ENTRIES = archive_policy.MAX_ARCHIVE_ENTRIES
 MAX_UNCOMPRESSED_BYTES = archive_policy.MAX_UNCOMPRESSED_BYTES
 
-# Chunk size for streamed reads: bounded memory no matter how large a member
-# claims (or turns out) to be.
+# Chunk size for streamed reads. The extraction loops write each chunk
+# straight to disk, so their memory stays bounded no matter how large a
+# member claims (or turns out) to be; the manifest read still accumulates
+# its bytes to parse JSON, no worse than the archive.read() it replaced.
 _STREAM_CHUNK_BYTES = 1024 * 1024
 
 # One sentence for both ways the size limit refuses an archive: the declared

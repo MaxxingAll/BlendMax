@@ -26,6 +26,7 @@ from blendmax_install import (
     install_from_source,
     install_from_zip,
 )
+from fakes import _InflatingStream, _PumpingStream, _stream_for
 from tools import build_release as release_builder
 
 
@@ -943,67 +944,6 @@ class UpdateZipDirectoryEntryTests(unittest.TestCase):
                 self._extract(path, destination)
 
             self.assertEqual(sorted(item.name for item in destination.iterdir()), [])
-
-
-class _InflatingStream:
-    """A member stream whose read() returns more bytes than it consumed."""
-
-    def __init__(self, inner, factor):
-        self._inner = inner
-        self._factor = factor
-
-    def read(self, size=-1):
-        data = self._inner.read(size)
-        return data * self._factor if data else data
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc_info):
-        return False
-
-
-class _PumpingStream:
-    """A member stream that emits ``total`` bytes in fixed-size pieces."""
-
-    def __init__(self, total, piece):
-        self._left = total
-        self._piece = piece
-
-    def read(self, size=-1):
-        if self._left <= 0:
-            return b""
-        allowed = self._piece if size is None or size < 0 else min(self._piece, size)
-        allowed = min(allowed, self._left)
-        self._left -= allowed
-        return b"z" * allowed
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc_info):
-        return False
-
-
-def _stream_for(target, build):
-    """Patch ZipFile.open so ``target``'s stream is replaced by build(stream).
-
-    Used by the #50 lying-header tests. Real zipfile verifies CRC and declared
-    sizes when a member is read to the end, so a stream that lies about its
-    size can only be simulated at the stream boundary -- which is exactly the
-    layer the actual-byte budget sits above.
-    """
-
-    real_open = zipfile.ZipFile.open
-
-    def wrapper(self, name_or_info, *args, **kwargs):
-        stream = real_open(self, name_or_info, *args, **kwargs)
-        name = getattr(name_or_info, "filename", name_or_info)
-        if name == target:
-            return build(stream)
-        return stream
-
-    return mock.patch.object(zipfile.ZipFile, "open", wrapper)
 
 
 class UpdateZipPathCollisionTests(unittest.TestCase):

@@ -48,7 +48,7 @@ called out separately from automated coverage.
   the placement pass.
 - Rejects manifests that assign more than one material to the same object,
   including exact duplicates, naming the object id and both offending entry
-  Duplicate assignments previously imported with a silent
+  indices. Duplicate assignments previously imported with a silent
   last-assignment-wins outcome; normal exporter output cannot contain them
   (node ids are unique by construction), so this only affects hand-authored
   or third-party manifests.
@@ -58,10 +58,9 @@ called out separately from automated coverage.
   surfaced mid-import as a raw filesystem error after part of the package had
   already been extracted, or, for the shadowing shape, was accepted outright.
   The layout check runs over the whole archive before anything is written,
-  like the duplicate rejection above, and the same rule now applies to the
-  Max updater's update archives. Actual decompressed bytes are also bounded
-  while reading, as defence in depth behind the declared-size check. Normal
-  exporter output cannot produce either shape.
+  like the duplicate rejection above, and the actual decompressed bytes are
+  also bounded while reading, as defence in depth behind the declared-size
+  check. Normal exporter output cannot produce either shape.
 
 ## Blender Importer 0.1.8 — 2026-09-08
 

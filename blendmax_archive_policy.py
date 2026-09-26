@@ -190,7 +190,9 @@ def find_path_collision(
     entry may be a file or a directory, never both: a file whose path is also
     a proper prefix of any other entry -- or whose path another entry declares
     as a directory -- makes extraction fail partway through, after some
-    members have already been written. That layout can be refused before the
+    members have already been written, and leaves a declared path shadowed by
+    a file member unreachable even when nothing collides on disk (that member
+    may never be extracted itself). The layout can be refused before the
     first write instead.
 
     Comparison folds case, for the same reason :func:`folded_path` does:

@@ -133,7 +133,7 @@ Coverage includes:
 - root-scoped cleanup planning and nested-group preservation;
 - explicit Multi/Sub material-ID lookup and compact BitArray generation;
 - update ZIP entry-count (`2048`) and declared-size (`16 GiB`) limits, refused
-  before extraction begins, plus path-collision rejection (`a` file plus `a/b`),
+  before extraction begins, plus path-collision rejection (file `a` plus `a/b`),
   the Windows filename rules enforced on `.blendmax` packages (formerly issue
   #39) and a decompressed-byte budget over what is actually read; preflight
   refusals leave an already-populated destination untouched, while the

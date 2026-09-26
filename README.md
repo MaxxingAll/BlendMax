@@ -167,11 +167,12 @@ python tools/build_blender_extension.py
 The importer validates every archive member before extracting anything: unsafe
 paths and symlinks are rejected, as are names Windows would resolve to a device
 or silently rewrite (reserved device names such as `CON`, trailing dots or
-spaces, colons), case-insensitive duplicate paths, and archives beyond 2048
-entries or 16 GiB of declared uncompressed content. It then reads only the
-declared manifest/FBX/textures, calls Blender's FBX importer once, and rebuilds
-the asset from indexed manifest data. A failed import removes the objects and
-data created by that attempt.
+spaces, colons), case-insensitive duplicate paths, member layouts where a file
+path is also needed as a directory (a file `a` alongside a declared `a/b`), and
+archives beyond 2048 entries or 16 GiB of declared uncompressed content. It
+then reads only the declared manifest/FBX/textures, calls Blender's FBX
+importer once, and rebuilds the asset from indexed manifest data. A failed
+import removes the objects and data created by that attempt.
 
 It currently:
 
