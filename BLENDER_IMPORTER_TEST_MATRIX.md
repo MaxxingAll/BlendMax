@@ -111,12 +111,20 @@ extraction: a rejected package yields no contents and no member is written.
   `a/..\..\file` are rejected;
 - symlink members (`S_IFLNK` set in `external_attr`) are rejected;
 - duplicate archive paths are rejected case-insensitively, including a nested
-  collision such as `Textures/wood.png` against `textures/wood.png`.
+  collision such as `Textures/wood.png` against `textures/wood.png`;
+- a file member whose path another entry needs as a directory (`a` plus `a/b`)
+  is rejected by a whole-archive layout scan, like the duplicate check --
+  including an unimported member that shadows a declared texture's directory
+  (`extra` plus a declared `extra/x.png`).
 
 **Resource limits** — `_validated_members`: at most `2048` entries and `16 GiB`
 of declared uncompressed size, evaluated from `ZipInfo.file_size` before
-extraction begins. Entry-count boundaries are exercised at the real limit; byte
-boundaries patch the limit down, because a real 16 GiB fixture is not built.
+extraction begins, plus the whole-archive layout check above. `open_blendmax`
+additionally bounds the bytes actually decompressed while reading (manifest and
+extracted members, cumulatively), refusing any chunk that would cross the same
+limit -- belt-and-braces, since CPython's reader already enforces the declared
+size. Entry-count boundaries are exercised at the real limit; byte boundaries
+patch the limit down, because a real 16 GiB fixture is not built.
 
 **Manifest referential integrity** — `tests/test_blender_manifest.py`: dangling
 `parent_id`, assignment `object_id` / `material_ref`, `sub_materials[*].ref`,
@@ -126,10 +134,12 @@ manifest error rather than a bare `ValueError`.
 
 **Update ZIP path** — `blendmax_install._safe_extract`, covered by
 `tests/test_installer.py` (`UpdateZipResourceLimitTests`,
-`UpdateZipSecurityRegressionTests`): the same entry-count and byte limits, plus
-absolute-path, symlink and traversal rejection, and refusals that leave an
-already-populated destination untouched. This path does **not** yet apply the
-Windows filename rules; that gap is tracked separately as #39.
+`UpdateZipSecurityRegressionTests`): the same entry-count, byte and layout
+limits, the Windows filename rules (the gap once tracked as #39), plus
+absolute-path, symlink and traversal rejection, and preflight refusals that
+leave an already-populated destination untouched. The decompressed-byte
+refusal can stop a member mid-write; the extraction target is a throwaway
+staging directory on this path.
 
 **Automation boundary:** everything above is ordinary Python over `zipfile`, so
 it is unit-tested without `bpy`. None of it is host-verified inside Blender.

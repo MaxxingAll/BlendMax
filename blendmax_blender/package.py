@@ -108,10 +108,15 @@ def _validated_members(archive: zipfile.ZipFile) -> Dict[str, zipfile.ZipInfo]:
         members[name] = info
 
     # A file path may not also be a directory for another entry (#50). This
-    # runs after the per-member loop so every rejection above keeps its
-    # precedence: archives that were rejected before are rejected with the
-    # same reason. It only adds rejections for layouts that used to pass
-    # validation and then die mid-extraction with a raw OSError.
+    # scans the whole archive layout, like the duplicate check above, and runs
+    # after the per-member loop so every rejection above keeps its precedence:
+    # archives that were rejected before are rejected with the same reason.
+    # The scan is deliberately wider than "layouts that would die
+    # mid-extraction": open_blendmax extracts only declared import data, so an
+    # unreferenced member that shadows a declared path (a file "extra" vs a
+    # texture "extra/x.png") is refused here even though nothing would have
+    # collided on disk. A layout that makes a declared path unreachable is
+    # malformed in itself, and normal exporter output cannot produce it.
     collision = archive_policy.find_path_collision(layout)
     if collision is not None:
         raise PackageValidationError(_collision_message(collision))

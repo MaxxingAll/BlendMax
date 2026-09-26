@@ -585,6 +585,33 @@ class ArchivePathCollisionTests(unittest.TestCase):
 
             self.assertFalse(witness.exists())
 
+    def test_unreferenced_shadowing_member_is_refused_whole_archive(self):
+        # The layout scan is whole-archive, like the duplicate check: this
+        # package imported fine before #50 because open_blendmax extracts
+        # only declared import data, so the shadowing file member "extra"
+        # never landed and nothing collided on disk. It is refused anyway --
+        # the archive layout makes a declared texture path unreachable, and
+        # normal exporter output cannot produce the shape.
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "Shadow.blendmax"
+            raw = valid_manifest()
+            raw["textures"][0]["package_path"] = "extra/x.png"
+            write_package(
+                path,
+                raw,
+                extra={"extra": b"never imported", "extra/x.png": b"texture"},
+            )
+            witness = Path(temporary) / "witness"
+            stub = mock.Mock()
+            stub.TemporaryDirectory = lambda **kwargs: _WitnessDirectory(witness)
+
+            with mock.patch.object(blender_package, "tempfile", stub):
+                with self.assertRaisesRegex(PackageValidationError, "path collision"):
+                    with open_blendmax(path):
+                        pass
+
+            self.assertFalse(witness.exists())
+
     def test_accepts_explicit_directory_with_contents(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "Dirs.blendmax"

@@ -125,8 +125,11 @@ action; restart 3ds Max only when a release changes the menu layout.
 The updater validates the release structure, rejects unsafe archive paths
 (absolute, symlink and traversal) and refuses an archive with more than 2048
 entries or more than 16 GiB of declared uncompressed content before extracting
-anything. The Windows filename rules applied to `.blendmax` packages are not yet
-enforced on update archives. It builds a new AppBundle in a staging directory
+anything. The Windows filename rules applied to `.blendmax` packages are
+enforced on update archives too, an entry whose path collides with another
+entry's directory is refused before extraction, and the bytes actually
+decompressed are checked against the same declared limit. It builds a new
+AppBundle in a staging directory
 and replaces only the installed `BlendMax.bundle` folder. If installation fails,
 the previous bundle is restored. Each menu launcher invalidates Max's
 embedded-Python module cache so an updated exporter or cleanup action cannot

@@ -268,7 +268,8 @@ def _safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
     # A file entry may not also be a directory for another entry (#50). This
     # runs after the per-member loop so every rejection above keeps its
     # precedence: archives that were rejected before are rejected with the
-    # same reason, and this only adds rejections for layouts that used to die
+    # same reason. Every validated member is extracted on this path, so the
+    # only layouts newly rejected here are ones that used to die
     # mid-extraction with a raw OSError.
     collision = archive_policy.find_path_collision(
         [(cleaned, member.is_dir()) for member, cleaned in validated]
@@ -280,12 +281,13 @@ def _safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
     # member's own filename, and on a POSIX host a backslash in that name is an
     # ordinary character rather than a separator -- so the string checked above
     # and the string written could differ. Extraction happens here, from the
-    # validated names, so what was checked is what lands on disk. Nothing has
-    # been written before this point: a refusal leaves the destination untouched.
-    # Actual decompressed bytes are also bounded, cumulatively for the whole
-    # operation (#50): the declared-size preflight above still covers every
-    # member, and this second check covers streams that out-produce their
-    # headers.
+    # validated names, so what was checked is what lands on disk. Every
+    # preflight refusal above happens before the first write, so those leave an
+    # already-populated destination untouched; the decompressed-byte refusal
+    # below can stop a member mid-write instead. Actual decompressed bytes are
+    # bounded cumulatively for the whole operation (#50): the declared-size
+    # preflight above still covers every member, and this second check covers
+    # streams that out-produce their headers.
     budget = archive_policy.ByteBudget(MAX_UNCOMPRESSED_BYTES)
     for member, cleaned in validated:
         target = root / Path(cleaned)
