@@ -173,17 +173,30 @@ def _parse_objects(raw: Mapping[str, Any]) -> Tuple[ObjectRecord, ...]:
 
 def _parse_assignments(materials: Mapping[str, Any]) -> Tuple[MaterialAssignment, ...]:
     assignments = []
+    first_offsets: Dict[str, int] = {}
     for offset, raw_assignment in enumerate(
         _sequence(materials.get("assignments", []), "materials.assignments")
     ):
         item = _mapping(raw_assignment, "materials.assignments[{0}]".format(offset))
+        object_id = _text(
+            item.get("object_id"),
+            "materials.assignments[{0}].object_id".format(offset),
+        )
+        # At most one assignment per object: consumers key assignments by
+        # object id, so a second entry for the same object would be silently
+        # dropped when the index is built. Report both entries instead.
+        if object_id in first_offsets:
+            raise ManifestValidationError(
+                "Duplicate material assignment for object id: {0} "
+                "(materials.assignments[{1}] and materials.assignments[{2}]).".format(
+                    object_id, first_offsets[object_id], offset
+                )
+            )
+        first_offsets[object_id] = offset
         material_ref = item.get("material_ref")
         assignments.append(
             MaterialAssignment(
-                object_id=_text(
-                    item.get("object_id"),
-                    "materials.assignments[{0}].object_id".format(offset),
-                ),
+                object_id=object_id,
                 material_ref=(str(material_ref) if material_ref is not None else None),
             )
         )
@@ -199,7 +212,11 @@ def _parse_textures(raw: Mapping[str, Any]) -> Tuple[TextureRecord, ...]:
         graph_node_id = item.get("graph_node_id")
         textures.append(
             TextureRecord(
-                graph_node_id=(str(graph_node_id) if graph_node_id else None),
+                # Only None means "no graph id", matching parent_id and
+                # material_ref above. Any other value is a reference and is
+                # validated as one, so a hand-authored `0` or `""` is
+                # reported rather than silently absorbed.
+                graph_node_id=(str(graph_node_id) if graph_node_id is not None else None),
                 status=_text(item.get("status", "missing"), "textures[{0}].status".format(offset)),
                 package_path=(str(package_path) if package_path else None),
                 parameter=(str(parameter) if parameter else None),
