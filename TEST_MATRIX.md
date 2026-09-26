@@ -133,10 +133,12 @@ Coverage includes:
 - root-scoped cleanup planning and nested-group preservation;
 - explicit Multi/Sub material-ID lookup and compact BitArray generation;
 - update ZIP entry-count (`2048`) and declared-size (`16 GiB`) limits, refused
-  before extraction begins, and the guarantee that a refusal leaves an
-  already-populated destination untouched (`tests/test_installer.py`); this path
-  does not yet apply the Windows filename rules enforced on `.blendmax` packages
-  (#39);
+  before extraction begins, plus path-collision rejection (file `a` plus `a/b`),
+  the Windows filename rules enforced on `.blendmax` packages (formerly issue
+  #39) and a decompressed-byte budget over what is actually read; preflight
+  refusals leave an already-populated destination untouched, while the
+  decompressed-byte refusal can stop a member mid-write
+  (`tests/test_installer.py`);
 - Multi/Sub material-list length mismatch detection instead of silent truncation
   (`tests/test_max_cleanup_slots.py`);
 - 3ds Max version-string parsing, including an update token carrying trailing

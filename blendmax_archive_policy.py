@@ -27,7 +27,7 @@ from __future__ import annotations
 import stat
 import zipfile
 from pathlib import PurePosixPath
-from typing import Iterable, NamedTuple
+from typing import Iterable, NamedTuple, Optional, Tuple
 
 # Enforced by both consumers before anything touches the disk. These used to be
 # duplicated in blendmax_blender/package.py and blendmax_install.py with a drift
@@ -167,6 +167,61 @@ def folded_path(cleaned: str) -> str:
     return cleaned.casefold()
 
 
+class PathCollision(NamedTuple):
+    """A file path that another archive entry needs to be a directory.
+
+    ``file_path`` is the entry that is a file; ``other_path`` is the entry it
+    collides with: a member beneath ``file_path`` (``a`` and ``a/b``), or the
+    same string twice when the archive also carries an explicit directory
+    entry for a path it lists as a file (``a`` and ``a/``).
+    """
+
+    file_path: str
+    other_path: str
+
+
+def find_path_collision(
+    entries: Iterable[Tuple[str, bool]],
+) -> Optional[PathCollision]:
+    """Find the first file/path collision in ``entries``, or ``None``.
+
+    ``entries`` are ``(cleaned_path, is_directory)`` pairs in archive order,
+    which is what both consumers collect while validating members. An archive
+    entry may be a file or a directory, never both: a file whose path is also
+    a proper prefix of any other entry -- or whose path another entry declares
+    as a directory -- is one path declared as both. That is fatal on a
+    consumer that extracts every member: extraction fails partway through,
+    after some members have already been written. On a consumer that extracts
+    selectively it is still malformed by declaration, even though nothing
+    would have collided on disk (the file member may never be extracted
+    itself). The layout can be refused before the first write instead.
+
+    Comparison folds case, for the same reason :func:`folded_path` does:
+    Windows and macOS resolve ``a`` and ``A/b`` to the same pair of paths.
+    Exact duplicate names are not this helper's concern -- both consumers
+    already reject those separately, which keeps their error precedence.
+    """
+
+    items = list(entries)
+    folded = [folded_path(path) for path, _ in items]
+    directory_names = {
+        folded[index] for index, (_, is_dir) in enumerate(items) if is_dir
+    }
+    for index, (path, is_dir) in enumerate(items):
+        if is_dir:
+            continue
+        key = folded[index]
+        if key in directory_names:
+            return PathCollision(path, path)
+        prefix = key + "/"
+        for other_index, other_folded in enumerate(folded):
+            # A path never matches its own prefix -- the prefix carries the
+            # extra separator -- so no self-exclusion is needed.
+            if other_folded.startswith(prefix):
+                return PathCollision(path, items[other_index][0])
+    return None
+
+
 def declared_uncompressed_bytes(infos: Iterable[zipfile.ZipInfo]) -> int:
     """Total bytes the members declare they expand to.
 
@@ -175,3 +230,30 @@ def declared_uncompressed_bytes(infos: Iterable[zipfile.ZipInfo]) -> int:
     """
 
     return sum(info.file_size for info in infos)
+
+
+class ByteBudget:
+    """A cumulative decompressed-byte budget for one extraction operation.
+
+    This is the shared half of the actual-byte limit: :meth:`reserve` decides
+    whether a chunk fits, and nothing here raises, so each consumer keeps its
+    own exception type and wording. Callers are expected to write only the
+    chunks :meth:`reserve` accepted -- that is what makes "never beyond the
+    limit" a property of the write loops rather than a hope.
+    """
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self.used = 0
+
+    def reserve(self, size: int) -> bool:
+        """Accept ``size`` bytes if the total still fits; otherwise refuse.
+
+        A refused reservation changes nothing, so a caller that stops on the
+        first refusal has written exactly :attr:`used` bytes at that point.
+        """
+
+        if self.used + size > self.limit:
+            return False
+        self.used += size
+        return True
