@@ -1,34 +1,14 @@
 from __future__ import annotations
 
-import importlib.util
-import sys
 import unittest
-from pathlib import Path
-from types import ModuleType, SimpleNamespace
-from unittest.mock import patch
+from types import SimpleNamespace
 
 from blendmax_blender.models import ObjectRecord
 
-
-class FakeVector:
-    def __init__(self, values):
-        self.values = [float(value) for value in values]
-
-    def __iter__(self):
-        return iter(self.values)
-
-    def __getitem__(self, index):
-        return self.values[index]
-
-    def __add__(self, other):
-        return FakeVector(first + second for first, second in zip(self, other))
-
-    def __sub__(self, other):
-        return FakeVector(first - second for first, second in zip(self, other))
-
-    def __isub__(self, other):
-        self.values = [first - second for first, second in zip(self, other)]
-        return self
+try:
+    from fakes import FakeVector, load_blender_module
+except ImportError:  # dotted-module invocation from the repository root
+    from tests.fakes import FakeVector, load_blender_module
 
 
 class FakeMatrix:
@@ -132,70 +112,11 @@ class FakeImportedObject:
         self.properties[key] = value
 
 
-def load_adapter():
-    fake_bpy = ModuleType("bpy")
-    fake_mathutils = ModuleType("mathutils")
-    fake_mathutils.Vector = FakeVector
-    fake_materials = ModuleType("blendmax_blender.blender_materials")
-    fake_materials.MaterialBuilder = object
-
-    adapter_path = (
-        Path(__file__).resolve().parents[1]
-        / "blendmax_blender"
-        / "blender_scene.py"
-    )
-    spec = importlib.util.spec_from_file_location(
-        "blendmax_blender.blender_scene",
-        adapter_path,
-    )
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Could not load BlendMax Blender adapter test module.")
-    module = importlib.util.module_from_spec(spec)
-    with patch.dict(
-        sys.modules,
-        {
-            "bpy": fake_bpy,
-            "mathutils": fake_mathutils,
-        },
-    ):
-        spec.loader.exec_module(module)
-    return module
-
-
-def load_materials():
-    """Load the owning module for the material seam used here."""
-
-    fake_bpy = ModuleType("bpy")
-    fake_mathutils = ModuleType("mathutils")
-    fake_mathutils.Vector = FakeVector
-    materials_path = (
-        Path(__file__).resolve().parents[1]
-        / "blendmax_blender"
-        / "blender_materials.py"
-    )
-    spec = importlib.util.spec_from_file_location(
-        "blendmax_blender.blender_materials",
-        materials_path,
-    )
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Could not load BlendMax Blender materials module.")
-    module = importlib.util.module_from_spec(spec)
-    with patch.dict(
-        sys.modules,
-        {
-            "bpy": fake_bpy,
-            "mathutils": fake_mathutils,
-        },
-    ):
-        spec.loader.exec_module(module)
-    return module
-
-
 class BlenderAdapterPlacementTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.scene = load_adapter()
-        cls.materials = load_materials()
+        cls.scene = load_blender_module("blender_scene.py", vector=FakeVector)
+        cls.materials = load_blender_module("blender_materials.py", vector=FakeVector)
 
     def test_nested_fbx_meshes_move_to_origin_by_translating_only_the_root(self):
         root = FakeMeshObject(
