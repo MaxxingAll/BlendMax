@@ -29,23 +29,40 @@ def load_addon(module_name="blendmax_blender._addon_summary_test", config_direct
     class FakeMenu:
         pass
 
+    class FakeMenuCollection(list):
+        def append(self, item):
+            if item not in self:
+                super().append(item)
+
+        def remove(self, item):
+            if item in self:
+                super().remove(item)
+
     if config_directory is None:
         config_directory = tempfile.mkdtemp(prefix="blendmax-addon-test-")
 
     fake_bpy = ModuleType("bpy")
+    # ``TOPBAR_MT_editor_menus`` is deliberately absent: the BlendMax menu is
+    # 3D-viewport specific and must register on the viewport's menu row.
     fake_bpy.types = SimpleNamespace(
         Operator=FakeOperator,
         AddonPreferences=FakePreferences,
         Menu=FakeMenu,
+        TOPBAR_MT_file_import=FakeMenuCollection(),
+        VIEW3D_MT_editor_menus=FakeMenuCollection(),
     )
     fake_bpy.props = SimpleNamespace(
         BoolProperty=lambda **_kwargs: None,
         StringProperty=lambda **_kwargs: None,
     )
+    registered_classes = []
+    unregistered_classes = []
     fake_bpy.utils = SimpleNamespace(
         user_resource=lambda _resource_type, path="", create=False: str(
             config_directory
         ),
+        register_class=registered_classes.append,
+        unregister_class=unregistered_classes.append,
     )
     fake_extras = ModuleType("bpy_extras")
     fake_io_utils = ModuleType("bpy_extras.io_utils")
@@ -70,6 +87,8 @@ def load_addon(module_name="blendmax_blender._addon_summary_test", config_direct
     ):
         spec.loader.exec_module(module)
     module._test_config_directory = str(config_directory)
+    module._test_registered_classes = registered_classes
+    module._test_unregistered_classes = unregistered_classes
     return module
 
 
@@ -412,6 +431,43 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
             ],
         )
         self.assertEqual(notice_layout.labels, [])
+
+
+class BlendMaxMenuRegistrationTests(unittest.TestCase):
+    """The BlendMax menu belongs on the 3D viewport's menu row, not the top bar."""
+
+    def setUp(self):
+        self.addon = load_addon()
+        self.addon.register()
+
+    def tearDown(self):
+        self.addon.unregister()
+
+    def test_blendmax_menu_registers_on_the_3d_viewport_menu_row(self):
+        types = self.addon.bpy.types
+        self.assertIn(self.addon._menu_blendmax, types.VIEW3D_MT_editor_menus)
+        self.assertIn(self.addon._menu_import, types.TOPBAR_MT_file_import)
+
+    def test_unregister_removes_the_viewport_menu(self):
+        self.addon.unregister()
+        types = self.addon.bpy.types
+        self.assertNotIn(self.addon._menu_blendmax, types.VIEW3D_MT_editor_menus)
+        self.assertNotIn(self.addon._menu_import, types.TOPBAR_MT_file_import)
+
+    def test_remove_measurement_cage_operator_is_registered(self):
+        self.assertIn(
+            self.addon.BLENDMAX_OT_remove_measurement_cage,
+            self.addon._CLASSES,
+        )
+        self.assertEqual(
+            self.addon.BLENDMAX_OT_remove_measurement_cage.bl_idname,
+            "blendmax.remove_measurement_cage",
+        )
+        self.assertEqual(
+            self.addon._test_registered_classes,
+            list(self.addon._CLASSES),
+        )
+        self.assertEqual(self.addon._test_unregistered_classes, [])
 
 
 if __name__ == "__main__":

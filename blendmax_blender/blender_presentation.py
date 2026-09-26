@@ -20,7 +20,7 @@ _KIND_KEY = "blendmax_presentation_kind"
 _KIND_CAGE = "cage"
 _KIND_LABEL = "label"
 _SOURCE_KEY = "blendmax_measurement_source"
-_DIMENSION_NAMES = ("Width", "Depth", "Height")
+_DIMENSION_KEY = "blendmax_measurement_dimension"
 
 
 def _is_cage_object(obj) -> bool:
@@ -54,6 +54,22 @@ def _link_only_to(obj, collection) -> None:
             current.objects.unlink(obj)
 
 
+def _remove_object(obj) -> None:
+    """Remove an object and free its datablock once nothing else uses it."""
+
+    data = getattr(obj, "data", None)
+    datablocks = {
+        "MESH": "meshes",
+        "CURVE": "curves",
+        "FONT": "curves",
+    }
+    collection_name = datablocks.get(getattr(obj, "type", ""))
+    bpy.data.objects.remove(obj, do_unlink=True)
+    if data is None or collection_name is None or getattr(data, "users", 0) != 0:
+        return
+    getattr(bpy.data, collection_name).remove(data)
+
+
 def _get_or_create_cage(collection):
     cage = next(
         (
@@ -73,7 +89,7 @@ def _get_or_create_cage(collection):
         _link_only_to(cage, collection)
         if cage.type != "MESH" or cage.data is None:
             old_name = cage.name
-            bpy.data.objects.remove(cage, do_unlink=True)
+            _remove_object(cage)
             mesh = bpy.data.meshes.new(old_name)
             cage = bpy.data.objects.new(old_name, mesh)
             cage[_TOOL_KEY] = _TOOL_VALUE
@@ -82,22 +98,24 @@ def _get_or_create_cage(collection):
     return cage
 
 
-def _get_or_create_label(collection, name):
+def _get_or_create_label(collection, dimension):
     label = next(
         (
             obj
             for obj in bpy.data.objects
-            if obj.name == name
-            and _is_cage_object(obj)
+            if _is_cage_object(obj)
             and obj.get(_KIND_KEY) == _KIND_LABEL
+            and obj.get(_DIMENSION_KEY) == dimension
         ),
         None,
     )
     if label is None:
+        name = "BlendMax Measurement {0}".format(dimension)
         curve = bpy.data.curves.new(name, type="FONT")
         label = bpy.data.objects.new(name, curve)
         label[_TOOL_KEY] = _TOOL_VALUE
         label[_KIND_KEY] = _KIND_LABEL
+        label[_DIMENSION_KEY] = dimension
         collection.objects.link(label)
     else:
         _link_only_to(label, collection)
@@ -129,36 +147,41 @@ def _update_mesh(cage, bounds, divisions):
     vertices, edges = cage_geometry(_bounds_pair(bounds), divisions)
     mesh = cage.data
     mesh.clear_geometry()
-    mesh.from_pydata(vertices, [], edges)
+    mesh.from_pydata(vertices, edges, [])
     mesh.update()
 
 
-def _hide_extra_labels(visible_names):
+def _hide_extra_labels(visible_dimensions):
     for obj in bpy.data.objects:
-        if _is_cage_object(obj) and obj.name not in visible_names:
+        if not _is_cage_object(obj) or obj.get(_KIND_KEY) == _KIND_CAGE:
+            continue
+        if obj.get(_DIMENSION_KEY) not in visible_dimensions:
             obj.hide_set(True)
 
 
 def create_measurement_cage(context, *, margin=0.0, divisions=(1, 1, 1), show_dimensions=True, in_front=True):
     """Create or update the single BlendMax measurement cage for the selection."""
     active = context.view_layer.objects.active
+    source = None
     if active is not None and _is_cage_object(active):
+        # Re-running with the cage active reuses its stored source; when that
+        # object is gone (deleted or renamed), fall back to the selection so
+        # the cage can re-target instead of failing outright.
         source_name = active.get(_SOURCE_KEY)
-        source = bpy.data.objects.get(source_name) if source_name else None
-        roots = [source] if source is not None else []
-    else:
-        source = active if active is not None and not _is_cage_object(active) else None
-        if source is None:
-            source = next(
-                (obj for obj in context.selected_objects if not _is_cage_object(obj)),
-                None,
-            )
-        roots = [source] if source is not None else []
+        if source_name:
+            source = bpy.data.objects.get(source_name)
+    elif active is not None:
+        source = active
+    if source is None:
+        source = next(
+            (obj for obj in context.selected_objects if not _is_cage_object(obj)),
+            None,
+        )
 
-    if not roots or source is None:
+    if source is None:
         raise ValueError("Select a BlendMax asset/object with mesh geometry first.")
 
-    bounds = presentation_bounds(roots, source_root=source.name)
+    bounds = presentation_bounds([source], source_root=source.name)
     if bounds is None:
         raise ValueError("The selected object/asset has no valid mesh geometry.")
 
@@ -180,7 +203,7 @@ def create_measurement_cage(context, *, margin=0.0, divisions=(1, 1, 1), show_di
     cage.display_type = "WIRE"
     cage.hide_set(False)
 
-    label_names = []
+    visible_dimensions = set()
     if show_dimensions:
         width, depth, height = bounds.dimensions
         extent = max(max(bounds.dimensions), 1e-3)
@@ -194,10 +217,10 @@ def create_measurement_cage(context, *, margin=0.0, divisions=(1, 1, 1), show_di
         )
         size = min(max(extent * 0.06, 0.02), 0.5)
         for dimension_name, text, location, rotation in label_specs:
-            label = _get_or_create_label(collection, "BlendMax Measurement {0}".format(dimension_name))
+            label = _get_or_create_label(collection, dimension_name)
             _configure_label(label, text, location, rotation, size, in_front)
-            label_names.append(label.name)
-    _hide_extra_labels(set(label_names) | {_CAGE_NAME})
+            visible_dimensions.add(dimension_name)
+    _hide_extra_labels(visible_dimensions)
 
     for obj in context.selected_objects:
         obj.select_set(False)
@@ -206,11 +229,27 @@ def create_measurement_cage(context, *, margin=0.0, divisions=(1, 1, 1), show_di
     return cage, bounds
 
 
-def remove_measurement_cage() -> None:
-    """Remove the BlendMax measurement cage and its dimension labels."""
+def remove_measurement_cage() -> int:
+    """Remove the BlendMax measurement cage and all of its supporting objects.
+
+    Objects are removed together with their mesh/curve datablocks once
+    nothing else uses them, and the presentation collection is removed when
+    it is left empty. Returns the number of removed objects.
+    """
+
+    removed = 0
     for obj in tuple(bpy.data.objects):
         if _is_cage_object(obj):
-            bpy.data.objects.remove(obj, do_unlink=True)
-    collection = next((item for item in bpy.data.collections if item.get(_COLLECTION_KEY) == _COLLECTION_VALUE), None)
+            _remove_object(obj)
+            removed += 1
+    collection = next(
+        (
+            item
+            for item in bpy.data.collections
+            if item.get(_COLLECTION_KEY) == _COLLECTION_VALUE
+        ),
+        None,
+    )
     if collection is not None and not collection.objects and not collection.children:
         bpy.data.collections.remove(collection)
+    return removed

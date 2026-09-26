@@ -361,6 +361,28 @@ class BLENDMAX_OT_create_measurement_cage(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class BLENDMAX_OT_remove_measurement_cage(bpy.types.Operator):
+    """Remove the BlendMax measurement cage and its dimension labels."""
+
+    bl_idname = "blendmax.remove_measurement_cage"
+    bl_label = "Remove Measurement Cage"
+    bl_description = (
+        "Remove the BlendMax measurement cage, its dimension labels, and "
+        "their datablocks"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, _context):
+        from .blender_presentation import remove_measurement_cage
+
+        removed = remove_measurement_cage()
+        if removed:
+            self.report({"INFO"}, "Measurement Cage removed.")
+        else:
+            self.report({"INFO"}, "No BlendMax measurement cage to remove.")
+        return {"FINISHED"}
+
+
 class BLENDMAX_MT_presentation(bpy.types.Menu):
     bl_idname = "BLENDMAX_MT_presentation"
     bl_label = "Presentation"
@@ -370,6 +392,11 @@ class BLENDMAX_MT_presentation(bpy.types.Menu):
             BLENDMAX_OT_create_measurement_cage.bl_idname,
             text="Create Measurement Cage",
             icon="CUBE",
+        )
+        self.layout.operator(
+            BLENDMAX_OT_remove_measurement_cage.bl_idname,
+            text="Remove Measurement Cage",
+            icon="TRASH",
         )
 
 
@@ -453,6 +480,7 @@ _CLASSES = (
     BLENDMAX_OT_hot_reload,
     BLENDMAX_OT_import_asset,
     BLENDMAX_OT_create_measurement_cage,
+    BLENDMAX_OT_remove_measurement_cage,
     BLENDMAX_MT_presentation,
     BLENDMAX_MT_main,
 )
@@ -466,11 +494,11 @@ def register() -> None:
     for item in _CLASSES:
         bpy.utils.register_class(item)
     bpy.types.TOPBAR_MT_file_import.append(_menu_import)
-    bpy.types.TOPBAR_MT_editor_menus.append(_menu_blendmax)
+    bpy.types.VIEW3D_MT_editor_menus.append(_menu_blendmax)
 
 
 def unregister() -> None:
-    bpy.types.TOPBAR_MT_editor_menus.remove(_menu_blendmax)
+    bpy.types.VIEW3D_MT_editor_menus.remove(_menu_blendmax)
     bpy.types.TOPBAR_MT_file_import.remove(_menu_import)
     for item in reversed(_CLASSES):
         bpy.utils.unregister_class(item)

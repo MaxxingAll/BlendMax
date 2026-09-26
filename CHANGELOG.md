@@ -13,10 +13,11 @@ called out separately from automated coverage.
   divisions, world-space margin, in-front visibility, and width/depth/height
   labels are configurable from the operator. The cage is hidden from renders
   and re-running the command updates the existing BlendMax presentation cage
-  instead of accumulating duplicates.
+  instead of accumulating duplicates. A companion **BlendMax > Presentation >
+  Remove Measurement Cage** command removes the cage, its labels, and their
+  datablocks, and the BlendMax menu is registered in the 3D Viewport header.
 
 ### Fixed
-
 
 - Fixed a regression where every face on an imported mesh with a manifest
   material assignment silently collapsed onto material slot 0, discarding

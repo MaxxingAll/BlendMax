@@ -1,0 +1,464 @@
+"""Blender-side contract tests for the Measurement Cage tool module.
+
+``blender_presentation`` runs against a small fake ``bpy``: a scene
+collection, one presentation collection, mesh/curve datablocks with user
+counts, and the object/property surface the module touches. The geometry
+math itself lives in ``test_presentation_cage.py``; these tests cover the
+Blender glue: datablock ownership, the remove teardown, source fallback and
+re-targeting, and label reuse by custom property.
+"""
+
+from __future__ import annotations
+
+import unittest
+from types import SimpleNamespace
+
+from blendmax_blender.presentation_cage import cage_geometry
+
+try:
+    from fakes import FakeMatrix, FakeVector, load_blender_module
+except ImportError:  # dotted-module invocation from the repository root
+    from tests.fakes import FakeMatrix, FakeVector, load_blender_module
+
+
+_CUBE_CORNERS = (
+    (-0.5, -0.5, -0.5),
+    (0.5, -0.5, -0.5),
+    (0.5, 0.5, -0.5),
+    (-0.5, 0.5, -0.5),
+    (-0.5, -0.5, 0.5),
+    (0.5, -0.5, 0.5),
+    (0.5, 0.5, 0.5),
+    (-0.5, 0.5, 0.5),
+)
+
+
+class FakeDataBlock:
+    """Mesh/FONT-curve datablock with Blender's user-count semantics."""
+
+    def __init__(self, name, kind):
+        self.name = name
+        self.kind = kind
+        self.users = 0
+        self.vertices = []
+        self.edges = []
+        self.faces = []
+        self.from_pydata_calls = []
+
+    def clear_geometry(self):
+        self.vertices = []
+        self.edges = []
+        self.faces = []
+
+    def from_pydata(self, vertices, edges, faces):
+        self.from_pydata_calls.append((list(vertices), list(edges), list(faces)))
+        self.vertices = list(vertices)
+        self.edges = list(edges)
+        self.faces = list(faces)
+
+    def update(self):
+        pass
+
+
+class FakeDataManager(list):
+    def __init__(self, kind):
+        super().__init__()
+        self.kind = kind
+
+    def new(self, name, type=None):
+        datablock = FakeDataBlock(name, type or self.kind)
+        self.append(datablock)
+        return datablock
+
+    def get(self, name):
+        return next((item for item in self if item.name == name), None)
+
+
+class FakeObject:
+    def __init__(self, name, data):
+        self.name = name
+        self.data = data
+        if data is not None:
+            data.users += 1
+        self.type = data.kind if data is not None else "EMPTY"
+        self.users_collection = []
+        self.children = []
+        self.hide_render = False
+        self.show_in_front = False
+        self.display_type = "TEXTURED"
+        self.hide_viewport = False
+        self.selected = False
+        self.location = (0.0, 0.0, 0.0)
+        self.rotation_mode = "XYZ"
+        self.rotation_euler = (0.0, 0.0, 0.0)
+        self.bound_box = _CUBE_CORNERS
+        self._properties = {}
+
+    @property
+    def matrix_world(self):
+        return FakeMatrix.translation_scale(self.location, (1.0, 1.0, 1.0))
+
+    def get(self, key, default=None):
+        return self._properties.get(key, default)
+
+    def __setitem__(self, key, value):
+        self._properties[key] = value
+
+    def __getitem__(self, key):
+        return self._properties[key]
+
+    def hide_set(self, state):
+        self.hide_viewport = bool(state)
+
+    def select_set(self, state):
+        self.selected = bool(state)
+
+
+class FakeObjectManager(list):
+    def new(self, name, data):
+        obj = FakeObject(name, data)
+        self.append(obj)
+        return obj
+
+    def remove(self, obj, do_unlink=True):
+        if do_unlink:
+            for collection in tuple(obj.users_collection):
+                collection.objects.unlink(obj)
+        if obj.data is not None:
+            obj.data.users -= 1
+        list.remove(self, obj)
+
+    def get(self, name):
+        return next((item for item in self if item.name == name), None)
+
+
+class FakeCollectionObjects(list):
+    def __init__(self, collection):
+        super().__init__()
+        self.collection = collection
+
+    def link(self, obj):
+        if obj not in self:
+            self.append(obj)
+        if self.collection not in obj.users_collection:
+            obj.users_collection.append(self.collection)
+
+    def unlink(self, obj):
+        if obj in self:
+            self.remove(obj)
+        if self.collection in obj.users_collection:
+            obj.users_collection.remove(self.collection)
+
+
+class FakeChildren(list):
+    def link(self, item):
+        if item not in self:
+            self.append(item)
+
+
+class FakeCollection:
+    def __init__(self, name):
+        self.name = name
+        self.objects = FakeCollectionObjects(self)
+        self.children = FakeChildren()
+        self._properties = {}
+
+    def get(self, key, default=None):
+        return self._properties.get(key, default)
+
+    def __setitem__(self, key, value):
+        self._properties[key] = value
+
+
+class FakeCollectionManager(list):
+    def new(self, name):
+        collection = FakeCollection(name)
+        self.append(collection)
+        return collection
+
+
+class FakeBpyData:
+    def __init__(self):
+        self.meshes = FakeDataManager("MESH")
+        self.curves = FakeDataManager("FONT")
+        self.objects = FakeObjectManager()
+        self.collections = FakeCollectionManager()
+
+
+class FakeBpy:
+    """Just enough ``bpy`` for the Measurement Cage tool module."""
+
+    def __init__(self):
+        self.data = FakeBpyData()
+        self.scene_collection = FakeCollection("Scene Collection")
+
+
+class MeasurementCageToolTests(unittest.TestCase):
+    def setUp(self):
+        self.bpy = FakeBpy()
+        self.context = SimpleNamespace(
+            scene=SimpleNamespace(collection=self.bpy.scene_collection),
+            view_layer=SimpleNamespace(objects=SimpleNamespace(active=None)),
+            selected_objects=[],
+        )
+        self.module = load_blender_module(
+            "blender_presentation.py", vector=FakeVector, bpy=self.bpy
+        )
+
+    def _add_source(self, name, location=(0.0, 0.0, 0.0), scale=(1.0, 1.0, 1.0)):
+        mesh = self.bpy.data.meshes.new(name)
+        mesh.vertices = [(0.0, 0.0, 0.0)]
+        obj = self.bpy.data.objects.new(name, mesh)
+        obj.location = location
+        obj.bound_box = tuple(
+            tuple(value * factor for value, factor in zip(corner, scale))
+            for corner in _CUBE_CORNERS
+        )
+        return obj
+
+    def _create(self, **kwargs):
+        return self.module.create_measurement_cage(self.context, **kwargs)
+
+    def _tool_objects(self, kind=None):
+        return [
+            obj
+            for obj in self.bpy.data.objects
+            if obj.get("blendmax_presentation_tool") == "measurement_cage"
+            and (kind is None or obj.get("blendmax_presentation_kind") == kind)
+        ]
+
+    def test_cage_is_built_from_the_edge_list_and_hidden_from_renders(self):
+        source = self._add_source("Chair")
+        self.context.selected_objects = [source]
+
+        cage, bounds = self._create(margin=0.25, divisions=(2, 1, 1))
+
+        self.assertEqual(tuple(bounds.dimensions), (1.0, 1.0, 1.0))
+        self.assertIs(cage.data, self.bpy.data.meshes.get("BlendMax Measurement Cage"))
+        cage_bounds = bounds.expanded(0.25)
+        expected_vertices, expected_edges = cage_geometry(
+            (
+                tuple(float(value) for value in cage_bounds.minimum),
+                tuple(float(value) for value in cage_bounds.maximum),
+            ),
+            (2, 1, 1),
+        )
+        vertices, edges, faces = cage.data.from_pydata_calls[-1]
+        self.assertEqual(
+            sorted(tuple(point) for point in vertices),
+            sorted(tuple(point) for point in expected_vertices),
+        )
+        self.assertEqual(
+            sorted(tuple(edge) for edge in edges),
+            sorted(tuple(edge) for edge in expected_edges),
+        )
+        self.assertEqual(faces, [])
+        self.assertEqual(len(vertices), 12)
+
+        self.assertTrue(cage.hide_render)
+        self.assertEqual(cage.display_type, "WIRE")
+        self.assertTrue(cage.show_in_front)
+        self.assertFalse(cage.hide_viewport)
+        self.assertEqual(cage["blendmax_measurement_margin"], 0.25)
+        self.assertEqual(cage["blendmax_measurement_divisions"], (2, 1, 1))
+        self.assertEqual(cage["blendmax_measurement_dimensions"], (1.0, 1.0, 1.0))
+        self.assertEqual(cage["blendmax_measurement_source"], "Chair")
+
+    def test_cage_and_labels_live_in_the_presentation_collection(self):
+        source = self._add_source("Chair")
+        self.context.selected_objects = [source]
+
+        self._create()
+
+        self.assertEqual(len(self.bpy.data.collections), 1)
+        collection = self.bpy.data.collections[0]
+        self.assertEqual(
+            collection.get("blendmax_presentation_collection"), "presentation"
+        )
+        self.assertIn(collection, self.bpy.scene_collection.children)
+        tool_objects = self._tool_objects()
+        self.assertEqual(len(tool_objects), 4)
+        for obj in tool_objects:
+            self.assertIn(collection, obj.users_collection)
+
+    def test_rerun_updates_the_same_cage_and_labels(self):
+        source = self._add_source("Chair")
+        self.context.selected_objects = [source]
+
+        first_cage, _ = self._create()
+        object_count = len(self.bpy.data.objects)
+        mesh_count = len(self.bpy.data.meshes)
+        curve_count = len(self.bpy.data.curves)
+
+        second_cage, _ = self._create()
+
+        self.assertIs(first_cage, second_cage)
+        self.assertEqual(len(self.bpy.data.objects), object_count)
+        self.assertEqual(len(self.bpy.data.meshes), mesh_count)
+        self.assertEqual(len(self.bpy.data.curves), curve_count)
+
+    def test_dimension_labels_carry_the_dimension_property(self):
+        source = self._add_source("Chair")
+        self.context.selected_objects = [source]
+
+        self._create()
+
+        labels = {
+            obj.get("blendmax_measurement_dimension"): obj
+            for obj in self._tool_objects(kind="label")
+        }
+        self.assertEqual(set(labels), {"Width", "Depth", "Height"})
+        for dimension, label in labels.items():
+            self.assertTrue(label.data.body.startswith(dimension[0] + " "))
+            self.assertTrue(label.hide_render)
+
+    def test_renamed_label_is_reused_instead_of_duplicated(self):
+        source = self._add_source("Chair")
+        self.context.selected_objects = [source]
+        self._create()
+        width_label = next(
+            obj
+            for obj in self._tool_objects(kind="label")
+            if obj.get("blendmax_measurement_dimension") == "Width"
+        )
+        width_label.name = "My Width Label"
+        object_count = len(self.bpy.data.objects)
+        curve_count = len(self.bpy.data.curves)
+
+        self._create()
+
+        self.assertEqual(len(self.bpy.data.objects), object_count)
+        self.assertEqual(len(self.bpy.data.curves), curve_count)
+        self.assertEqual(
+            [
+                obj.name
+                for obj in self._tool_objects(kind="label")
+                if obj.get("blendmax_measurement_dimension") == "Width"
+            ],
+            ["My Width Label"],
+        )
+        self.assertFalse(width_label.hide_viewport)
+
+    def test_labels_are_hidden_but_reused_when_dimensions_are_disabled(self):
+        source = self._add_source("Chair")
+        self.context.selected_objects = [source]
+        self._create()
+        labels = self._tool_objects(kind="label")
+        curve_count = len(self.bpy.data.curves)
+
+        self._create(show_dimensions=False)
+
+        self.assertEqual(len(self.bpy.data.curves), curve_count)
+        self.assertTrue(all(label.hide_viewport for label in labels))
+
+        self._create(show_dimensions=True)
+
+        self.assertEqual(len(self.bpy.data.curves), curve_count)
+        self.assertFalse(any(label.hide_viewport for label in labels))
+
+    def test_stored_source_is_kept_while_it_still_exists(self):
+        source_a = self._add_source("Chair")
+        self.context.selected_objects = [source_a]
+        cage, _ = self._create()
+        source_b = self._add_source(
+            "Bench", location=(5.0, 0.0, 0.0), scale=(2.0, 2.0, 2.0)
+        )
+
+        self.context.selected_objects = [source_b, source_a]
+        self.context.view_layer.objects.active = cage
+        self._create()
+
+        self.assertEqual(cage["blendmax_measurement_source"], "Chair")
+        self.assertEqual(cage["blendmax_measurement_dimensions"], (1.0, 1.0, 1.0))
+
+    def test_cage_re_targets_the_selection_when_stored_source_is_deleted(self):
+        source_a = self._add_source("Chair")
+        self.context.selected_objects = [source_a]
+        cage, _ = self._create()
+        self.bpy.data.objects.remove(source_a, do_unlink=True)
+        source_b = self._add_source(
+            "Bench", location=(5.0, 0.0, 0.0), scale=(2.0, 2.0, 2.0)
+        )
+
+        self.context.selected_objects = [cage, source_b]
+        self.context.view_layer.objects.active = cage
+        self._create()
+
+        self.assertEqual(cage["blendmax_measurement_source"], "Bench")
+        self.assertEqual(cage["blendmax_measurement_dimensions"], (2.0, 2.0, 2.0))
+
+    def test_cage_re_targets_the_selection_when_stored_source_was_renamed(self):
+        source_a = self._add_source("Chair")
+        self.context.selected_objects = [source_a]
+        cage, _ = self._create()
+        source_a.name = "Dining Chair"
+        source_b = self._add_source(
+            "Bench", location=(5.0, 0.0, 0.0), scale=(2.0, 2.0, 2.0)
+        )
+
+        self.context.selected_objects = [source_b]
+        self.context.view_layer.objects.active = cage
+        self._create()
+
+        self.assertEqual(cage["blendmax_measurement_source"], "Bench")
+
+    def test_cage_active_without_any_usable_source_still_fails(self):
+        source_a = self._add_source("Chair")
+        self.context.selected_objects = [source_a]
+        cage, _ = self._create()
+        self.bpy.data.objects.remove(source_a, do_unlink=True)
+
+        self.context.selected_objects = [cage]
+        self.context.view_layer.objects.active = cage
+        with self.assertRaises(ValueError):
+            self._create()
+
+    def test_remove_measurement_cage_frees_datablocks_and_collection(self):
+        source = self._add_source("Chair")
+        self.context.selected_objects = [source]
+        self._create()
+        cage_mesh = self.bpy.data.meshes.get("BlendMax Measurement Cage")
+        label_curves = list(self.bpy.data.curves)
+
+        removed = self.module.remove_measurement_cage()
+
+        self.assertEqual(removed, 4)
+        self.assertNotIn(cage_mesh, self.bpy.data.meshes)
+        self.assertEqual(list(self.bpy.data.curves), [])
+        self.assertEqual(label_curves[0].users, 0)
+        self.assertEqual(list(self.bpy.data.collections), [])
+        self.assertIsNone(self.bpy.data.objects.get("BlendMax Measurement Cage"))
+        self.assertEqual(list(self.bpy.data.objects), [source])
+
+    def test_remove_without_a_cage_is_a_no_op(self):
+        self.assertEqual(self.module.remove_measurement_cage(), 0)
+        self.assertEqual(list(self.bpy.data.collections), [])
+
+    def test_recreating_a_non_mesh_cage_frees_the_stale_datablock(self):
+        collection = self.bpy.data.collections.new("BlendMax Presentation")
+        collection["blendmax_presentation_collection"] = "presentation"
+        self.bpy.scene_collection.children.link(collection)
+        stale_curve = self.bpy.data.curves.new(
+            "BlendMax Measurement Cage", type="FONT"
+        )
+        corrupt_cage = self.bpy.data.objects.new(
+            "BlendMax Measurement Cage", stale_curve
+        )
+        corrupt_cage["blendmax_presentation_tool"] = "measurement_cage"
+        corrupt_cage["blendmax_presentation_kind"] = "cage"
+        collection.objects.link(corrupt_cage)
+
+        source = self._add_source("Chair")
+        self.context.selected_objects = [source]
+
+        cage, _ = self._create()
+
+        self.assertIsNot(cage, corrupt_cage)
+        self.assertEqual(cage.type, "MESH")
+        self.assertNotIn(stale_curve, self.bpy.data.curves)
+        self.assertIsNotNone(self.bpy.data.meshes.get("BlendMax Measurement Cage"))
+        self.assertNotIn(corrupt_cage, self.bpy.data.objects)
+
+
+if __name__ == "__main__":
+    unittest.main()
