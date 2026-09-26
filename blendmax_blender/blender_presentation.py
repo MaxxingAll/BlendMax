@@ -147,8 +147,13 @@ def create_measurement_cage(context, *, margin=0.0, divisions=(1, 1, 1), show_di
         source = bpy.data.objects.get(source_name) if source_name else None
         roots = [source] if source is not None else []
     else:
-        roots = [obj for obj in context.selected_objects if not _is_cage_object(obj)]
-        source = active if active in roots else (roots[0] if roots else None)
+        source = active if active is not None and not _is_cage_object(active) else None
+        if source is None:
+            source = next(
+                (obj for obj in context.selected_objects if not _is_cage_object(obj)),
+                None,
+            )
+        roots = [source] if source is not None else []
 
     if not roots or source is None:
         raise ValueError("Select a BlendMax asset/object with mesh geometry first.")
