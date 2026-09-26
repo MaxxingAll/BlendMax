@@ -14,6 +14,7 @@ from bpy_extras.io_utils import ImportHelper
 
 from .errors import BlendMaxImportError
 from .importer import import_blendmax
+from .blender_presentation import create_measurement_cage
 from .models import ImportSummary
 from .restart_notice import (
     hot_reload_consumed_for_current_process,
@@ -286,6 +287,106 @@ def _print_import_summary(summary: ImportSummary, elapsed_seconds: float) -> Non
     print(separator)
 
 
+class BLENDMAX_OT_create_measurement_cage(bpy.types.Operator):
+    """Create or update the viewport-only BlendMax measurement cage."""
+
+    bl_idname = "blendmax.create_measurement_cage"
+    bl_label = "Create Measurement Cage"
+    bl_description = (
+        "Create or update a viewport-only measurement cage around the selected "
+        "asset/object"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    margin: bpy.props.FloatProperty(
+        name="Margin",
+        description="Additional world-space margin around the asset bounds",
+        default=0.0,
+        min=0.0,
+        soft_max=10.0,
+        subtype="DISTANCE",
+    )
+    divisions_x: bpy.props.IntProperty(
+        name="X Divisions",
+        description="Number of segments along the X axis",
+        default=1,
+        min=1,
+        max=100,
+    )
+    divisions_y: bpy.props.IntProperty(
+        name="Y Divisions",
+        description="Number of segments along the Y axis",
+        default=1,
+        min=1,
+        max=100,
+    )
+    divisions_z: bpy.props.IntProperty(
+        name="Z Divisions",
+        description="Number of segments along the Z axis",
+        default=1,
+        min=1,
+        max=100,
+    )
+    show_dimensions: bpy.props.BoolProperty(
+        name="Display Dimensions",
+        description="Show width, depth and height measurement labels",
+        default=True,
+    )
+    in_front: bpy.props.BoolProperty(
+        name="In Front",
+        description="Keep the cage and dimension labels visible through scene geometry",
+        default=True,
+    )
+
+    def execute(self, context):
+        try:
+            _cage, bounds = create_measurement_cage(
+                context,
+                margin=self.margin,
+                divisions=(self.divisions_x, self.divisions_y, self.divisions_z),
+                show_dimensions=self.show_dimensions,
+                in_front=self.in_front,
+            )
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+
+        self.report(
+            {"INFO"},
+            "Measurement Cage: W {0:.3f} m, D {1:.3f} m, H {2:.3f} m.".format(
+                *bounds.dimensions
+            ),
+        )
+        return {"FINISHED"}
+
+
+class BLENDMAX_MT_presentation(bpy.types.Menu):
+    bl_idname = "BLENDMAX_MT_presentation"
+    bl_label = "Presentation"
+
+    def draw(self, _context):
+        self.layout.operator(
+            BLENDMAX_OT_create_measurement_cage.bl_idname,
+            text="Create Measurement Cage",
+            icon="CUBE",
+        )
+
+
+class BLENDMAX_MT_main(bpy.types.Menu):
+    bl_idname = "BLENDMAX_MT_main"
+    bl_label = "BlendMax"
+
+    def draw(self, _context):
+        self.layout.menu(
+            BLENDMAX_MT_presentation.bl_idname,
+            icon="SCENE_DATA",
+        )
+
+
+def _menu_blendmax(self, _context) -> None:
+    self.layout.menu(BLENDMAX_MT_main.bl_idname)
+
+
 class BLENDMAX_OT_import_asset(bpy.types.Operator, ImportHelper):
     bl_idname = "import_scene.blendmax_asset"
     bl_label = "Import BlendMax Asset"
@@ -350,6 +451,9 @@ _CLASSES = (
     BLENDMAX_OT_restart_blender_notice,
     BLENDMAX_OT_hot_reload,
     BLENDMAX_OT_import_asset,
+    BLENDMAX_OT_create_measurement_cage,
+    BLENDMAX_MT_presentation,
+    BLENDMAX_MT_main,
 )
 
 
@@ -361,9 +465,11 @@ def register() -> None:
     for item in _CLASSES:
         bpy.utils.register_class(item)
     bpy.types.TOPBAR_MT_file_import.append(_menu_import)
+    bpy.types.TOPBAR_MT_editor_menus.append(_menu_blendmax)
 
 
 def unregister() -> None:
+    bpy.types.TOPBAR_MT_editor_menus.remove(_menu_blendmax)
     bpy.types.TOPBAR_MT_file_import.remove(_menu_import)
     for item in reversed(_CLASSES):
         bpy.utils.unregister_class(item)
