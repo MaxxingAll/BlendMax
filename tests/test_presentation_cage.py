@@ -22,7 +22,7 @@ class MeasurementCageGeometryTests(unittest.TestCase):
             (2, 3, 4),
         )
         self.assertEqual(len(vertices), 32)
-        self.assertEqual(len(edges), 34)
+        self.assertEqual(len(edges), 36)
         self.assertIn((0.0, 0.0, 0.0), vertices)
         self.assertIn((2.0, 3.0, 4.0), vertices)
 
