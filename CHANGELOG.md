@@ -6,7 +6,17 @@ called out separately from automated coverage.
 
 ## Blender Importer 0.1.9 — Unreleased
 
+### Added
+
+- Adds **BlendMax > Presentation > Create Measurement Cage**, a viewport-only
+  world-axis cage generated from the shared presentation bounds. X/Y/Z
+  divisions, world-space margin, in-front visibility, and width/depth/height
+  labels are configurable from the operator. The cage is hidden from renders
+  and re-running the command updates the existing BlendMax presentation cage
+  instead of accumulating duplicates.
+
 ### Fixed
+
 
 - Fixed a regression where every face on an imported mesh with a manifest
   material assignment silently collapsed onto material slot 0, discarding
