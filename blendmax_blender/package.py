@@ -117,8 +117,9 @@ def _validated_members(archive: zipfile.ZipFile) -> Dict[str, zipfile.ZipInfo]:
     # mid-extraction": open_blendmax extracts only declared import data, so an
     # unreferenced member that shadows a declared path (a file "extra" vs a
     # texture "extra/x.png") is refused here even though nothing would have
-    # collided on disk. A layout that makes a declared path unreachable is
-    # malformed in itself, and normal exporter output cannot produce it.
+    # collided on disk. The declaration itself is malformed -- one path named
+    # as both a file and a directory -- and normal exporter output cannot
+    # produce it.
     collision = archive_policy.find_path_collision(layout)
     if collision is not None:
         raise PackageValidationError(_collision_message(collision))

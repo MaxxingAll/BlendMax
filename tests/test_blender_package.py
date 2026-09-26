@@ -530,7 +530,7 @@ class ArchivePathCollisionTests(unittest.TestCase):
         # package imported fine before #50 because open_blendmax extracts
         # only declared import data, so the shadowing file member "extra"
         # never landed and nothing collided on disk. It is refused anyway --
-        # the archive layout makes a declared texture path unreachable, and
+        # the archive names one path as both a file and a directory, and
         # normal exporter output cannot produce the shape.
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "Shadow.blendmax"

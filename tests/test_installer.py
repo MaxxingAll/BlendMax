@@ -26,7 +26,10 @@ from blendmax_install import (
     install_from_source,
     install_from_zip,
 )
-from fakes import _InflatingStream, _PumpingStream, _stream_for
+try:
+    from fakes import _InflatingStream, _PumpingStream, _stream_for
+except ImportError:  # dotted-module invocation from the repository root
+    from tests.fakes import _InflatingStream, _PumpingStream, _stream_for
 from tools import build_release as release_builder
 
 
