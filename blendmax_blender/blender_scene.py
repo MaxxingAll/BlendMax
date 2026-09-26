@@ -4,6 +4,10 @@ Everything here operates on plain Blender objects and the manifest records that
 describe them. Split out of ``blender_adapter``: this module imports neither the
 adapter facade nor any material code.
 
+The ``presentation_bounds()`` helper gathers the world-space bounds shared by
+the presentation tools (#45/#46); the pure data type and math live in
+``presentation``.
+
 ``bpy`` is only touched inside function bodies. Several tests load this module
 with a bare ``bpy`` stub, so module-level ``bpy.<attribute>`` access would break
 them at import time.
@@ -24,6 +28,7 @@ from .placement import (
     hierarchy_bounds,
     merge_bounds,
 )
+from .presentation import PresentationBounds
 
 
 _BLENDER_SUFFIX = re.compile(r"\.\d{3,}$")
@@ -58,6 +63,32 @@ def _mesh_world_bounds(obj):
     return bounds_from_points(
         tuple(obj.matrix_world @ Vector(corner)) for corner in obj.bound_box
     )
+
+
+def presentation_bounds(objects, *, source_root=None):
+    """World-space presentation bounds for objects and their descendants.
+
+    This is the Blender-side gathering step of the shared presentation
+    foundation (#45/#46): it walks each object's own and nested mesh
+    geometry and delegates the bounds math to
+    ``blendmax_blender.presentation``. Empties and other non-mesh objects
+    contribute no geometry themselves but are still walked, so selecting
+    only the asset controller yields its meshes' bounds. Returns ``None``
+    when nothing in the walk has valid geometry.
+    """
+
+    collected = []
+    pending = list(objects)
+    while pending:
+        obj = pending.pop()
+        bounds = _mesh_world_bounds(obj)
+        if bounds is not None:
+            collected.append(bounds)
+        pending.extend(obj.children)
+    merged = merge_bounds(collected)
+    if merged is None:
+        return None
+    return PresentationBounds.from_bounds(merged, source_root=source_root)
 
 
 def _is_adoptable_group_node(obj) -> bool:
@@ -263,16 +294,16 @@ def _create_controller(
         bounds = _mesh_world_bounds(obj)
         if bounds is not None:
             actual_bounds.append(bounds)
-    minimum, maximum = merge_bounds(actual_bounds) or (
+    merged = merge_bounds(actual_bounds) or (
         manifest.bounds_minimum_m,
         manifest.bounds_maximum_m,
     )
-    dimensions = tuple(
-        upper - lower for lower, upper in zip(minimum, maximum)
-    )
-    center = tuple(
-        (lower + upper) * 0.5 for lower, upper in zip(minimum, maximum)
-    )
+    # Dimensions and center come from the shared presentation type so the
+    # controller display and the presentation tools (#45/#46) always agree
+    # on one calculation.
+    asset_bounds = PresentationBounds.from_bounds(merged)
+    dimensions = asset_bounds.dimensions
+    center = asset_bounds.center
 
     # A promoted FBX Empty can already own imported children. Detach them
     # while preserving their world transforms before normalizing the
