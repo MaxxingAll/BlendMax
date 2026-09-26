@@ -14,12 +14,16 @@ _COLLECTION_NAME = "BlendMax Presentation"
 _CAGE_NAME = "BlendMax Measurement Cage"
 _TOOL_KEY = "blendmax_presentation_tool"
 _TOOL_VALUE = "measurement_cage"
+_KIND_KEY = "blendmax_presentation_kind"
+_KIND_CAGE = "cage"
+_KIND_LABEL = "label"
 _SOURCE_KEY = "blendmax_measurement_source"
 _DIMENSION_NAMES = ("Width", "Depth", "Height")
 
 
 def _is_cage_object(obj) -> bool:
-    return getattr(obj, "get", lambda *_args: None)(_TOOL_KEY) == _TOOL_VALUE
+    getter = getattr(obj, "get", None)
+    return callable(getter) and getter(_TOOL_KEY) == _TOOL_VALUE
 
 
 def _presentation_collection(context):
@@ -41,13 +45,19 @@ def _link_only_to(obj, collection) -> None:
 
 
 def _get_or_create_cage(collection):
-    cage = bpy.data.objects.get(_CAGE_NAME)
-    if cage is not None and not _is_cage_object(cage):
-        cage = None
+    cage = next(
+        (
+            obj
+            for obj in bpy.data.objects
+            if _is_cage_object(obj) and obj.get(_KIND_KEY) == _KIND_CAGE
+        ),
+        None,
+    )
     if cage is None:
         mesh = bpy.data.meshes.new(_CAGE_NAME)
         cage = bpy.data.objects.new(_CAGE_NAME, mesh)
         cage[_TOOL_KEY] = _TOOL_VALUE
+        cage[_KIND_KEY] = _KIND_CAGE
         collection.objects.link(cage)
     else:
         _link_only_to(cage, collection)
@@ -57,6 +67,7 @@ def _get_or_create_cage(collection):
             mesh = bpy.data.meshes.new(old_name)
             cage = bpy.data.objects.new(old_name, mesh)
             cage[_TOOL_KEY] = _TOOL_VALUE
+            cage[_KIND_KEY] = _KIND_CAGE
             collection.objects.link(cage)
     return cage
 
@@ -70,10 +81,12 @@ def _get_or_create_label(collection, name):
         curve = bpy.data.curves.new(name, type="FONT")
         label = bpy.data.objects.new(name, curve)
         label[_TOOL_KEY] = _TOOL_VALUE
+        label[_KIND_KEY] = _KIND_LABEL
         collection.objects.link(label)
     else:
         _link_only_to(label, collection)
         label[_TOOL_KEY] = _TOOL_VALUE
+        label[_KIND_KEY] = _KIND_LABEL
     return label
 
 
