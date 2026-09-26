@@ -1,12 +1,14 @@
-"""Fake Blender node/tree objects, a materials-module loader, and the
-stream doubles shared by the archive-hardening suites.
+"""Fake Blender node/tree objects, module loaders, and the stream doubles
+shared by the archive-hardening suites.
 
 The Blender material builder only touches bpy through `bpy.data` and the
 shader-node factory, so tests can drive `_build_shader` with these minimal
-stand-ins instead of requiring a real Blender install. The stream doubles
-simulate a member stream that out-produces its declared size -- which can
-only be done at the `ZipFile.open` boundary, the layer the actual-byte
-budget sits above.
+stand-ins instead of requiring a real Blender install. `load_blender_module`
+executes a blendmax_blender source file with stub ``bpy``/``mathutils``
+installed, which is how the scene and materials suites import those modules
+without Blender. The stream doubles simulate a member stream that
+out-produces its declared size -- which can only be done at the `ZipFile.open`
+boundary, the layer the actual-byte budget sits above.
 """
 
 from __future__ import annotations
@@ -180,3 +182,50 @@ def _stream_for(target, build):
         return stream
 
     return mock.patch.object(zipfile.ZipFile, "open", wrapper)
+
+
+class FakeVector:
+    """Minimal stand-in for ``mathutils.Vector``, shared by the scene suites."""
+
+    def __init__(self, values):
+        self.values = [float(value) for value in values]
+
+    def __iter__(self):
+        return iter(self.values)
+
+    def __getitem__(self, index):
+        return self.values[index]
+
+    def __add__(self, other):
+        return FakeVector(first + second for first, second in zip(self, other))
+
+    def __sub__(self, other):
+        return FakeVector(first - second for first, second in zip(self, other))
+
+    def __isub__(self, other):
+        self.values = [first - second for first, second in zip(self, other)]
+        return self
+
+
+def load_blender_module(file_name, *, vector, bpy=None):
+    """Execute a blendmax_blender source file with stub bpy/mathutils modules.
+
+    The Blender-side modules import ``bpy`` and ``mathutils`` at module level,
+    so the tests exercise the real source by executing it with fakes installed
+    in ``sys.modules``. ``vector`` becomes ``mathutils.Vector`` (its uses are
+    per-suite); ``bpy`` lets a suite add the ``data``/``context`` attributes
+    its code paths need.
+    """
+
+    module_name = "blendmax_blender." + Path(file_name).stem
+    fake_bpy = bpy if bpy is not None else ModuleType("bpy")
+    fake_mathutils = ModuleType("mathutils")
+    fake_mathutils.Vector = vector
+    module_path = Path(__file__).resolve().parents[1] / "blendmax_blender" / file_name
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Could not load {0} for the tests.".format(module_name))
+    module = importlib.util.module_from_spec(spec)
+    with patch.dict(sys.modules, {"bpy": fake_bpy, "mathutils": fake_mathutils}):
+        spec.loader.exec_module(module)
+    return module

@@ -17,13 +17,13 @@ after replacing the six material slots with BlendMax-authored materials.
 
 from __future__ import annotations
 
-import importlib.util
-import sys
 import unittest
 from collections import Counter
-from pathlib import Path
-from types import ModuleType
-from unittest.mock import patch
+
+try:
+    from fakes import load_blender_module
+except ImportError:  # dotted-module invocation from the repository root
+    from tests.fakes import load_blender_module
 
 # The known-good per-face material_index distribution for the chair
 # fixture, as read directly from geometry.fbx's LayerElementMaterial
@@ -101,41 +101,10 @@ def _polygons_from_distribution(distribution):
     return polygons
 
 
-def load_adapter():
-    """Load blender_materials.py with a fake `bpy` so it imports without Blender."""
-    fake_bpy = ModuleType("bpy")
-    fake_mathutils = ModuleType("mathutils")
-    fake_mathutils.Vector = object
-    fake_materials = ModuleType("blendmax_blender.blender_materials")
-    fake_materials.MaterialBuilder = object
-
-    adapter_path = (
-        Path(__file__).resolve().parents[1]
-        / "blendmax_blender"
-        / "blender_materials.py"
-    )
-    spec = importlib.util.spec_from_file_location(
-        "blendmax_blender.blender_materials",
-        adapter_path,
-    )
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Could not load BlendMax Blender adapter test module.")
-    module = importlib.util.module_from_spec(spec)
-    with patch.dict(
-        sys.modules,
-        {
-            "bpy": fake_bpy,
-            "mathutils": fake_mathutils,
-        },
-    ):
-        spec.loader.exec_module(module)
-    return module
-
-
 class ReplaceMaterialSlotsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.materials = load_adapter()
+        cls.materials = load_blender_module("blender_materials.py", vector=object)
 
     def _distribution(self, obj):
         return dict(Counter(p.material_index for p in obj.data.polygons))

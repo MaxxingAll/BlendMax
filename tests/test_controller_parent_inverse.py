@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import importlib.util
 import math
-import sys
 import unittest
-from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from unittest.mock import patch
+
+try:
+    from fakes import load_blender_module
+except ImportError:  # dotted-module invocation from the repository root
+    from tests.fakes import load_blender_module
 
 
 class FakeMatrix:
@@ -167,51 +168,13 @@ class FakeController:
         )
 
 
-def load_adapter():
-    fake_bpy = ModuleType("bpy")
-    fake_bpy.context = SimpleNamespace(
-        view_layer=SimpleNamespace(update=lambda: None),
-    )
-    fake_mathutils = ModuleType("mathutils")
-    fake_mathutils.Vector = object
-    fake_materials = ModuleType("blendmax_blender.blender_materials")
-    fake_materials.MaterialBuilder = object
-    fake_errors = ModuleType("blendmax_blender.errors")
-    fake_errors.BlendMaxImportError = RuntimeError
-    fake_manifest = ModuleType("blendmax_blender.manifest")
-    fake_manifest.ManifestIndex = object
-    fake_models = ModuleType("blendmax_blender.models")
-    fake_models.ImportSummary = object
-    fake_models.ObjectRecord = object
-    fake_models.PackageContents = object
-    fake_placement = ModuleType("blendmax_blender.placement")
-    fake_placement.bounds_from_points = lambda points: None
-    fake_placement.grounded_anchor = lambda bounds: (0.0, 0.0, 0.0)
-    fake_placement.hierarchy_bounds = lambda parent_ids, object_bounds: {}
-    fake_placement.merge_bounds = lambda items: None
-
-    adapter_path = Path(__file__).resolve().parents[1] / "blendmax_blender" / "blender_scene.py"
-    spec = importlib.util.spec_from_file_location(
-        "blendmax_blender.blender_scene",
-        adapter_path,
-    )
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Could not load BlendMax Blender adapter test module.")
-    module = importlib.util.module_from_spec(spec)
-    with patch.dict(
-        sys.modules,
-        {
-            "bpy": fake_bpy,
-            "mathutils": fake_mathutils,
-        },
-    ):
-        spec.loader.exec_module(module)
-    return module
-
-
 class ControllerParentInverseBoundsTests(unittest.TestCase):
     def test_anisotropic_bounds_scale_preserves_rotated_direct_child_and_grandchild_world_matrices(self):
-        adapter = load_adapter()
+        fake_bpy = ModuleType("bpy")
+        fake_bpy.context = SimpleNamespace(
+            view_layer=SimpleNamespace(update=lambda: None),
+        )
+        adapter = load_blender_module("blender_scene.py", vector=object, bpy=fake_bpy)
         controller = FakeController()
         child = FakeChild(
             FakeMatrix.from_translation(2.0, -1.0, 4.0)
