@@ -26,6 +26,9 @@ def load_addon(module_name="blendmax_blender._addon_summary_test", config_direct
     class FakeImportHelper:
         pass
 
+    class FakeMenu:
+        pass
+
     if config_directory is None:
         config_directory = tempfile.mkdtemp(prefix="blendmax-addon-test-")
 
@@ -33,6 +36,7 @@ def load_addon(module_name="blendmax_blender._addon_summary_test", config_direct
     fake_bpy.types = SimpleNamespace(
         Operator=FakeOperator,
         AddonPreferences=FakePreferences,
+        Menu=FakeMenu,
     )
     fake_bpy.props = SimpleNamespace(
         BoolProperty=lambda **_kwargs: None,
