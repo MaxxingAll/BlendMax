@@ -11,6 +11,8 @@ from .placement import Bounds
 from .presentation_cage import cage_geometry
 
 _COLLECTION_NAME = "BlendMax Presentation"
+_COLLECTION_KEY = "blendmax_presentation_collection"
+_COLLECTION_VALUE = "presentation"
 _CAGE_NAME = "BlendMax Measurement Cage"
 _TOOL_KEY = "blendmax_presentation_tool"
 _TOOL_VALUE = "measurement_cage"
@@ -27,9 +29,17 @@ def _is_cage_object(obj) -> bool:
 
 
 def _presentation_collection(context):
-    collection = bpy.data.collections.get(_COLLECTION_NAME)
+    collection = next(
+        (
+            item
+            for item in bpy.data.collections
+            if item.get(_COLLECTION_KEY) == _COLLECTION_VALUE
+        ),
+        None,
+    )
     if collection is None:
         collection = bpy.data.collections.new(_COLLECTION_NAME)
+        collection[_COLLECTION_KEY] = _COLLECTION_VALUE
         context.scene.collection.children.link(collection)
     elif collection.name not in {item.name for item in context.scene.collection.children}:
         context.scene.collection.children.link(collection)
@@ -73,10 +83,16 @@ def _get_or_create_cage(collection):
 
 
 def _get_or_create_label(collection, name):
-    label = bpy.data.objects.get(name)
-    if label is not None and label.type != "FONT":
-        bpy.data.objects.remove(label, do_unlink=True)
-        label = None
+    label = next(
+        (
+            obj
+            for obj in bpy.data.objects
+            if obj.name == name
+            and _is_cage_object(obj)
+            and obj.get(_KIND_KEY) == _KIND_LABEL
+        ),
+        None,
+    )
     if label is None:
         curve = bpy.data.curves.new(name, type="FONT")
         label = bpy.data.objects.new(name, curve)
@@ -85,8 +101,6 @@ def _get_or_create_label(collection, name):
         collection.objects.link(label)
     else:
         _link_only_to(label, collection)
-        label[_TOOL_KEY] = _TOOL_VALUE
-        label[_KIND_KEY] = _KIND_LABEL
     return label
 
 
@@ -192,6 +206,6 @@ def remove_measurement_cage() -> None:
     for obj in tuple(bpy.data.objects):
         if _is_cage_object(obj):
             bpy.data.objects.remove(obj, do_unlink=True)
-    collection = bpy.data.collections.get(_COLLECTION_NAME)
+    collection = next((item for item in bpy.data.collections if item.get(_COLLECTION_KEY) == _COLLECTION_VALUE), None)
     if collection is not None and not collection.objects and not collection.children:
         bpy.data.collections.remove(collection)
