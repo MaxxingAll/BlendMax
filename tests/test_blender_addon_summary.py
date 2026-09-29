@@ -53,6 +53,8 @@ def load_addon(module_name="blendmax_blender._addon_summary_test", config_direct
     )
     fake_bpy.props = SimpleNamespace(
         BoolProperty=lambda **_kwargs: None,
+        FloatProperty=lambda **_kwargs: None,
+        IntProperty=lambda **_kwargs: None,
         StringProperty=lambda **_kwargs: None,
     )
     registered_classes = []
@@ -172,6 +174,37 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
         self.assertNotIn("[!] Warnings", output)
         self.assertNotIn("[i] Compatibility Notes", output)
         self.assertIn("[OK] Import completed successfully.", output)
+
+    def test_measurement_cage_operator_reports_value_error_and_cancels(self):
+        from types import ModuleType
+
+        presentation = ModuleType("blendmax_blender.blender_presentation")
+
+        def fail_create(*_args, **_kwargs):
+            raise ValueError("Select an asset with valid mesh geometry.")
+
+        presentation.create_measurement_cage = fail_create
+        reports = []
+        operator = self.addon.BLENDMAX_OT_create_measurement_cage()
+        operator.report = lambda levels, message: reports.append((levels, message))
+        operator.margin = 0.0
+        operator.divisions_x = 1
+        operator.divisions_y = 1
+        operator.divisions_z = 1
+        operator.show_dimensions = True
+        operator.in_front = True
+
+        with patch.dict(
+            sys.modules,
+            {"blendmax_blender.blender_presentation": presentation},
+        ):
+            result = operator.execute(None)
+
+        self.assertEqual(result, {"CANCELLED"})
+        self.assertEqual(
+            reports,
+            [({"ERROR"}, "Select an asset with valid mesh geometry.")],
+        )
 
     def test_icon_falls_back_when_stdout_cannot_encode_glyphs(self):
         with patch.object(self.addon, "_stdout_encoding", return_value="ascii"):

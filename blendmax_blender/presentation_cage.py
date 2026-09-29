@@ -17,7 +17,10 @@ Edge = Tuple[int, int]
 
 def _axis_values(lower: float, upper: float, divisions: int) -> Iterable[float]:
     step = (upper - lower) / float(divisions)
-    return (lower + step * index for index in range(divisions + 1))
+    return (
+        upper if index == divisions else lower + step * index
+        for index in range(divisions + 1)
+    )
 
 
 def cage_geometry(bounds: Bounds, divisions: Sequence[int] = (1, 1, 1)) -> Tuple[Tuple[Vector3, ...], Tuple[Edge, ...]]:

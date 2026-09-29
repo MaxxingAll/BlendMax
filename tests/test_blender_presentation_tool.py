@@ -89,8 +89,10 @@ class FakeObject:
         self.hide_viewport = False
         self.selected = False
         self.location = (0.0, 0.0, 0.0)
+        self.scale = (1.0, 1.0, 1.0)
         self.rotation_mode = "XYZ"
         self.rotation_euler = (0.0, 0.0, 0.0)
+        self.parent = None
         self.bound_box = _CUBE_CORNERS
         self._properties = {}
 
@@ -280,6 +282,56 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.assertEqual(len(tool_objects), 4)
         for obj in tool_objects:
             self.assertIn(collection, obj.users_collection)
+
+    def test_source_transforms_and_hierarchy_are_unchanged(self):
+        parent = self._add_source("Parent")
+        source = self._add_source("Chair", location=(2.0, -1.0, 4.0))
+        source.scale = (1.5, 2.0, 0.75)
+        source.rotation_euler = (0.25, -0.5, 1.0)
+        source.parent = parent
+        parent.children.append(source)
+        self.context.selected_objects = [source]
+        before = (
+            source.location,
+            source.rotation_euler,
+            source.scale,
+            source.parent,
+            tuple(parent.children),
+        )
+
+        self._create()
+
+        self.assertEqual(
+            (
+                source.location,
+                source.rotation_euler,
+                source.scale,
+                source.parent,
+                tuple(parent.children),
+            ),
+            before,
+        )
+
+    def test_source_without_valid_mesh_geometry_fails_before_creating_cage(self):
+        source = self._add_source("Empty Mesh")
+        source.data.vertices = []
+        self.context.selected_objects = [source]
+
+        with self.assertRaisesRegex(ValueError, "no valid mesh geometry"):
+            self._create()
+
+        self.assertEqual(self._tool_objects(), [])
+        self.assertEqual(list(self.bpy.data.collections), [])
+
+    def test_negative_margin_is_rejected_before_creating_cage(self):
+        source = self._add_source("Chair")
+        self.context.selected_objects = [source]
+
+        with self.assertRaisesRegex(ValueError, "margin cannot be negative"):
+            self._create(margin=-0.1)
+
+        self.assertEqual(self._tool_objects(), [])
+        self.assertEqual(list(self.bpy.data.collections), [])
 
     def test_rerun_updates_the_same_cage_and_labels(self):
         source = self._add_source("Chair")

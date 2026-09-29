@@ -34,6 +34,16 @@ class MeasurementCageGeometryTests(unittest.TestCase):
         self.assertIn((-1.5, 2.25, 0.5), vertices)
         self.assertIn((3.5, 5.25, 4.5), vertices)
 
+    def test_awkward_fractional_bounds_keep_shared_boundary_vertices_unique(self):
+        bounds = ((-0.3, -0.3, -0.3), (1.7, 1.9, 2.3))
+        vertices, edges = cage_geometry(bounds, (3, 3, 3))
+
+        self.assertEqual(len(vertices), 32)
+        self.assertEqual(len(vertices), len(set(vertices)))
+        self.assertEqual(len(edges), len(set(edges)))
+        self.assertIn(bounds[0], vertices)
+        self.assertIn(bounds[1], vertices)
+
     def test_invalid_division_count_is_rejected(self):
         with self.assertRaises(ValueError):
             cage_geometry(((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)), (1, 2))
