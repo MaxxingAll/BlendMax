@@ -17,6 +17,10 @@ from .placement import Bounds
 Vector3 = Tuple[float, float, float]
 Edge = Tuple[int, int]
 
+# Blender stores mesh and transform data in single precision, so world-space
+# bounds can carry float32-scale rounding noise once transforms are applied.
+_FLOAT32_EPS = 1.1920929e-07
+
 
 @dataclass(frozen=True)
 class MeasurementEnvelope:
@@ -35,9 +39,11 @@ def measurement_envelope(
     """Quantize each asset extent upward from its minimum corner.
 
     Near-increment floating-point noise is snapped to the increment for the
-    reported measurement. The geometric maximum still includes the raw asset
-    maximum, so this tolerance can never make the cage smaller than the asset.
-    Degenerate axes remain zero-sized.
+    reported measurement. Blender supplies single-precision world bounds, so
+    the snap tolerance also covers a few float32 ulps of the coordinate
+    magnitude, capped at half an increment. The geometric maximum still
+    includes the raw asset maximum, so this tolerance can never make the cage
+    smaller than the asset. Degenerate axes remain zero-sized.
     """
 
     try:
@@ -62,6 +68,18 @@ def measurement_envelope(
             nearest_units = round(ratio)
             nearest_extent = nearest_units * step
             tolerance = step * 1e-9
+            # Blender's geometry pipeline is single precision, so world-space
+            # extents can deviate from exact arithmetic by a few float32 ulps
+            # of the coordinate magnitude. Snap within that noise floor,
+            # capped at half an increment so noise can never shift a
+            # measurement visibly.
+            noise = min(
+                max(abs(float(lower)), abs(float(upper)), abs(extent))
+                * _FLOAT32_EPS
+                * 8.0,
+                step * 0.5,
+            )
+            tolerance = max(tolerance, noise)
             if math.isfinite(nearest_extent):
                 tolerance = max(
                     tolerance,

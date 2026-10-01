@@ -178,6 +178,42 @@ class MeasurementEnvelopeTests(unittest.TestCase):
         self.assertGreaterEqual(envelope.maximum[0], asset.maximum[0])
         self.assertEqual(envelope.maximum[1:], asset.maximum[1:])
 
+    def test_single_precision_world_bounds_keep_exact_increment_extents(self):
+        # Measured on Blender 5.2.2: a 2 m cone translated to z = 0.00004 m
+        # has single-precision world bounds spanning 2.000000059605 m even
+        # though the span is exactly 2 m. That float32 noise must not
+        # inflate the envelope to the next increment.
+        asset = PresentationBounds.from_bounds(
+            ((-1.0, -1.0, -0.9999600053), (1.0, 1.0, 1.0000400543))
+        )
+
+        envelope = measurement_envelope(asset, 1.0)
+
+        self.assertEqual(envelope.dimensions, (2.0, 2.0, 2.0))
+        self.assertGreaterEqual(envelope.maximum[2], asset.maximum[2])
+
+    def test_single_precision_noise_scales_with_distance_from_the_origin(self):
+        # A 5e-05 overshoot around 500 m from the origin: about 1.6 float32
+        # ulps at that magnitude, still indistinguishable from noise.
+        asset = PresentationBounds.from_bounds(
+            ((499.99998, 0.0, 0.0), (502.00003, 1.0, 1.0))
+        )
+
+        envelope = measurement_envelope(asset, 1.0)
+
+        self.assertEqual(envelope.dimensions, (2.0, 1.0, 1.0))
+
+    def test_single_precision_tolerance_does_not_swallow_real_overshoots(self):
+        # A half-millimetre past two metres is far above float32 noise at
+        # metre scale and must still round up to the next increment.
+        asset = PresentationBounds.from_bounds(
+            ((-1.0, -1.0, -0.00025), (1.0, 1.0, 2.00025))
+        )
+
+        envelope = measurement_envelope(asset, 1.0)
+
+        self.assertEqual(envelope.dimensions[2], 3.0)
+
     def test_small_positive_extent_does_not_snap_down_to_zero(self):
         asset = PresentationBounds.from_bounds(
             ((0.0, 0.0, 0.0), (1e-10, 0.0, 0.0))
