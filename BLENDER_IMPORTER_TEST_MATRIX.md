@@ -46,21 +46,18 @@ maximum Blender version is declared; API variation is contained in the Blender
 adapter through operator, socket, and property feature detection.
 
 The importer does not run a background service, persistent handler, or polling
-loop. The 0.1.10 developer workflow adds one-shot use of `bpy.app.timers` only to
-defer the **Reload BlendMax** operation until the current Preferences operator
-has returned.
-
-Reload operates on the currently installed extension copy. It does not watch
-the repository working tree or continuously execute in the background.
+loop. Installing or updating the extension requires restarting Blender to load
+the new code; BlendMax has no in-process reload control or custom restart
+notice.
 
 ## Automated status
 
 GitHub Actions runs the ordinary Python test suite on Python 3.11, 3.12, and
 3.13. The suite covers Blender packaging/manifest behavior, importer
 translation, V-Ray parameter and map contracts, diagnostics grouping, Max
-cleanup/export validation, installer / update paths, and restart/hot-reload
-state handling. The exact suite count is intentionally taken from the latest
-CI run rather than maintained as a static number here.
+cleanup/export validation, installer / update paths, and extension registration
+with no custom reload or restart state. The exact suite count is intentionally
+taken from the latest CI run rather than maintained as a static number here.
 
 The headless V-Ray fixtures are deliberately simulated manifests, not claims
 that a running V-Ray host produced those exact values. They provide a fast
@@ -144,41 +141,18 @@ staging directory on this path.
 **Automation boundary:** everything above is ordinary Python over `zipfile`, so
 it is unit-tested without `bpy`. None of it is host-verified inside Blender.
 
-## Hot-reload manual verification
-
-### A. Legacy add-on layout — PENDING HOST TEST
-
-1. Install BlendMax using the legacy add-on layout.
-2. Open **Edit > Preferences > Add-ons** and enable BlendMax.
-3. Confirm the **Reload BlendMax** button is visible in BlendMax Preferences.
-4. Make a controlled change in the installed copy, such as a diagnostic string.
-5. Click **Reload BlendMax** once and confirm the add-on remains enabled. The
-   button must disable immediately and read **Reloading BlendMax…**, then remain
-   disabled as **BlendMax Reload Used** after the reload completes.
-6. Confirm the changed code is active without restarting Blender.
-7. Click the button twice rapidly and confirm only one reload is scheduled, with
-   no repeated `BlendMax reload scheduled.` Info Log messages.
-8. Force an import-time error in the installed copy, click Reload, and confirm
-   the System Console receives a traceback and the failed reload guard is
-   released.
-
-### B. Blender extension ZIP layout — PENDING HOST TEST
+## Blender extension update — PENDING HOST TEST
 
 1. Build `blendmax_importer-0.1.10.zip` and install it through **Install from Disk**.
 2. Confirm Blender registers the extension under its `bl_ext.*` package namespace.
-3. Open **Edit > Preferences > Extensions > BlendMax Importer** and confirm
-   **Reload BlendMax** is available.
-4. Make a controlled change in the installed extension copy.
-5. Click **Reload BlendMax** and confirm the extension remains enabled and the
-   changed code is active without restarting Blender.
-6. Repeat the rapid double-click and import-error checks from the legacy layout.
-7. Confirm Preferences show no restart-required notice after installing or
-   enabling the extension; the native install flow does not provide BlendMax
-   with a successful update event.
+3. Restart Blender after installation or update.
+4. Confirm the updated BlendMax code is active and the importer can be enabled
+   and used normally.
+5. Confirm there is no in-process reload control and no custom restart notice.
 
-Record the exact Blender version, installation layout, build ZIP, and result
-here after host validation. The automated suite cannot verify these operator and
-extension-loader behaviors because it does not import `bpy`.
+Record the exact Blender version, build ZIP, and result here after host
+validation. The automated suite cannot verify extension-loader behavior because
+it does not import `bpy`.
 
 ## Verified Blender 5.2 manual passes
 
@@ -264,11 +238,9 @@ Live `getPropNames` confirmed these actual keys and readable values:
 ## Pass criteria
 
 - Import completes without a Python traceback.
-- Reload completes without disabling the extension when the installed code is valid.
-- Reload never remains queued twice from rapid repeated clicks.
-- Hot Reload can be used only once per Blender process; restarting Blender makes
-  the button available again.
-- No restart-required state or prompt is created by registration or Hot Reload.
+- The extension loads updated code after Blender is restarted following install
+  or update.
+- No in-process reload control or custom restart-required state is present.
 - Relative object transforms, hierarchy, UVs, normals, tangents, and material
   indices visually match the FBX/export manifest after world-origin placement.
 - No unpacked image points at the importer's temporary directory.

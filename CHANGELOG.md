@@ -10,9 +10,10 @@ called out separately from automated coverage.
 
 - Bumps the Blender importer and extension version to **0.1.10**.
 - Removes the obsolete BlendMax restart notice and its persisted process-ID
-  state. Hot Reload now keeps its one-use-per-session guard only in Blender's
-  in-memory driver namespace; no post-update restart prompt is shown because
-  Blender's native Get Extensions flow exposes no successful update callback.
+  state, along with the obsolete in-process reload operator, state, timer,
+  Preferences UI, and registration. After installing or updating the extension,
+  restart Blender to load the new code. No custom restart prompt or replacement
+  reload mechanism is provided.
 
 ### Added
 
@@ -100,22 +101,6 @@ called out separately from automated coverage.
   controller; otherwise a synthetic controller is created.
 - Stores controller provenance, including `blendmax_original_*`, plus
   `blendmax_controller` and `blendmax_controller_source` metadata.
-- Adds a **Reload BlendMax** control in Add-on Preferences for a one-shot,
-  deferred in-process reload of the currently installed Blender extension copy.
-  The control can be used only once per Blender process because BlendMax's own
-  module reload resets in-memory flags; repeated in-process reloads previously
-  scheduled duplicate timers and spammed the Info Log. The first click greys
-  it out as **Reloading BlendMax…**, and after the add-on reloads it stays
-  disabled as **BlendMax Reload Used** with a **Restart Blender to reload again**
-  hint until Blender itself is restarted. Concurrent Blender processes keep
-  independent consumed markers in the shared config state.
-- Reload purges the active package and its submodules from `sys.modules` before
-  re-enabling the same installed extension, so newly installed code can be
-  loaded without restarting Blender.
-- Later clicks in the same Blender process are rejected and do not schedule
-  another reload.
-- Reload failures print the full traceback and release the Hot Reload guard so
-  the user can try again.
 
 ### Changed
 
@@ -128,9 +113,6 @@ called out separately from automated coverage.
   flushes, so imported hierarchy transforms are not distorted during adoption.
 - Degenerate bounds use a tiny epsilon on zero-extent controller axes to keep the
   controller matrix invertible while remaining visually flat on the affected axis.
-- The Hot Reload guard is held outside the BlendMax package in Blender's
-  in-memory driver namespace, so it survives BlendMax's own module purge without
-  persistent files or process tracking.
 
 ### Release metadata
 
@@ -138,9 +120,7 @@ called out separately from automated coverage.
 
 ### Verification
 
-- Added coverage for the one-use Hot Reload guard across package reloads and its
-  rollback when timer registration fails.
-- Real Blender extension install/reload verification remains a host-level gate
+- Real Blender extension installation behavior remains a host-level gate
   because the ordinary Python CI suite does not import `bpy`.
 
 ## Blender Importer 0.1.7 — 2026-09-04

@@ -21,7 +21,7 @@ created automatically by Python.
 | Component | Version | Status |
 | --- | --- | --- |
 | 3ds Max exporter and cleanup | `0.1.0-alpha.4.3.0` | Host verified in 3ds Max 2025.3 |
-| Blender importer | `0.1.10` | Renderable Measurement Cage lattice, structured import summary and in-process hot reload |
+| Blender importer | `0.1.10` | Renderable Measurement Cage lattice and structured import summary |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
 | Automated suite | See CI | Python 3.11–3.13 |
 
@@ -146,17 +146,12 @@ Build or download `blendmax_importer-0.1.10.zip`, then in Blender:
 3. Select the importer ZIP and enable **BlendMax Importer** if needed.
 4. Use **File > Import > BlendMax Asset (.blendmax)**.
 
-Installing a newer version of the same extension ZIP updates the isolated
-extension. The **Reload BlendMax** control in Add-on Preferences performs a
-single deferred in-process reload of the currently installed extension copy,
-once per Blender session. Its one-use guard lives in Blender's in-memory driver
-namespace so it survives BlendMax's module reload and resets when Blender is
-restarted. BlendMax does not show a restart-required notice because Blender's
-native extension installation flow does not report a successful update event
-to the extension. It does not watch the source tree or run continuously.
-Editing the repository working tree therefore requires updating the installed
-extension copy (or pointing Blender at that working copy) before using Reload
-BlendMax.
+After installing or updating the extension, restart Blender to load the new
+code. BlendMax does not provide an in-process reload control or a restart
+notice; the native Get Extensions flow does not expose the successful-update
+event needed to show one accurately. Updating the installed extension does not
+change the repository working tree, which still needs to be installed into
+Blender before its code can be used.
 
 To build the ZIP from source:
 
@@ -315,8 +310,8 @@ The automated suite covers scene and visibility-preflight rules, cleanup plannin
 Multi/Sub ID lookup, compact face selections, the 500-object boundary, exact and fallback
 bounds, size policy, texture ownership and collisions,
 group isolation and restoration, archive creation, FBX state restoration,
-AppBundle construction, installation, hot-reloading after an in-session ZIP
-update, ZIP update safety, duplicate-name material fingerprints, Physical
+AppBundle construction, installation, ZIP update safety, duplicate-name
+material fingerprints, Physical
 Material property and nested-map comparison, merge approval/refusal, Blender manifest
 parsing, secure extraction, V-Ray and Physical Material interpretation, legacy schema fallback,
 origin placement, nested-group anchoring, reproducible extension packaging,

@@ -6,7 +6,6 @@ import os
 import sys
 import textwrap
 import time
-import traceback
 
 import bpy
 from bpy.props import BoolProperty, StringProperty
@@ -17,9 +16,6 @@ from .importer import import_blendmax
 from .models import ImportSummary
 
 
-_RELOAD_PENDING = False
-_HOT_RELOAD_CONSUMED = None
-_HOT_RELOAD_STATE_KEY = "blendmax.hot_reload_consumed"
 _SUMMARY_WIDTH = 60
 _DETAIL_WIDTH = 72
 _STDOUT_UTF8_CONFIGURED = False
@@ -34,112 +30,6 @@ _ICONS = {
     "notes": ("✎", "[i]"),
     "time": ("⏱", "[t]"),
 }
-
-
-def _hot_reload() -> None:
-    """Reload BlendMax from the installed module location after the operator returns."""
-    global _RELOAD_PENDING
-    module_name = __package__
-    try:
-        bpy.ops.preferences.addon_disable(module=module_name)
-
-        for name in list(sys.modules):
-            if name == module_name or name.startswith(module_name + "."):
-                del sys.modules[name]
-
-        bpy.ops.preferences.addon_enable(module=module_name)
-        print("BlendMax: hot reload completed successfully.")
-    except Exception as exc:
-        _set_hot_reload_consumed(False)
-        print("BlendMax: hot reload failed: {0}".format(exc))
-        traceback.print_exc()
-    finally:
-        _RELOAD_PENDING = False
-    return None
-
-
-def _hot_reload_button_text(*, reload_pending: bool, reload_consumed: bool) -> str:
-    if reload_pending:
-        return "Reloading BlendMax…"
-    if reload_consumed:
-        return "BlendMax Reload Used"
-    return "Reload BlendMax"
-
-
-def _hot_reload_is_consumed() -> bool:
-    """Return whether Hot Reload was used during this Blender session."""
-
-    global _HOT_RELOAD_CONSUMED
-    if _HOT_RELOAD_CONSUMED is None:
-        _HOT_RELOAD_CONSUMED = bool(
-            bpy.app.driver_namespace.get(_HOT_RELOAD_STATE_KEY, False)
-        )
-    return bool(_HOT_RELOAD_CONSUMED)
-
-
-def _set_hot_reload_consumed(consumed: bool) -> None:
-    """Keep the one-use Hot Reload guard across module reloads in memory."""
-
-    global _HOT_RELOAD_CONSUMED
-    namespace = bpy.app.driver_namespace
-    if consumed:
-        namespace[_HOT_RELOAD_STATE_KEY] = True
-    else:
-        namespace.pop(_HOT_RELOAD_STATE_KEY, None)
-    _HOT_RELOAD_CONSUMED = consumed
-
-
-class BLENDMAX_OT_hot_reload(bpy.types.Operator):
-    bl_idname = "blendmax.hot_reload"
-    bl_label = "Reload BlendMax"
-    bl_description = (
-        "Reload the currently installed BlendMax extension copy once in this "
-        "Blender session without restarting Blender."
-    )
-
-    def execute(self, _context):
-        global _RELOAD_PENDING, _HOT_RELOAD_CONSUMED
-        if _hot_reload_is_consumed():
-            return {"CANCELLED"}
-        if _RELOAD_PENDING:
-            self.report({"INFO"}, "BlendMax reload is already scheduled.")
-            return {"FINISHED"}
-
-        # Store the guard outside this package so its module purge cannot reset it.
-        _set_hot_reload_consumed(True)
-        _RELOAD_PENDING = True
-        try:
-            bpy.app.timers.register(_hot_reload, first_interval=0.1)
-        except Exception:
-            _set_hot_reload_consumed(False)
-            _RELOAD_PENDING = False
-            return {"CANCELLED"}
-        self.report({"INFO"}, "BlendMax reload scheduled.")
-        return {"FINISHED"}
-
-
-class BLENDMAX_Preferences(bpy.types.AddonPreferences):
-    bl_idname = __package__
-
-    def draw(self, _context):
-        layout = self.layout
-        reload_pending = _RELOAD_PENDING
-        reload_consumed = _hot_reload_is_consumed()
-
-        row = layout.row()
-        row.enabled = not reload_consumed
-        row.operator(
-            BLENDMAX_OT_hot_reload.bl_idname,
-            text=_hot_reload_button_text(
-                reload_pending=reload_pending,
-                reload_consumed=reload_consumed,
-            ),
-            icon="FILE_REFRESH",
-        )
-        if reload_consumed and not reload_pending:
-            layout.label(text="Hot Reload is limited to once per Blender session.")
-        else:
-            layout.label(text="BlendMax is ready to use.")
 
 
 def _enable_console_colors() -> bool:
@@ -449,8 +339,6 @@ def _menu_import(self, _context) -> None:
 
 
 _CLASSES = (
-    BLENDMAX_Preferences,
-    BLENDMAX_OT_hot_reload,
     BLENDMAX_OT_import_asset,
     BLENDMAX_OT_create_measurement_cage,
     BLENDMAX_OT_remove_measurement_cage,
@@ -460,9 +348,6 @@ _CLASSES = (
 
 
 def register() -> None:
-    global _HOT_RELOAD_CONSUMED
-    _HOT_RELOAD_CONSUMED = None
-
     for item in _CLASSES:
         bpy.utils.register_class(item)
     bpy.types.TOPBAR_MT_file_import.append(_menu_import)
