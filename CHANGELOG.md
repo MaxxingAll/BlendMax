@@ -20,9 +20,10 @@ called out separately from automated coverage.
   updated code is running; it does not depend on an extension-update callback
   or an updater.
 - Adds a one-shot **Restart Blender** dialog when the update is detected. It
-  follows BlenderKit's popup pattern: a floating dialog with **Restart
-  Blender** and **Later** actions that appears without opening Preferences,
-  is offered once per update event (recorded in the same state file), is
+  follows BlenderKit's success-popup pattern: a floating dialog with
+  **Restart Blender** and **Later** actions that appears without opening
+  Preferences, invoked from a one-shot scene update rather than a timer.
+  It is offered once per update event (recorded in the same state file), is
   skipped in background sessions, and never replaces the preferences notice.
 - Keeps the loaded version in Blender's process-local driver namespace so
   disabling and re-enabling the add-on does not hide a pending notice. After

@@ -150,8 +150,9 @@ After installing or updating the extension, restart Blender to load the new
 code. If the installed manifest version changes while Blender remains open,
 BlendMax shows a **Restart Blender** notice in Add-on Preferences with both the
 running and installed versions, and pops a one-shot restart dialog
-(BlenderKit-style) offering **Restart Blender** or **Later**; the dialog is
-offered once per detected update and skipped in background sessions. The state
+(BlenderKit-style) offering **Restart Blender** or **Later**. The dialog is
+offered once per detected update, appears on Blender's next scene update
+after the change is detected, and is skipped in background sessions. The state
 lives in
 `blendmax/blendmax_restart_state.json` under Blender's user config directory:
 it is set when the versions diverge and consumed once Blender restarts into

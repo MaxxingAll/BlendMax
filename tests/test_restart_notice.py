@@ -36,15 +36,22 @@ class RestartNoticeTests(unittest.TestCase):
         self.write_manifest("0.1.10")
 
         self.timers = FakeTimers()
+        self.handlers = []
+        self.ops_calls = []
         self.bpy = ModuleType("bpy")
         self.bpy.app = SimpleNamespace(
             driver_namespace={},
             timers=self.timers,
+            background=False,
+            handlers=SimpleNamespace(depsgraph_update_post=self.handlers),
         )
         self.bpy.context = SimpleNamespace(
             window_manager=SimpleNamespace(windows=[]),
         )
         self.bpy.utils = SimpleNamespace(user_resource=self.user_resource)
+        self.bpy.ops = SimpleNamespace(
+            blendmax=SimpleNamespace(restart_notice_popup=self.record_popup_op)
+        )
         self.notice = self.load_notice("blendmax_blender._restart_notice_test")
         self.notice._MANIFEST = self.manifest
 
@@ -52,6 +59,10 @@ class RestartNoticeTests(unittest.TestCase):
         if self.notice is not None:
             self.notice.unregister()
         self.tempdir.cleanup()
+
+    def record_popup_op(self, *args):
+        self.ops_calls.append(args)
+        return {"RUNNING_MODAL"}
 
     def user_resource(self, resource_type, path="", create=False):
         self.assertEqual(resource_type, "CONFIG")
@@ -264,17 +275,17 @@ class RestartNoticeTests(unittest.TestCase):
         self.assertEqual(self.notice.disk_version(), "0.1.11")
         self.assertTrue(self.notice.restart_needed())
 
-    def test_unregister_removes_timers(self):
+    def test_unregister_removes_timers_and_armed_dialog_handler(self):
         self.notice.register()
         self.write_manifest("0.1.11")
         self.notice._poll()
         self.assertTrue(self.timers.is_registered(self.notice._poll))
-        self.assertTrue(self.timers.is_registered(self.notice._popup_tick))
+        self.assertIn(self.notice._popup_handler, self.handlers)
 
         self.notice.unregister()
 
         self.assertFalse(self.timers.is_registered(self.notice._poll))
-        self.assertFalse(self.timers.is_registered(self.notice._popup_tick))
+        self.assertNotIn(self.notice._popup_handler, self.handlers)
 
     def test_timer_registration_is_idempotent(self):
         self.notice.register()
@@ -338,85 +349,79 @@ class RestartNoticeTests(unittest.TestCase):
             ],
         )
 
-
-    def test_update_detection_requests_a_one_shot_popup(self):
+    def test_update_detection_arms_a_one_shot_dialog_handler(self):
         self.start_and_poll()
         self.write_manifest("0.1.11")
 
         self.notice._poll()
 
         self.assertTrue(self.notice._popup_pending)
-        self.assertTrue(self.timers.is_registered(self.notice._popup_tick))
+        self.assertEqual(self.handlers.count(self.notice._popup_handler), 1)
 
-    def test_popup_tick_shows_once_and_records_it(self):
+        self.notice._request_popup()
+
+        self.assertEqual(self.handlers.count(self.notice._popup_handler), 1)
+
+    def test_dialog_handler_shows_once_and_records_it(self):
         self.start_and_poll()
         self.write_manifest("0.1.11")
         self.notice._poll()
-        self.bpy.context.window_manager.windows = [SimpleNamespace()]
 
-        shown = []
-        with patch.object(self.notice, "_show_popup", side_effect=shown.append):
-            self.assertIsNone(self.notice._popup_tick())
-            self.assertIsNone(self.notice._popup_tick())
+        self.notice._popup_handler(None)
 
-        self.assertEqual(len(shown), 1)
+        self.assertEqual(self.ops_calls, [("INVOKE_DEFAULT",)])
         self.assertFalse(self.notice._popup_pending)
         self.assertTrue(self.notice._popup_shown)
+        self.assertNotIn(self.notice._popup_handler, self.handlers)
         self.assertTrue(self.read_state()["popup_shown"])
 
-    def test_popup_without_a_window_gives_up_quietly(self):
+        self.notice._popup_handler(None)
+
+        self.assertEqual(self.ops_calls, [("INVOKE_DEFAULT",)])
+
+    def test_background_mode_does_not_arm_the_dialog_handler(self):
+        self.bpy.app.background = True
         self.start_and_poll()
         self.write_manifest("0.1.11")
+
         self.notice._poll()
 
-        with patch.object(self.notice, "_show_popup") as popup:
-            for _ in range(self.notice._POPUP_MAX_ATTEMPTS):
-                self.assertEqual(
-                    self.notice._popup_tick(),
-                    self.notice._POPUP_RETRY_SECONDS,
-                )
-            self.assertIsNone(self.notice._popup_tick())
-
-        popup.assert_not_called()
-        self.assertFalse(self.notice._popup_shown)
+        self.assertTrue(self.notice._popup_pending)
+        self.assertNotIn(self.notice._popup_handler, self.handlers)
         self.assertFalse(self.read_state()["popup_shown"])
 
-    def test_popup_failure_retries_then_gives_up(self):
+    def test_dialog_failure_keeps_the_notice_unshown(self):
         self.start_and_poll()
         self.write_manifest("0.1.11")
         self.notice._poll()
-        self.bpy.context.window_manager.windows = [SimpleNamespace()]
 
-        with patch.object(
-            self.notice, "_show_popup", side_effect=RuntimeError("no context")
-        ):
-            for _ in range(self.notice._POPUP_MAX_ATTEMPTS):
-                self.assertEqual(
-                    self.notice._popup_tick(),
-                    self.notice._POPUP_RETRY_SECONDS,
-                )
-            self.assertIsNone(self.notice._popup_tick())
+        def boom(*_args):
+            raise RuntimeError("no window")
+
+        self.bpy.ops.blendmax.restart_notice_popup = boom
+
+        self.notice._popup_handler(None)
 
         self.assertFalse(self.notice._popup_shown)
         self.assertFalse(self.read_state()["popup_shown"])
+        self.assertNotIn(self.notice._popup_handler, self.handlers)
+        self.assertTrue(self.notice.restart_needed())
 
-    def test_dismissed_popup_is_not_reshown_on_reenable(self):
+    def test_dismissed_dialog_is_not_reshown_on_reenable(self):
         self.start_and_poll()
         self.write_manifest("0.1.11")
         self.notice._poll()
-        self.bpy.context.window_manager.windows = [SimpleNamespace()]
-        with patch.object(self.notice, "_show_popup"):
-            self.notice._popup_tick()
+        self.notice._popup_handler(None)
         self.notice.unregister()
 
         self.notice.register()
 
         self.assertTrue(self.notice.restart_needed())
         self.assertFalse(self.notice._popup_pending)
-        self.assertFalse(self.timers.is_registered(self.notice._popup_tick))
+        self.assertNotIn(self.notice._popup_handler, self.handlers)
         self.assertTrue(self.read_state()["popup_shown"])
 
-    def test_register_rearms_a_popup_that_never_showed(self):
+    def test_register_rearms_a_dialog_that_never_showed(self):
         self.start_and_poll()
         self.write_manifest("0.1.11")
         self.notice._poll()
@@ -427,27 +432,25 @@ class RestartNoticeTests(unittest.TestCase):
 
         self.assertTrue(self.notice.restart_needed())
         self.assertTrue(self.notice._popup_pending)
-        self.assertTrue(self.timers.is_registered(self.notice._popup_tick))
+        self.assertIn(self.notice._popup_handler, self.handlers)
 
-    def test_new_update_event_rearms_the_popup(self):
+    def test_new_update_event_rearms_the_dialog(self):
         self.start_and_poll()
         self.write_manifest("0.1.11")
         self.notice._poll()
-        self.bpy.context.window_manager.windows = [SimpleNamespace()]
-        with patch.object(self.notice, "_show_popup"):
-            self.notice._popup_tick()
+        self.notice._popup_handler(None)
 
         self.write_manifest("0.1.12")
         self.notice._poll()
 
         self.assertTrue(self.notice._popup_pending)
-        with patch.object(self.notice, "_show_popup") as popup:
-            self.assertIsNone(self.notice._popup_tick())
-        popup.assert_called_once()
+        self.assertIn(self.notice._popup_handler, self.handlers)
+        self.notice._popup_handler(None)
+        self.assertEqual(len(self.ops_calls), 2)
         self.assertEqual(self.read_state()["installed_version"], "0.1.12")
         self.assertTrue(self.read_state()["popup_shown"])
 
-    def test_matching_version_cancels_a_pending_popup(self):
+    def test_matching_version_cancels_a_pending_dialog(self):
         self.start_and_poll()
         self.write_manifest("0.1.11")
         self.notice._poll()
@@ -457,37 +460,34 @@ class RestartNoticeTests(unittest.TestCase):
         self.notice._poll()
 
         self.assertFalse(self.notice._popup_pending)
-        with patch.object(self.notice, "_show_popup") as popup:
-            self.assertIsNone(self.notice._popup_tick())
-        popup.assert_not_called()
+        self.assertNotIn(self.notice._popup_handler, self.handlers)
+        self.notice._popup_handler(None)
+        self.assertEqual(self.ops_calls, [])
         self.assertFalse(self.read_state()["popup_shown"])
 
-    def test_show_popup_invokes_the_operator_in_the_given_window(self):
-        overrides = []
-        ops_calls = []
+    def test_show_popup_invokes_the_operator_without_a_context_override(self):
+        self.notice._show_popup()
 
-        class FakeOverride:
-            def __init__(self, **kwargs):
-                self.kwargs = kwargs
+        self.assertEqual(self.ops_calls, [("INVOKE_DEFAULT",)])
 
-            def __enter__(self):
-                overrides.append(self.kwargs)
+    def test_show_popup_rejects_an_invalid_call(self):
+        self.bpy.ops.blendmax.restart_notice_popup = lambda *args: {"PASS_THROUGH"}
 
-            def __exit__(self, *_exc):
-                return False
+        with self.assertRaises(RuntimeError):
+            self.notice._show_popup()
 
-        self.bpy.context.temp_override = FakeOverride
-        self.bpy.ops = SimpleNamespace(
-            blendmax=SimpleNamespace(
-                restart_notice_popup=lambda *args: ops_calls.append(args)
-            )
-        )
-        window = SimpleNamespace()
+    def test_rejected_dialog_call_keeps_the_notice_unshown(self):
+        self.start_and_poll()
+        self.write_manifest("0.1.11")
+        self.notice._poll()
+        self.bpy.ops.blendmax.restart_notice_popup = lambda *args: {"PASS_THROUGH"}
 
-        self.notice._show_popup(window)
+        self.notice._popup_handler(None)
 
-        self.assertEqual(overrides, [{"window": window}])
-        self.assertEqual(ops_calls, [("INVOKE_DEFAULT",)])
+        self.assertFalse(self.notice._popup_shown)
+        self.assertFalse(self.read_state()["popup_shown"])
+        self.assertNotIn(self.notice._popup_handler, self.handlers)
+        self.assertTrue(self.notice.restart_needed())
 
 
 if __name__ == "__main__":

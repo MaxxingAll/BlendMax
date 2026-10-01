@@ -47,6 +47,8 @@ adapter through operator, socket, and property feature detection.
 
 The importer does not run a background service or persistent handler. A
 lightweight timer checks the installed manifest version every five seconds;
+when a change is detected, a one-shot scene-update handler (removed as soon
+as it runs or when the add-on is disabled) invokes the restart dialog.
 Preferences draw only the cached version-mismatch state. BlendMax has no
 in-process reload control or updater callback integration.
 
@@ -147,9 +149,10 @@ it is unit-tested without `bpy`. None of it is host-verified inside Blender.
 2. Confirm the restart notice is absent.
 3. Update to N through Blender's native Extensions UI without restarting.
 4. Wait about five seconds and confirm the red **Restart Blender** action
-   appears in Preferences with both the running and installed versions, and
-   that a one-shot restart dialog appears on its own with **Restart Blender**
-   and **Later** actions.
+   appears in Preferences with both the running and installed versions. The
+   one-shot restart dialog with **Restart Blender** and **Later** actions
+   appears on Blender's next scene update after the change is detected (for
+   example, after an edit in the viewport).
 5. Restart Blender and confirm the notice disappears and the importer works.
 6. Repeat the update through **Install from Disk**.
 7. After updating without restarting, disable and re-enable BlendMax; confirm

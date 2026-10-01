@@ -5,9 +5,10 @@ older code is still running. The notice is drawn from that record, and the
 record is consumed once the updated code is actually running. BlendMax ships
 no updater, so a timer compares the manifest version on disk with the version
 captured when this Blender process first registered the add-on. When the
-watch first detects a change it also asks for a one-shot restart dialog
-(BlenderKit's popup pattern); the dialog is offered once per update, and the
-preferences notice remains the persistent record.
+watch first detects a change it arms a one-shot depsgraph handler that
+invokes the restart dialog -- BlenderKit's success-popup pattern, because a
+timer callback cannot reliably open an operator popup. The dialog is offered
+once per update, and the preferences notice remains the persistent record.
 """
 
 from __future__ import annotations
@@ -23,16 +24,12 @@ _MANIFEST = Path(__file__).resolve().parent / "blender_manifest.toml"
 _NAMESPACE_KEY = "blendmax.running_version"
 _STATE_FILENAME = "blendmax_restart_state.json"
 _POLL_SECONDS = 5.0
-_POPUP_DELAY_SECONDS = 0.2
-_POPUP_RETRY_SECONDS = 2.0
-_POPUP_MAX_ATTEMPTS = 5
 
 _last_mtime = None
 _disk_version = None
 _needed = False
 _popup_pending = False
 _popup_shown = False
-_popup_attempts = 0
 
 
 def _read_manifest_version():
@@ -140,67 +137,72 @@ def _record_clear(disk):
     _needed = False
     _popup_pending = False
     _popup_shown = False
+    _remove_popup_handler()
     _write_state(False, running_version(), disk, False)
     if changed:
         _tag_redraw()
 
 
-def _show_popup(window):
-    """Invoke the restart dialog operator in `window`; may raise."""
-    with bpy.context.temp_override(window=window):
-        bpy.ops.blendmax.restart_notice_popup("INVOKE_DEFAULT")
+def _show_popup():
+    """Invoke the restart dialog; may raise.
+
+    BlenderKit's success-popup pattern: the operator runs from a depsgraph
+    handler without a context override. An invocation Blender rejects
+    comes back as a result set without RUNNING_MODAL instead of raising,
+    so the result is checked before the dialog counts as offered.
+    """
+    result = bpy.ops.blendmax.restart_notice_popup("INVOKE_DEFAULT")
+    if "RUNNING_MODAL" not in result:
+        raise RuntimeError(
+            "restart dialog was rejected: {0!r}".format(result)
+        )
+
+
+def _popup_handler(scene, depsgraph=None):
+    """Run the one-shot restart dialog on the next depsgraph update.
+
+    Depsgraph-update handlers are called as either ``(scene)`` or
+    ``(scene, depsgraph)``; this handler accepts both forms.
+    """
+    global _popup_pending, _popup_shown
+
+    _remove_popup_handler()
+    if not _popup_pending or _popup_shown:
+        return
+    try:
+        _show_popup()
+    except Exception:
+        # The preferences notice remains; re-enabling the add-on retries.
+        return
+    _popup_pending = False
+    _popup_shown = True
+    _write_state(True, running_version(), _disk_version, True)
+
+
+def _remove_popup_handler():
+    """Drop the armed restart-dialog handler, if any."""
+    try:
+        bpy.app.handlers.depsgraph_update_post.remove(_popup_handler)
+    except Exception:
+        pass
 
 
 def _request_popup():
-    """Schedule the one-shot restart dialog; called once per update event."""
-    global _popup_attempts, _popup_pending
+    """Arm the one-shot restart dialog; called once per update event."""
+    global _popup_pending
 
     if _popup_shown:
         return
     _popup_pending = True
-    timers = bpy.app.timers
-    if not timers.is_registered(_popup_tick):
-        _popup_attempts = 0
-        timers.register(
-            _popup_tick, first_interval=_POPUP_DELAY_SECONDS, persistent=False
-        )
-
-
-def _popup_tick():
-    """Try once to show the restart dialog; bounded retries, then give up."""
-    global _popup_attempts, _popup_pending, _popup_shown
-
-    if not _popup_pending or _popup_shown:
-        _popup_attempts = 0
-        return None
-
+    if getattr(bpy.app, "background", False):
+        return
     try:
-        window = next(iter(bpy.context.window_manager.windows), None)
+        handlers = bpy.app.handlers.depsgraph_update_post
     except Exception:
-        window = None
-    if window is None or getattr(bpy.app, "background", False):
-        return _popup_retry()
-
-    try:
-        _show_popup(window)
-    except Exception:
-        return _popup_retry()
-
-    _popup_attempts = 0
-    _popup_pending = False
-    _popup_shown = True
-    _write_state(True, running_version(), _disk_version, True)
-    return None
-
-
-def _popup_retry():
-    """Count a failed dialog attempt and decide whether to try again."""
-    global _popup_attempts
-
-    _popup_attempts += 1
-    if _popup_attempts <= _POPUP_MAX_ATTEMPTS:
-        return _POPUP_RETRY_SECONDS
-    return None
+        return
+    if any(handler is _popup_handler for handler in handlers):
+        return
+    handlers.append(_popup_handler)
 
 
 def _poll():
@@ -251,14 +253,14 @@ def draw_notice(layout):
 def register():
     """Capture this process's baseline version and start the update watch."""
     global _last_mtime, _disk_version, _needed
-    global _popup_attempts, _popup_pending, _popup_shown
+    global _popup_pending, _popup_shown
 
     _last_mtime = None
     _disk_version = None
     _needed = False
     _popup_pending = False
     _popup_shown = False
-    _popup_attempts = 0
+    _remove_popup_handler()
 
     namespace = bpy.app.driver_namespace
     baseline = namespace.get(_NAMESPACE_KEY)
@@ -295,6 +297,6 @@ def register():
 
 def unregister():
     timers = bpy.app.timers
-    for callback in (_poll, _popup_tick):
-        if timers.is_registered(callback):
-            timers.unregister(callback)
+    if timers.is_registered(_poll):
+        timers.unregister(_poll)
+    _remove_popup_handler()
