@@ -33,8 +33,40 @@ _CUBE_CORNERS = (
 )
 
 
+class FakeSplinePoints(list):
+    def add(self, count):
+        self.extend(SimpleNamespace(co=None) for _ in range(count))
+
+
+class FakeSpline:
+    def __init__(self):
+        self.points = FakeSplinePoints([SimpleNamespace(co=None)])
+
+
+class FakeSplines(list):
+    def new(self, kind):
+        spline = FakeSpline()
+        self.append(spline)
+        return spline
+
+    def remove(self, spline):
+        super().remove(spline)
+
+
+class FakeMaterials(list):
+    def clear(self):
+        for material in self:
+            material.users -= 1
+        super().clear()
+
+    def append(self, material):
+        if material not in self:
+            material.users += 1
+            super().append(material)
+
+
 class FakeDataBlock:
-    """Mesh/FONT-curve datablock with Blender's user-count semantics."""
+    """Mesh/curve datablock with Blender's user-count semantics."""
 
     def __init__(self, name, kind):
         self.name = name
@@ -44,6 +76,16 @@ class FakeDataBlock:
         self.edges = []
         self.faces = []
         self.from_pydata_calls = []
+        self.splines = FakeSplines()
+        self.materials = FakeMaterials()
+        self.dimensions = None
+        self.resolution_u = 0
+        self.bevel_depth = 0.0
+        self.bevel_resolution = 0
+        self.body = ""
+        self.align_x = None
+        self.align_y = None
+        self.size = 0.0
 
     def clear_geometry(self):
         self.vertices = []
@@ -59,6 +101,9 @@ class FakeDataBlock:
     def update(self):
         pass
 
+    def update_tag(self):
+        pass
+
 
 class FakeDataManager(list):
     def __init__(self, kind):
@@ -72,6 +117,52 @@ class FakeDataManager(list):
 
     def get(self, name):
         return next((item for item in self if item.name == name), None)
+
+    def remove(self, item):
+        for material in tuple(getattr(item, "materials", ())):
+            material.users -= 1
+        list.remove(self, item)
+
+
+class FakeInput:
+    def __init__(self, value):
+        self.default_value = value
+
+
+class FakePrincipled:
+    def __init__(self):
+        self.inputs = {
+            "Base Color": FakeInput((0.0, 0.0, 0.0, 1.0)),
+            "Roughness": FakeInput(0.0),
+        }
+
+
+class FakeNodes(dict):
+    def __init__(self):
+        super().__init__({"Principled BSDF": FakePrincipled()})
+
+
+class FakeMaterial:
+    def __init__(self, name):
+        self.name = name
+        self.users = 0
+        self.diffuse_color = None
+        self.use_nodes = False
+        self.node_tree = SimpleNamespace(nodes=FakeNodes())
+        self._properties = {}
+
+    def get(self, key, default=None):
+        return self._properties.get(key, default)
+
+    def __setitem__(self, key, value):
+        self._properties[key] = value
+
+
+class FakeMaterialManager(list):
+    def new(self, name):
+        material = FakeMaterial(name)
+        self.append(material)
+        return material
 
 
 class FakeObject:
@@ -191,6 +282,7 @@ class FakeBpyData:
         self.curves = FakeDataManager("FONT")
         self.objects = FakeObjectManager()
         self.collections = FakeCollectionManager()
+        self.materials = FakeMaterialManager()
 
 
 class FakeBpy:
@@ -235,7 +327,7 @@ class MeasurementCageToolTests(unittest.TestCase):
             and (kind is None or obj.get("blendmax_presentation_kind") == kind)
         ]
 
-    def test_cage_is_built_from_the_edge_list_and_hidden_from_renders(self):
+    def test_cage_is_renderable_beveled_curve_lattice(self):
         source = self._add_source("Chair")
         self.context.selected_objects = [source]
 
@@ -245,25 +337,30 @@ class MeasurementCageToolTests(unittest.TestCase):
         )
 
         self.assertEqual(envelope.dimensions, (1.0, 1.0, 1.0))
-        self.assertIs(cage.data, self.bpy.data.meshes.get("BlendMax Measurement Cage"))
+        self.assertIs(cage.data, self.bpy.data.curves.get("BlendMax Measurement Cage"))
         expected_vertices, expected_edges = cage_geometry(
             (envelope.minimum, envelope.maximum),
             (2, 1, 1),
         )
-        vertices, edges, faces = cage.data.from_pydata_calls[-1]
+        actual_rods = {
+            tuple(sorted(tuple(point.co[:3]) for point in spline.points))
+            for spline in cage.data.splines
+        }
+        expected_rods = {
+            tuple(sorted((expected_vertices[start], expected_vertices[end])))
+            for start, end in expected_edges
+        }
+        self.assertEqual(actual_rods, expected_rods)
+        self.assertEqual(len(cage.data.splines), len(actual_rods))
+        self.assertEqual(cage.type, "CURVE")
+        self.assertFalse(cage.hide_render)
+        self.assertGreater(cage.data.bevel_depth, 0.0)
+        self.assertEqual(cage.data.dimensions, "3D")
+        self.assertEqual(len(cage.data.materials), 1)
         self.assertEqual(
-            sorted(tuple(point) for point in vertices),
-            sorted(tuple(point) for point in expected_vertices),
+            cage.data.materials[0].get("blendmax_measurement_material"), "cage"
         )
-        self.assertEqual(
-            sorted(tuple(edge) for edge in edges),
-            sorted(tuple(edge) for edge in expected_edges),
-        )
-        self.assertEqual(faces, [])
-        self.assertEqual(len(vertices), 12)
-
-        self.assertTrue(cage.hide_render)
-        self.assertEqual(cage.display_type, "WIRE")
+        self.assertEqual(cage.display_type, "SOLID")
         self.assertTrue(cage.show_in_front)
         self.assertFalse(cage.hide_viewport)
         self.assertEqual(cage["blendmax_measurement_envelope_increment"], 0.5)
@@ -359,6 +456,54 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.assertEqual(labels["Depth"], "D 3.000 m")
         self.assertEqual(labels["Height"], "H 2.000 m")
 
+    def test_multiple_selected_objects_use_one_combined_cage_including_gaps(self):
+        left = self._add_source("Left", location=(0.0, 0.0, 0.0), scale=(2.0, 1.0, 1.0))
+        right = self._add_source("Right", location=(5.0, 0.0, 0.0), scale=(2.0, 1.0, 1.0))
+        self.context.selected_objects = [left, right]
+
+        cage, envelope = self._create(envelope_increment=1.0, show_dimensions=False)
+
+        self.assertEqual(envelope.minimum, (-1.0, -0.5, -0.5))
+        self.assertEqual(envelope.dimensions, (7.0, 1.0, 1.0))
+        self.assertEqual(len(self._tool_objects(kind="cage")), 1)
+        self.assertEqual(cage["blendmax_measurement_sources"], '["Left", "Right"]')
+        self.assertTrue(left.selected)
+        self.assertTrue(right.selected)
+
+    def test_selected_hierarchy_includes_grandchildren_and_deeper_descendants(self):
+        root = self.bpy.data.objects.new("Root", None)
+        child = self._add_source("Child", location=(2.0, 0.0, 0.0))
+        grandchild = self.bpy.data.objects.new("Grandchild", None)
+        great_grandchild = self._add_source("Great Grandchild", location=(8.0, 0.0, 0.0))
+        child.parent = root
+        root.children.append(child)
+        grandchild.parent = child
+        child.children.append(grandchild)
+        great_grandchild.parent = grandchild
+        grandchild.children.append(great_grandchild)
+        self.context.selected_objects = [root]
+
+        _cage, envelope = self._create(envelope_increment=1.0, show_dimensions=False)
+
+        self.assertEqual(envelope.minimum, (1.5, -0.5, -0.5))
+        self.assertEqual(envelope.dimensions, (7.0, 1.0, 1.0))
+
+    def test_active_cage_restores_multiple_source_roots_for_rerun(self):
+        first = self._add_source("First")
+        second = self._add_source("Second", location=(4.0, 0.0, 0.0))
+        self.context.selected_objects = [first, second]
+        cage, first_envelope = self._create(show_dimensions=False)
+
+        self.context.selected_objects = [cage]
+        self.context.view_layer.objects.active = cage
+        _same_cage, rerun_envelope = self._create(show_dimensions=False)
+
+        self.assertEqual(first_envelope, rerun_envelope)
+        self.assertEqual(self.context.view_layer.objects.active, first)
+        self.assertTrue(first.selected)
+        self.assertTrue(second.selected)
+        self.assertEqual(len(self._tool_objects(kind="cage")), 1)
+
     def test_rerun_updates_the_same_cage_and_labels(self):
         source = self._add_source("Chair")
         self.context.selected_objects = [source]
@@ -376,6 +521,23 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.assertEqual(len(self.bpy.data.meshes), mesh_count)
         self.assertEqual(len(self.bpy.data.curves), curve_count)
         self.assertNotIn("blendmax_measurement_margin", first_cage._properties)
+
+    def test_rerun_removes_an_existing_duplicate_cage(self):
+        source = self._add_source("Chair")
+        self.context.selected_objects = [source]
+        cage, _ = self._create(show_dimensions=False)
+        collection = self.bpy.data.collections[0]
+        duplicate_data = self.bpy.data.curves.new("Duplicate Cage", type="CURVE")
+        duplicate = self.bpy.data.objects.new("Duplicate Cage", duplicate_data)
+        duplicate["blendmax_presentation_tool"] = "measurement_cage"
+        duplicate["blendmax_presentation_kind"] = "cage"
+        collection.objects.link(duplicate)
+
+        updated, _ = self._create(show_dimensions=False)
+
+        self.assertIs(updated, cage)
+        self.assertEqual(self._tool_objects(kind="cage"), [cage])
+        self.assertNotIn(duplicate_data, self.bpy.data.curves)
 
     def test_rerun_resets_cage_and_label_transforms_to_world_space(self):
         source = self._add_source("Chair")
@@ -405,14 +567,17 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.assertEqual(cage.delta_location, (0.0, 0.0, 0.0))
         self.assertEqual(cage.delta_rotation_euler, (0.0, 0.0, 0.0))
         self.assertEqual(cage.delta_scale, (1.0, 1.0, 1.0))
-        self.assertEqual(len(cage.data.vertices), 8)
-        expected_vertices, _edges = cage_geometry(
+        vertices, edges = cage_geometry(
             ((-0.5, -0.5, -0.5), (0.5, 0.5, 0.5))
         )
-        self.assertEqual(
-            sorted(tuple(point) for point in cage.data.vertices),
-            sorted(expected_vertices),
-        )
+        actual_rods = {
+            tuple(sorted(tuple(point.co[:3]) for point in spline.points))
+            for spline in cage.data.splines
+        }
+        expected_rods = {
+            tuple(sorted((vertices[start], vertices[end]))) for start, end in edges
+        }
+        self.assertEqual(actual_rods, expected_rods)
         for label in labels:
             self.assertIsNone(label.parent)
             self.assertNotEqual(label.location, (20.0, 30.0, 40.0))
@@ -432,7 +597,7 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.assertEqual(set(labels), {"Width", "Depth", "Height"})
         for dimension, label in labels.items():
             self.assertTrue(label.data.body.startswith(dimension[0] + " "))
-            self.assertTrue(label.hide_render)
+            self.assertFalse(label.hide_render)
 
     def test_renamed_label_is_reused_instead_of_duplicated(self):
         source = self._add_source("Chair")
@@ -472,13 +637,15 @@ class MeasurementCageToolTests(unittest.TestCase):
 
         self.assertEqual(len(self.bpy.data.curves), curve_count)
         self.assertTrue(all(label.hide_viewport for label in labels))
+        self.assertTrue(all(label.hide_render for label in labels))
 
         self._create(show_dimensions=True)
 
         self.assertEqual(len(self.bpy.data.curves), curve_count)
         self.assertFalse(any(label.hide_viewport for label in labels))
+        self.assertFalse(any(label.hide_render for label in labels))
 
-    def test_stored_source_is_kept_while_it_still_exists(self):
+    def test_current_multiple_selection_replaces_the_stored_source_roots(self):
         source_a = self._add_source("Chair")
         self.context.selected_objects = [source_a]
         cage, _ = self._create()
@@ -490,8 +657,9 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.context.view_layer.objects.active = cage
         self._create()
 
-        self.assertEqual(cage["blendmax_measurement_source"], "Chair")
-        self.assertEqual(cage["blendmax_measurement_dimensions"], (1.0, 1.0, 1.0))
+        self.assertEqual(cage["blendmax_measurement_source"], "Bench")
+        self.assertEqual(cage["blendmax_measurement_sources"], '["Bench", "Chair"]')
+        self.assertEqual(cage["blendmax_measurement_dimensions"], (7.0, 2.0, 2.0))
 
     def test_cage_re_targets_the_selection_when_stored_source_is_deleted(self):
         source_a = self._add_source("Chair")
@@ -539,14 +707,15 @@ class MeasurementCageToolTests(unittest.TestCase):
         source = self._add_source("Chair")
         self.context.selected_objects = [source]
         self._create()
-        cage_mesh = self.bpy.data.meshes.get("BlendMax Measurement Cage")
+        cage_curve = self.bpy.data.curves.get("BlendMax Measurement Cage")
         label_curves = list(self.bpy.data.curves)
 
         removed = self.module.remove_measurement_cage()
 
         self.assertEqual(removed, 4)
-        self.assertNotIn(cage_mesh, self.bpy.data.meshes)
+        self.assertNotIn(cage_curve, self.bpy.data.curves)
         self.assertEqual(list(self.bpy.data.curves), [])
+        self.assertEqual(list(self.bpy.data.materials), [])
         self.assertEqual(label_curves[0].users, 0)
         self.assertEqual(list(self.bpy.data.collections), [])
         self.assertIsNone(self.bpy.data.objects.get("BlendMax Measurement Cage"))
@@ -576,9 +745,9 @@ class MeasurementCageToolTests(unittest.TestCase):
         cage, _ = self._create()
 
         self.assertIsNot(cage, corrupt_cage)
-        self.assertEqual(cage.type, "MESH")
+        self.assertEqual(cage.type, "CURVE")
         self.assertNotIn(stale_curve, self.bpy.data.curves)
-        self.assertIsNotNone(self.bpy.data.meshes.get("BlendMax Measurement Cage"))
+        self.assertIsNotNone(self.bpy.data.curves.get("BlendMax Measurement Cage"))
         self.assertNotIn(corrupt_cage, self.bpy.data.objects)
 
 

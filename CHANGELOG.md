@@ -12,13 +12,15 @@ called out separately from automated coverage.
 
 ### Added
 
-- Adds **BlendMax > Presentation > Create Measurement Cage**, a viewport-only
-  world-axis cage generated from the shared presentation bounds. Each dimension
-  is rounded up to a configurable envelope increment from the asset's minimum
-  corner, and labels report those standardized envelope dimensions. X/Y/Z
-  divisions and in-front visibility are configurable from the operator. The
-  cage is hidden from renders and re-running the command updates the existing
-  BlendMax presentation cage instead of accumulating duplicates. A companion
+- Adds **BlendMax > Presentation > Create Measurement Cage**, a renderable
+  world-axis lattice generated from the shared presentation bounds for one or
+  more selected objects and their descendants. Each dimension is rounded up to
+  a configurable envelope increment from the combined bounds' minimum corner,
+  and labels report those standardized envelope dimensions. X/Y/Z divisions
+  and in-front visibility are configurable from the operator. The cage uses
+  beveled curves and a dedicated material so it is visible in the viewport and
+  in renders. Re-running the command updates the existing BlendMax presentation
+  cage instead of accumulating duplicates. A companion
   **BlendMax > Presentation > Remove Measurement Cage** command removes the
   cage, its labels, and their datablocks, and the BlendMax menu is registered
   in the 3D Viewport header.

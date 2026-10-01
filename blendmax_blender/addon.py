@@ -287,13 +287,13 @@ def _print_import_summary(summary: ImportSummary, elapsed_seconds: float) -> Non
 
 
 class BLENDMAX_OT_create_measurement_cage(bpy.types.Operator):
-    """Create or update the viewport-only BlendMax measurement cage."""
+    """Create or update the renderable BlendMax measurement cage."""
 
     bl_idname = "blendmax.create_measurement_cage"
     bl_label = "Create Measurement Cage"
     bl_description = (
-        "Create or update a viewport-only measurement cage around the selected "
-        "asset/object"
+        "Create or update a renderable measurement lattice around the selected "
+        "objects and their descendants"
     )
     bl_options = {"REGISTER", "UNDO"}
 
