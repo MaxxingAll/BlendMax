@@ -187,7 +187,7 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
         reports = []
         operator = self.addon.BLENDMAX_OT_create_measurement_cage()
         operator.report = lambda levels, message: reports.append((levels, message))
-        operator.margin = 0.0
+        operator.envelope_increment = 1.0
         operator.divisions_x = 1
         operator.divisions_y = 1
         operator.divisions_z = 1

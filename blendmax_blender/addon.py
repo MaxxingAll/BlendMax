@@ -297,11 +297,11 @@ class BLENDMAX_OT_create_measurement_cage(bpy.types.Operator):
     )
     bl_options = {"REGISTER", "UNDO"}
 
-    margin: bpy.props.FloatProperty(
-        name="Margin",
-        description="Additional world-space margin around the asset bounds",
-        default=0.0,
-        min=0.0,
+    envelope_increment: bpy.props.FloatProperty(
+        name="Envelope Increment",
+        description="Round each cage dimension up to this world-space increment",
+        default=1.0,
+        min=0.000001,
         soft_max=10.0,
         subtype="DISTANCE",
     )
@@ -341,9 +341,9 @@ class BLENDMAX_OT_create_measurement_cage(bpy.types.Operator):
         from .blender_presentation import create_measurement_cage
 
         try:
-            _cage, bounds = create_measurement_cage(
+            _cage, envelope = create_measurement_cage(
                 context,
-                margin=self.margin,
+                envelope_increment=self.envelope_increment,
                 divisions=(self.divisions_x, self.divisions_y, self.divisions_z),
                 show_dimensions=self.show_dimensions,
                 in_front=self.in_front,
@@ -355,7 +355,7 @@ class BLENDMAX_OT_create_measurement_cage(bpy.types.Operator):
         self.report(
             {"INFO"},
             "Measurement Cage: W {0:.3f} m, D {1:.3f} m, H {2:.3f} m.".format(
-                *bounds.dimensions
+                *envelope.dimensions
             ),
         )
         return {"FINISHED"}

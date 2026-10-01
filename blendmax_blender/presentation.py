@@ -11,10 +11,11 @@ hierarchies -- lives in
 ``blendmax_blender.blender_scene.presentation_bounds``. Nothing here
 imports ``bpy``.
 
-Raw bounds describe the actual asset. Presentation margin/framing is an
-explicit derived operation (:meth:`PresentationBounds.expanded`) rather
-than baked into the stored bounds, so the cage measures the real asset
-while cameras may frame a grown copy -- one cannot influence the other.
+Raw bounds describe the actual asset and remain the shared source of truth.
+The Measurement Cage derives an anchored, quantized envelope in
+``presentation_cage``; camera framing can derive an expanded copy with
+:meth:`PresentationBounds.expanded`. Neither operation changes these raw
+bounds or affects the other tool.
 """
 
 from __future__ import annotations

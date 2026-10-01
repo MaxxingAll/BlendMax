@@ -112,6 +112,9 @@ class FakeObject:
     def __getitem__(self, key):
         return self._properties[key]
 
+    def pop(self, key, default=None):
+        return self._properties.pop(key, default)
+
     def hide_set(self, state):
         self.hide_viewport = bool(state)
 
@@ -236,16 +239,15 @@ class MeasurementCageToolTests(unittest.TestCase):
         source = self._add_source("Chair")
         self.context.selected_objects = [source]
 
-        cage, bounds = self._create(margin=0.25, divisions=(2, 1, 1))
+        cage, envelope = self._create(
+            envelope_increment=0.5,
+            divisions=(2, 1, 1),
+        )
 
-        self.assertEqual(tuple(bounds.dimensions), (1.0, 1.0, 1.0))
+        self.assertEqual(envelope.dimensions, (1.0, 1.0, 1.0))
         self.assertIs(cage.data, self.bpy.data.meshes.get("BlendMax Measurement Cage"))
-        cage_bounds = bounds.expanded(0.25)
         expected_vertices, expected_edges = cage_geometry(
-            (
-                tuple(float(value) for value in cage_bounds.minimum),
-                tuple(float(value) for value in cage_bounds.maximum),
-            ),
+            (envelope.minimum, envelope.maximum),
             (2, 1, 1),
         )
         vertices, edges, faces = cage.data.from_pydata_calls[-1]
@@ -264,9 +266,10 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.assertEqual(cage.display_type, "WIRE")
         self.assertTrue(cage.show_in_front)
         self.assertFalse(cage.hide_viewport)
-        self.assertEqual(cage["blendmax_measurement_margin"], 0.25)
+        self.assertEqual(cage["blendmax_measurement_envelope_increment"], 0.5)
         self.assertEqual(cage["blendmax_measurement_divisions"], (2, 1, 1))
         self.assertEqual(cage["blendmax_measurement_dimensions"], (1.0, 1.0, 1.0))
+        self.assertEqual(cage["blendmax_measurement_asset_dimensions"], (1.0, 1.0, 1.0))
         self.assertEqual(cage["blendmax_measurement_source"], "Chair")
 
     def test_cage_and_labels_live_in_the_presentation_collection(self):
@@ -326,21 +329,42 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.assertEqual(self._tool_objects(), [])
         self.assertEqual(list(self.bpy.data.collections), [])
 
-    def test_negative_margin_is_rejected_before_creating_cage(self):
+    def test_invalid_increment_is_rejected_before_creating_cage(self):
         source = self._add_source("Chair")
         self.context.selected_objects = [source]
 
-        with self.assertRaisesRegex(ValueError, "margin cannot be negative"):
-            self._create(margin=-0.1)
+        with self.assertRaisesRegex(ValueError, "finite positive"):
+            self._create(envelope_increment=0.0)
 
         self.assertEqual(self._tool_objects(), [])
         self.assertEqual(list(self.bpy.data.collections), [])
+
+    def test_labels_and_metadata_report_standardized_envelope_dimensions(self):
+        source = self._add_source("Display", scale=(3.6, 2.5, 1.5))
+        self.context.selected_objects = [source]
+
+        cage, envelope = self._create(envelope_increment=1.0)
+
+        self.assertEqual(envelope.dimensions, (4.0, 3.0, 2.0))
+        self.assertEqual(
+            cage["blendmax_measurement_asset_dimensions"],
+            (3.6, 2.5, 1.5),
+        )
+        self.assertEqual(cage["blendmax_measurement_dimensions"], (4.0, 3.0, 2.0))
+        labels = {
+            obj.get("blendmax_measurement_dimension"): obj.data.body
+            for obj in self._tool_objects(kind="label")
+        }
+        self.assertEqual(labels["Width"], "W 4.000 m")
+        self.assertEqual(labels["Depth"], "D 3.000 m")
+        self.assertEqual(labels["Height"], "H 2.000 m")
 
     def test_rerun_updates_the_same_cage_and_labels(self):
         source = self._add_source("Chair")
         self.context.selected_objects = [source]
 
         first_cage, _ = self._create()
+        first_cage["blendmax_measurement_margin"] = 0.25
         object_count = len(self.bpy.data.objects)
         mesh_count = len(self.bpy.data.meshes)
         curve_count = len(self.bpy.data.curves)
@@ -351,6 +375,7 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.assertEqual(len(self.bpy.data.objects), object_count)
         self.assertEqual(len(self.bpy.data.meshes), mesh_count)
         self.assertEqual(len(self.bpy.data.curves), curve_count)
+        self.assertNotIn("blendmax_measurement_margin", first_cage._properties)
 
     def test_rerun_resets_cage_and_label_transforms_to_world_space(self):
         source = self._add_source("Chair")

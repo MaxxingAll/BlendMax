@@ -8,7 +8,7 @@ import bpy
 
 from .blender_scene import presentation_bounds
 from .placement import Bounds
-from .presentation_cage import cage_geometry
+from .presentation_cage import cage_geometry, measurement_envelope
 
 _COLLECTION_NAME = "BlendMax Presentation"
 _COLLECTION_KEY = "blendmax_presentation_collection"
@@ -171,7 +171,14 @@ def _hide_extra_labels(visible_dimensions):
             obj.hide_set(True)
 
 
-def create_measurement_cage(context, *, margin=0.0, divisions=(1, 1, 1), show_dimensions=True, in_front=True):
+def create_measurement_cage(
+    context,
+    *,
+    envelope_increment=1.0,
+    divisions=(1, 1, 1),
+    show_dimensions=True,
+    in_front=True,
+):
     """Create or update the single BlendMax measurement cage for the selection."""
     active = context.view_layer.objects.active
     source = None
@@ -197,20 +204,24 @@ def create_measurement_cage(context, *, margin=0.0, divisions=(1, 1, 1), show_di
     if bounds is None:
         raise ValueError("The selected object/asset has no valid mesh geometry.")
 
-    amount = float(margin)
-    if amount < 0.0:
-        raise ValueError("Measurement cage margin cannot be negative.")
-    cage_bounds = bounds.expanded(amount)
+    envelope = measurement_envelope(bounds, envelope_increment)
     collection = _presentation_collection(context)
     cage = _get_or_create_cage(collection)
     _reset_world_transform(cage)
-    _update_mesh(cage, cage_bounds, divisions)
+    _update_mesh(cage, envelope, divisions)
 
+    cage.pop("blendmax_measurement_margin", None)
     cage[_SOURCE_KEY] = source.name
-    cage["blendmax_measurement_margin"] = amount
+    cage["blendmax_measurement_envelope_increment"] = envelope.increment
     cage["blendmax_measurement_divisions"] = tuple(int(value) for value in divisions)
-    cage["blendmax_measurement_dimensions"] = tuple(float(value) for value in bounds.dimensions)
-    cage["blendmax_measurement_center"] = tuple(float(value) for value in bounds.center)
+    cage["blendmax_measurement_dimensions"] = envelope.dimensions
+    cage["blendmax_measurement_asset_dimensions"] = tuple(
+        float(value) for value in bounds.dimensions
+    )
+    cage["blendmax_measurement_center"] = tuple(
+        (lower + upper) * 0.5
+        for lower, upper in zip(envelope.minimum, envelope.maximum)
+    )
     cage.hide_render = True
     cage.show_in_front = bool(in_front)
     cage.display_type = "WIRE"
@@ -218,11 +229,11 @@ def create_measurement_cage(context, *, margin=0.0, divisions=(1, 1, 1), show_di
 
     visible_dimensions = set()
     if show_dimensions:
-        width, depth, height = bounds.dimensions
-        extent = max(max(bounds.dimensions), 1e-3)
+        width, depth, height = envelope.dimensions
+        extent = max(max(envelope.dimensions), 1e-3)
         offset = max(extent * 0.025, 0.01)
-        x0, y0, z0 = bounds.minimum
-        x1, y1, z1 = bounds.maximum
+        x0, y0, z0 = envelope.minimum
+        x1, y1, z1 = envelope.maximum
         label_specs = (
             ("Width", "W {0}".format(_format_dimension(width)), ((x0 + x1) * 0.5, y0 - offset, z1 + offset), (math.pi / 2.0, 0.0, 0.0)),
             ("Depth", "D {0}".format(_format_dimension(depth)), (x1 + offset, (y0 + y1) * 0.5, z1 + offset), (0.0, math.pi / 2.0, 0.0)),
@@ -240,7 +251,7 @@ def create_measurement_cage(context, *, margin=0.0, divisions=(1, 1, 1), show_di
         obj.select_set(False)
     source.select_set(True)
     context.view_layer.objects.active = source
-    return cage, bounds
+    return cage, envelope
 
 
 def remove_measurement_cage() -> int:

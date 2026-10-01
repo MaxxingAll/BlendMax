@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from blendmax_blender.presentation_cage import cage_geometry
+from blendmax_blender.presentation import PresentationBounds
+from blendmax_blender.presentation_cage import cage_geometry, measurement_envelope
 
 
 class MeasurementCageGeometryTests(unittest.TestCase):
@@ -58,6 +59,99 @@ class MeasurementCageGeometryTests(unittest.TestCase):
         self.assertTrue(vertices)
         self.assertTrue(edges)
         self.assertTrue(all(start != end for start, end in edges))
+
+
+class MeasurementEnvelopeTests(unittest.TestCase):
+    def test_quantizes_multiple_dimensions_from_the_minimum_corner(self):
+        asset = PresentationBounds.from_bounds(
+            ((10.0, -5.0, 2.0), (13.6, -2.5, 3.5))
+        )
+
+        envelope = measurement_envelope(asset, 1.0)
+
+        self.assertEqual(envelope.dimensions, (4.0, 3.0, 2.0))
+        self.assertEqual(envelope.minimum, asset.minimum)
+        self.assertEqual(envelope.maximum, (14.0, -2.0, 4.0))
+        self.assertTrue(
+            all(
+                lower <= asset_lower <= asset_upper <= upper
+                for lower, asset_lower, asset_upper, upper in zip(
+                    envelope.minimum,
+                    asset.minimum,
+                    asset.maximum,
+                    envelope.maximum,
+                )
+            )
+        )
+
+    def test_exact_increment_dimensions_do_not_grow(self):
+        asset = PresentationBounds.from_bounds(
+            ((-3.0, 4.0, 0.0), (0.0, 6.0, 4.0))
+        )
+
+        envelope = measurement_envelope(asset, 1.0)
+
+        self.assertEqual(envelope.dimensions, (3.0, 2.0, 4.0))
+        self.assertEqual(envelope.minimum, asset.minimum)
+        self.assertEqual(envelope.maximum, asset.maximum)
+
+    def test_different_increments_quantize_up_to_the_next_multiple(self):
+        asset = PresentationBounds.from_bounds(((0.0, 0.0, 0.0), (3.6, 3.6, 3.6)))
+
+        self.assertEqual(measurement_envelope(asset, 0.5).dimensions[0], 4.0)
+        self.assertEqual(measurement_envelope(asset, 2.0).dimensions[0], 4.0)
+
+    def test_near_exact_increment_snaps_measurement_but_contains_asset(self):
+        asset = PresentationBounds.from_bounds(
+            ((0.0, 0.0, 0.0), (3.0000000001, 1.0, 1.0))
+        )
+
+        envelope = measurement_envelope(asset, 1.0)
+
+        self.assertEqual(envelope.dimensions[0], 3.0)
+        self.assertGreaterEqual(envelope.maximum[0], asset.maximum[0])
+        self.assertEqual(envelope.maximum[1:], asset.maximum[1:])
+
+    def test_small_positive_extent_does_not_snap_down_to_zero(self):
+        asset = PresentationBounds.from_bounds(
+            ((0.0, 0.0, 0.0), (1e-10, 0.0, 0.0))
+        )
+
+        envelope = measurement_envelope(asset, 1.0)
+
+        self.assertEqual(envelope.dimensions[0], 1.0)
+        self.assertGreaterEqual(envelope.maximum[0], asset.maximum[0])
+
+    def test_degenerate_dimensions_remain_zero(self):
+        asset = PresentationBounds.from_bounds(
+            ((2.0, -1.0, 4.0), (2.0, 1.5, 5.0))
+        )
+
+        envelope = measurement_envelope(asset, 1.0)
+
+        self.assertEqual(envelope.dimensions, (0.0, 3.0, 1.0))
+        self.assertEqual(envelope.minimum[0], envelope.maximum[0])
+
+    def test_invalid_increments_are_rejected(self):
+        asset = PresentationBounds.from_bounds(((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)))
+        for increment in (0.0, -1.0, float("inf"), float("nan"), None):
+            with self.subTest(increment=increment):
+                with self.assertRaises(ValueError):
+                    measurement_envelope(asset, increment)
+
+    def test_grid_divisions_begin_at_the_anchored_minimum_corner(self):
+        asset = PresentationBounds.from_bounds(
+            ((10.0, -5.0, 2.0), (13.6, -2.5, 3.5))
+        )
+        envelope = measurement_envelope(asset, 1.0)
+
+        vertices, _edges = cage_geometry(
+            (envelope.minimum, envelope.maximum),
+            (4, 3, 2),
+        )
+
+        for x_position in range(10, 15):
+            self.assertIn((float(x_position), -5.0, 2.0), vertices)
 
 
 if __name__ == "__main__":

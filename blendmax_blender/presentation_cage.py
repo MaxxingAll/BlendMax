@@ -7,12 +7,90 @@ the geometry contract independently testable from Blender data APIs.
 
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
 from typing import Iterable, List, Sequence, Tuple
 
+from .presentation import PresentationBounds
 from .placement import Bounds
 
 Vector3 = Tuple[float, float, float]
 Edge = Tuple[int, int]
+
+
+@dataclass(frozen=True)
+class MeasurementEnvelope:
+    """Quantized measurements and their containing world-space cage bounds."""
+
+    minimum: Vector3
+    maximum: Vector3
+    dimensions: Vector3
+    increment: float
+
+
+def measurement_envelope(
+    bounds: PresentationBounds,
+    increment: float,
+) -> MeasurementEnvelope:
+    """Quantize each asset extent upward from its minimum corner.
+
+    Near-increment floating-point noise is snapped to the increment for the
+    reported measurement. The geometric maximum still includes the raw asset
+    maximum, so this tolerance can never make the cage smaller than the asset.
+    Degenerate axes remain zero-sized.
+    """
+
+    try:
+        step = float(increment)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("Envelope increment must be a finite positive number.") from exc
+    if not math.isfinite(step) or step <= 0.0:
+        raise ValueError("Envelope increment must be a finite positive number.")
+
+    dimensions = []
+    maximum = []
+    for lower, upper in zip(bounds.minimum, bounds.maximum):
+        extent = float(upper) - float(lower)
+        if not math.isfinite(extent) or extent < 0.0:
+            raise ValueError("Asset bounds must have finite, nonnegative dimensions.")
+        if extent == 0.0:
+            rounded = 0.0
+        else:
+            ratio = extent / step
+            if not math.isfinite(ratio):
+                raise ValueError("Envelope dimensions exceed the supported range.")
+            nearest_units = round(ratio)
+            nearest_extent = nearest_units * step
+            tolerance = step * 1e-9
+            if math.isfinite(nearest_extent):
+                tolerance = max(
+                    tolerance,
+                    math.ulp(extent) * 4.0,
+                    math.ulp(nearest_extent) * 4.0,
+                )
+            if (
+                nearest_units > 0
+                and math.isfinite(nearest_extent)
+                and abs(extent - nearest_extent) <= tolerance
+            ):
+                units = nearest_units
+            else:
+                units = math.ceil(ratio)
+            rounded = units * step
+            if not math.isfinite(rounded):
+                raise ValueError("Envelope dimensions exceed the supported range.")
+        dimensions.append(rounded)
+        candidate_maximum = float(lower) + rounded
+        if not math.isfinite(candidate_maximum):
+            raise ValueError("Envelope dimensions exceed the supported range.")
+        maximum.append(max(float(upper), candidate_maximum))
+
+    return MeasurementEnvelope(
+        minimum=tuple(float(value) for value in bounds.minimum),
+        maximum=tuple(maximum),
+        dimensions=tuple(dimensions),
+        increment=step,
+    )
 
 
 def _axis_values(lower: float, upper: float, divisions: int) -> Iterable[float]:
