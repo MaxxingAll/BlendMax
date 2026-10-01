@@ -251,12 +251,25 @@ class FakeCollectionObjects(list):
 
 class FakeChildren(list):
     def link(self, item):
-        if item not in self:
+        if not any(existing is item for existing in self):
             self.append(item)
 
     def unlink(self, item):
-        if item in self:
-            self.remove(item)
+        for index, existing in enumerate(self):
+            if existing is item:
+                del self[index]
+                break
+
+
+class FakeBpyPropCollection(FakeChildren):
+    """Model bpy_prop_collection iteration and its name-only membership API."""
+
+    def __contains__(self, value):
+        if isinstance(value, str):
+            return any(item.name == value for item in self)
+        if isinstance(value, tuple) and all(isinstance(name, str) for name in value):
+            return any(item.name in value for item in self)
+        raise TypeError("bpy_prop_collection membership expects a name string")
 
 
 class FakeCollection:
@@ -271,6 +284,9 @@ class FakeCollection:
 
     def __setitem__(self, key, value):
         self._properties[key] = value
+
+    def as_pointer(self):
+        return id(self)
 
 
 class FakeCollectionManager(list):
@@ -574,6 +590,37 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.assertIn(presentation, scene_b.collection.children)
         self.assertEqual(tuple(self._tool_objects()), generated_before)
         self.assertIs(self._tool_objects(kind="cage")[0], cage)
+
+    def test_collection_membership_uses_blender_rna_identity_contract(self):
+        source = self._add_source("Chair")
+        self.context.selected_objects = [source]
+        cage, _ = self._create()
+        presentation = next(
+            item
+            for item in self.bpy.data.collections
+            if item.get("blendmax_presentation_collection") == "presentation"
+        )
+
+        old_parent = FakeCollection("Previous Parent")
+        old_parent.children.link(presentation)
+        self.bpy.data.collections.append(old_parent)
+        self.bpy.scene_collection.children.unlink(presentation)
+
+        # bpy_prop_collection raises TypeError for RNA objects passed to `in`.
+        old_parent.children = FakeBpyPropCollection(old_parent.children)
+        self.bpy.scene_collection.children = FakeBpyPropCollection(
+            self.bpy.scene_collection.children
+        )
+        for obj in self._tool_objects():
+            obj.users_collection = FakeBpyPropCollection(obj.users_collection)
+
+        updated_cage, _ = self._create()
+
+        self.assertIs(updated_cage, cage)
+        self.assertTrue(
+            any(item is presentation for item in self.bpy.scene_collection.children)
+        )
+        self.assertFalse(any(item is presentation for item in old_parent.children))
 
     def test_source_transforms_and_hierarchy_are_unchanged(self):
         parent = self._add_source("Parent")

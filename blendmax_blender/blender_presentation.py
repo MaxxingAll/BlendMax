@@ -27,6 +27,12 @@ _MATERIAL_KEY = "blendmax_measurement_material"
 _MATERIAL_VALUE = "cage"
 
 
+def _collection_is_linked(collections, target) -> bool:
+    """Check exact collection identity without bpy_prop_collection.__contains__."""
+    target_pointer = target.as_pointer()
+    return any(item.as_pointer() == target_pointer for item in collections)
+
+
 def _is_cage_object(obj) -> bool:
     getter = getattr(obj, "get", None)
     return callable(getter) and getter(_TOOL_KEY) == _TOOL_VALUE
@@ -39,7 +45,7 @@ def _unlink_collection_from_parents(collection, scene_collection=None, keep=None
         if scene_collection not in parents:
             parents.append(scene_collection)
     for parent in parents:
-        if parent is not keep and collection in parent.children:
+        if parent is not keep and _collection_is_linked(parent.children, collection):
             parent.children.unlink(collection)
 
 
@@ -86,13 +92,13 @@ def _presentation_collection(context, hierarchy_root=None):
         scene_collection=context.scene.collection,
         keep=parent_collection,
     )
-    if collection not in parent_collection.children:
+    if not _collection_is_linked(parent_collection.children, collection):
         parent_collection.children.link(collection)
     return collection
 
 
 def _link_only_to(obj, collection) -> None:
-    if collection not in obj.users_collection:
+    if not _collection_is_linked(obj.users_collection, collection):
         collection.objects.link(obj)
     for current in tuple(obj.users_collection):
         if current != collection:
