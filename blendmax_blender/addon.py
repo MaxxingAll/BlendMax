@@ -248,6 +248,54 @@ class BLENDMAX_OT_remove_measurement_cage(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class BLENDMAX_OT_restart_notice_later(bpy.types.Operator):
+    """Keep working; the restart notice stays in the add-on preferences."""
+
+    bl_idname = "blendmax.restart_notice_later"
+    bl_label = "Later"
+    bl_options = {"INTERNAL"}
+
+    def execute(self, _context):
+        return {"FINISHED"}
+
+
+class BLENDMAX_OT_restart_notice_popup(bpy.types.Operator):
+    """BlendMax was updated while this session was running."""
+
+    bl_idname = "blendmax.restart_notice_popup"
+    bl_label = "BlendMax Was Updated"
+    bl_options = {"INTERNAL"}
+
+    def invoke(self, context, _event):
+        return context.window_manager.invoke_popup(self, width=340)
+
+    def draw(self, _context):
+        layout = self.layout
+        heading = layout.row()
+        heading.alert = True
+        heading.label(text="BlendMax was updated.", icon="ERROR")
+        layout.label(text="Restart Blender to load the new code.")
+        layout.separator()
+        layout.label(
+            text="Installed BlendMax version: {0}".format(
+                restart_notice.disk_version()
+            )
+        )
+        layout.label(
+            text="Running BlendMax version: {0}".format(
+                restart_notice.running_version()
+            )
+        )
+        layout.separator()
+        buttons = layout.row()
+        buttons.operator(
+            "wm.quit_blender", text="Restart Blender", icon="ERROR"
+        )
+        buttons.operator(
+            BLENDMAX_OT_restart_notice_later.bl_idname, text="Later"
+        )
+
+
 class BLENDMAX_MT_presentation(bpy.types.Menu):
     bl_idname = "BLENDMAX_MT_presentation"
     bl_label = "Presentation"
@@ -357,6 +405,8 @@ _CLASSES = (
     BLENDMAX_OT_import_asset,
     BLENDMAX_OT_create_measurement_cage,
     BLENDMAX_OT_remove_measurement_cage,
+    BLENDMAX_OT_restart_notice_popup,
+    BLENDMAX_OT_restart_notice_later,
     BLENDMAX_MT_presentation,
     BLENDMAX_MT_main,
 )

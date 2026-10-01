@@ -44,6 +44,9 @@ def load_addon(module_name="blendmax_blender._addon_summary_test"):
         def operator(self, *args, **kwargs):
             self.layout.operator_calls.append((args, kwargs))
 
+        def label(self, *args, **kwargs):
+            self.layout.labels.append((args, kwargs))
+
     class FakeLayout:
         def __init__(self):
             self.operator_calls = []
@@ -57,6 +60,9 @@ def load_addon(module_name="blendmax_blender._addon_summary_test"):
 
         def row(self):
             return FakeRow(self)
+
+        def separator(self):
+            pass
 
         def label(self, *args, **kwargs):
             self.labels.append((args, kwargs))
@@ -92,6 +98,8 @@ def load_addon(module_name="blendmax_blender._addon_summary_test"):
     fake_restart_notice.register = lambda: restart_events.append("register")
     fake_restart_notice.unregister = lambda: restart_events.append("unregister")
     fake_restart_notice.draw_notice = lambda _layout: False
+    fake_restart_notice.disk_version = lambda: "0.1.11"
+    fake_restart_notice.running_version = lambda: "0.1.10"
 
     addon_path = (
         Path(__file__).resolve().parents[1] / "blendmax_blender" / "addon.py"
@@ -311,6 +319,44 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
         self.assertEqual(
             self.addon._test_restart_events,
             ["register", "unregister"],
+        )
+
+    def test_restart_popup_operators_are_registered(self):
+        popup = self.addon.BLENDMAX_OT_restart_notice_popup
+        later = self.addon.BLENDMAX_OT_restart_notice_later
+        self.assertIn(popup, self.addon._CLASSES)
+        self.assertIn(later, self.addon._CLASSES)
+        self.assertEqual(popup.bl_idname, "blendmax.restart_notice_popup")
+        self.assertEqual(later.bl_idname, "blendmax.restart_notice_later")
+
+    def test_restart_popup_draws_versions_and_actions(self):
+        operator = self.addon.BLENDMAX_OT_restart_notice_popup()
+        layout = self.addon._test_fake_layout()
+        operator.layout = layout
+
+        operator.draw(None)
+
+        self.assertEqual(
+            [kwargs["text"] for _args, kwargs in layout.labels],
+            [
+                "BlendMax was updated.",
+                "Restart Blender to load the new code.",
+                "Installed BlendMax version: 0.1.11",
+                "Running BlendMax version: 0.1.10",
+            ],
+        )
+        self.assertEqual(
+            layout.operator_calls,
+            [
+                (
+                    ("wm.quit_blender",),
+                    {"text": "Restart Blender", "icon": "ERROR"},
+                ),
+                (
+                    ("blendmax.restart_notice_later",),
+                    {"text": "Later"},
+                ),
+            ],
         )
 
 

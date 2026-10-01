@@ -146,12 +146,15 @@ it is unit-tested without `bpy`. None of it is host-verified inside Blender.
 1. Install version N-1 and start Blender.
 2. Confirm the restart notice is absent.
 3. Update to N through Blender's native Extensions UI without restarting.
-4. Wait about five seconds and confirm Preferences show the red **Restart
-   Blender** action, with both the running and installed versions.
+4. Wait about five seconds and confirm the red **Restart Blender** action
+   appears in Preferences with both the running and installed versions, and
+   that a one-shot restart dialog appears on its own with **Restart Blender**
+   and **Later** actions.
 5. Restart Blender and confirm the notice disappears and the importer works.
 6. Repeat the update through **Install from Disk**.
 7. After updating without restarting, disable and re-enable BlendMax; confirm
-   the notice remains until Blender restarts.
+   the notice remains until Blender restarts and the dialog does not appear
+   again for the same update event.
 
 Changes that do not bump `version` in `blender_manifest.toml` cannot trigger the
 notice. Development builds must bump the manifest version when needed.
@@ -246,6 +249,8 @@ Live `getPropNames` confirmed these actual keys and readable values:
 - Import completes without a Python traceback.
 - The notice appears only while running and installed manifest versions differ,
   and clears after Blender restarts.
+- The restart dialog appears once per update event and does not appear again
+  for the same update after it is dismissed.
 - UI drawing uses cached version state and performs no file I/O.
 - Relative object transforms, hierarchy, UVs, normals, tangents, and material
   indices visually match the FBX/export manifest after world-origin placement.

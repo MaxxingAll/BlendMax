@@ -21,7 +21,7 @@ created automatically by Python.
 | Component | Version | Status |
 | --- | --- | --- |
 | 3ds Max exporter and cleanup | `0.1.0-alpha.4.3.0` | Host verified in 3ds Max 2025.3 |
-| Blender importer | `0.1.12` | Measurement Cage, structured import summary, and version-based restart notice |
+| Blender importer | `0.1.12` | Measurement Cage, structured import summary, and a version-based restart notice with a one-shot dialog |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
 | Automated suite | See CI | Python 3.11–3.13 |
 
@@ -149,7 +149,10 @@ Build or download `blendmax_importer-0.1.12.zip`, then in Blender:
 After installing or updating the extension, restart Blender to load the new
 code. If the installed manifest version changes while Blender remains open,
 BlendMax shows a **Restart Blender** notice in Add-on Preferences with both the
-running and installed versions. The state lives in
+running and installed versions, and pops a one-shot restart dialog
+(BlenderKit-style) offering **Restart Blender** or **Later**; the dialog is
+offered once per detected update and skipped in background sessions. The state
+lives in
 `blendmax/blendmax_restart_state.json` under Blender's user config directory:
 it is set when the versions diverge and consumed once Blender restarts into
 the updated code. The notice does not depend on an extension-update callback
