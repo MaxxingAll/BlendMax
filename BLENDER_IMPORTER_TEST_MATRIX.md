@@ -155,13 +155,12 @@ it is unit-tested without `bpy`. None of it is host-verified inside Blender.
 5. Click **Reload BlendMax** once and confirm the add-on remains enabled. The
    button must disable immediately and read **Reloading BlendMax…**, then remain
    disabled as **BlendMax Reload Used** after the reload completes.
-6. Confirm the changed code is active without restarting Blender and that the
-   first successful reload consumes the restart notice.
+6. Confirm the changed code is active without restarting Blender.
 7. Click the button twice rapidly and confirm only one reload is scheduled, with
    no repeated `BlendMax reload scheduled.` Info Log messages.
 8. Force an import-time error in the installed copy, click Reload, and confirm
-   the System Console receives a traceback, the restart notice becomes visible,
-   and Hot Reload stays consumed until Blender is restarted.
+   the System Console receives a traceback and the failed reload guard is
+   released.
 
 ### B. Blender extension ZIP layout — PENDING HOST TEST
 
@@ -171,12 +170,11 @@ it is unit-tested without `bpy`. None of it is host-verified inside Blender.
    **Reload BlendMax** is available.
 4. Make a controlled change in the installed extension copy.
 5. Click **Reload BlendMax** and confirm the extension remains enabled and the
-   changed code is active without restarting Blender. The first successful
-   reload must also remove the restart notice; a second reload must not be
-   required merely to consume the notice.
+   changed code is active without restarting Blender.
 6. Repeat the rapid double-click and import-error checks from the legacy layout.
-7. Install a newer BlendMax version into the same Blender process and confirm
-   its normal restart notice can appear again before the reload is requested.
+7. Confirm Preferences show no restart-required notice after installing or
+   enabling the extension; the native install flow does not provide BlendMax
+   with a successful update event.
 
 Record the exact Blender version, installation layout, build ZIP, and result
 here after host validation. The automated suite cannot verify these operator and
@@ -270,7 +268,7 @@ Live `getPropNames` confirmed these actual keys and readable values:
 - Reload never remains queued twice from rapid repeated clicks.
 - Hot Reload can be used only once per Blender process; restarting Blender makes
   the button available again.
-- A successful first reload consumes the pending restart notice; no second reload is required just to clear it.
+- No restart-required state or prompt is created by registration or Hot Reload.
 - Relative object transforms, hierarchy, UVs, normals, tangents, and material
   indices visually match the FBX/export manifest after world-origin placement.
 - No unpacked image points at the importer's temporary directory.

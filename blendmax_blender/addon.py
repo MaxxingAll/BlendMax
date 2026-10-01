@@ -15,19 +15,11 @@ from bpy_extras.io_utils import ImportHelper
 from .errors import BlendMaxImportError
 from .importer import import_blendmax
 from .models import ImportSummary
-from .restart_notice import (
-    hot_reload_consumed_for_current_process,
-    mark_hot_reload_consumed,
-    mark_hot_reload_failed,
-    mark_hot_reload_pending,
-    restart_notice_required,
-    unmark_hot_reload_consumed,
-)
 
 
-_RESTART_NOTICE_REQUIRED = False
 _RELOAD_PENDING = False
 _HOT_RELOAD_CONSUMED = None
+_HOT_RELOAD_STATE_KEY = "blendmax.hot_reload_consumed"
 _SUMMARY_WIDTH = 60
 _DETAIL_WIDTH = 72
 _STDOUT_UTF8_CONFIGURED = False
@@ -44,25 +36,11 @@ _ICONS = {
 }
 
 
-class BLENDMAX_OT_restart_blender_notice(bpy.types.Operator):
-    bl_idname = "blendmax.restart_blender_notice"
-    bl_label = "Restart Blender"
-    bl_description = (
-        "Restart Blender to apply recent BlendMax changes. "
-        "This notice disappears automatically after Blender is restarted."
-    )
-
-    def execute(self, _context):
-        self.report({"INFO"}, "Please restart Blender to apply recent BlendMax changes.")
-        return {"FINISHED"}
-
-
 def _hot_reload() -> None:
     """Reload BlendMax from the installed module location after the operator returns."""
     global _RELOAD_PENDING
     module_name = __package__
     try:
-        mark_hot_reload_pending(bpy)
         bpy.ops.preferences.addon_disable(module=module_name)
 
         for name in list(sys.modules):
@@ -72,7 +50,7 @@ def _hot_reload() -> None:
         bpy.ops.preferences.addon_enable(module=module_name)
         print("BlendMax: hot reload completed successfully.")
     except Exception as exc:
-        mark_hot_reload_failed(bpy)
+        _set_hot_reload_consumed(False)
         print("BlendMax: hot reload failed: {0}".format(exc))
         traceback.print_exc()
     finally:
@@ -89,12 +67,26 @@ def _hot_reload_button_text(*, reload_pending: bool, reload_consumed: bool) -> s
 
 
 def _hot_reload_is_consumed() -> bool:
-    """Return cached Hot Reload consumed state, loading it from disk once."""
+    """Return whether Hot Reload was used during this Blender session."""
 
     global _HOT_RELOAD_CONSUMED
     if _HOT_RELOAD_CONSUMED is None:
-        _HOT_RELOAD_CONSUMED = hot_reload_consumed_for_current_process(bpy)
+        _HOT_RELOAD_CONSUMED = bool(
+            bpy.app.driver_namespace.get(_HOT_RELOAD_STATE_KEY, False)
+        )
     return bool(_HOT_RELOAD_CONSUMED)
+
+
+def _set_hot_reload_consumed(consumed: bool) -> None:
+    """Keep the one-use Hot Reload guard across module reloads in memory."""
+
+    global _HOT_RELOAD_CONSUMED
+    namespace = bpy.app.driver_namespace
+    if consumed:
+        namespace[_HOT_RELOAD_STATE_KEY] = True
+    else:
+        namespace.pop(_HOT_RELOAD_STATE_KEY, None)
+    _HOT_RELOAD_CONSUMED = consumed
 
 
 class BLENDMAX_OT_hot_reload(bpy.types.Operator):
@@ -102,9 +94,7 @@ class BLENDMAX_OT_hot_reload(bpy.types.Operator):
     bl_label = "Reload BlendMax"
     bl_description = (
         "Reload the currently installed BlendMax extension copy once in this "
-        "Blender session without restarting Blender. Repeated in-process "
-        "reloads are blocked because BlendMax's own module reload resets "
-        "in-memory flags; restart Blender to reload again."
+        "Blender session without restarting Blender."
     )
 
     def execute(self, _context):
@@ -115,16 +105,13 @@ class BLENDMAX_OT_hot_reload(bpy.types.Operator):
             self.report({"INFO"}, "BlendMax reload is already scheduled.")
             return {"FINISHED"}
 
-        # Persist before the timer so a second invoke cannot sneak through
-        # during the 0.1s deferral. Roll both flags back if registration fails.
-        mark_hot_reload_consumed(bpy)
-        _HOT_RELOAD_CONSUMED = True
+        # Store the guard outside this package so its module purge cannot reset it.
+        _set_hot_reload_consumed(True)
         _RELOAD_PENDING = True
         try:
             bpy.app.timers.register(_hot_reload, first_interval=0.1)
         except Exception:
-            unmark_hot_reload_consumed(bpy)
-            _HOT_RELOAD_CONSUMED = False
+            _set_hot_reload_consumed(False)
             _RELOAD_PENDING = False
             return {"CANCELLED"}
         self.report({"INFO"}, "BlendMax reload scheduled.")
@@ -149,14 +136,8 @@ class BLENDMAX_Preferences(bpy.types.AddonPreferences):
             ),
             icon="FILE_REFRESH",
         )
-        if _RESTART_NOTICE_REQUIRED:
-            layout.operator(
-                BLENDMAX_OT_restart_blender_notice.bl_idname,
-                text="⚠ Restart Blender",
-                icon="ERROR",
-            )
-        elif reload_consumed and not reload_pending:
-            layout.label(text="Restart Blender to reload again.")
+        if reload_consumed and not reload_pending:
+            layout.label(text="Hot Reload is limited to once per Blender session.")
         else:
             layout.label(text="BlendMax is ready to use.")
 
@@ -469,7 +450,6 @@ def _menu_import(self, _context) -> None:
 
 _CLASSES = (
     BLENDMAX_Preferences,
-    BLENDMAX_OT_restart_blender_notice,
     BLENDMAX_OT_hot_reload,
     BLENDMAX_OT_import_asset,
     BLENDMAX_OT_create_measurement_cage,
@@ -480,9 +460,8 @@ _CLASSES = (
 
 
 def register() -> None:
-    global _RESTART_NOTICE_REQUIRED, _HOT_RELOAD_CONSUMED
-    _RESTART_NOTICE_REQUIRED = restart_notice_required(bpy)
-    _HOT_RELOAD_CONSUMED = hot_reload_consumed_for_current_process(bpy)
+    global _HOT_RELOAD_CONSUMED
+    _HOT_RELOAD_CONSUMED = None
 
     for item in _CLASSES:
         bpy.utils.register_class(item)

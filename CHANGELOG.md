@@ -9,6 +9,10 @@ called out separately from automated coverage.
 ### Changed
 
 - Bumps the Blender importer and extension version to **0.1.10**.
+- Removes the obsolete BlendMax restart notice and its persisted process-ID
+  state. Hot Reload now keeps its one-use-per-session guard only in Blender's
+  in-memory driver namespace; no post-update restart prompt is shown because
+  Blender's native Get Extensions flow exposes no successful update callback.
 
 ### Added
 
@@ -108,14 +112,10 @@ called out separately from automated coverage.
 - Reload purges the active package and its submodules from `sys.modules` before
   re-enabling the same installed extension, so newly installed code can be
   loaded without restarting Blender.
-- A successful reload consumes the pending restart notice on that first
-  registration, including when the installed version is newer than the running
-  module. No second reload is required just to clear the notice.
 - Later clicks in the same Blender process are rejected and do not schedule
   another reload.
-- Reload failures print the full traceback, keep Hot Reload consumed, and
-  restore the normal restart-notice state so a failed reload is not treated as
-  successful. Restart Blender to recover.
+- Reload failures print the full traceback and release the Hot Reload guard so
+  the user can try again.
 
 ### Changed
 
@@ -128,10 +128,9 @@ called out separately from automated coverage.
   flushes, so imported hierarchy transforms are not distorted during adoption.
 - Degenerate bounds use a tiny epsilon on zero-extent controller axes to keep the
   controller matrix invertible while remaining visually flat on the affected axis.
-- Restart-notice suppression is represented by a one-shot current-process reload
-  marker rather than a sticky version flag. The marker is consumed only by the
-  registration produced by the requested reload, so later genuine update/restart
-  states can surface normally.
+- The Hot Reload guard is held outside the BlendMax package in Blender's
+  in-memory driver namespace, so it survives BlendMax's own module purge without
+  persistent files or process tracking.
 
 ### Release metadata
 
@@ -139,9 +138,8 @@ called out separately from automated coverage.
 
 ### Verification
 
-- Restored direct coverage for the ordinary one-restart state transition.
-- Added coverage that a first successful hot reload consumes the notice and that
-  a failed reload restores it.
+- Added coverage for the one-use Hot Reload guard across package reloads and its
+  rollback when timer registration fails.
 - Real Blender extension install/reload verification remains a host-level gate
   because the ordinary Python CI suite does not import `bpy`.
 
@@ -168,11 +166,9 @@ called out separately from automated coverage.
 ### Added
 
 - Adds a compact **⚠ Restart Blender** notice in BlendMax Add-on Preferences
-  when a one-restart refresh is pending. Hovering the control explains that a
-  Blender restart applies recent BlendMax changes and clears the notice
-  automatically after the next Blender process starts.
-- Stores the one-restart state in Blender's user configuration resource path so
-  the notice survives the current Blender session and is consumed after restart.
+  when a one-restart refresh is pending. *(This notice was removed in 0.1.10;
+  Blender's native extension installation flow does not provide the successful
+  update callback needed to show it accurately.)*
 
 ### Release metadata
 
