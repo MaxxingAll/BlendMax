@@ -468,6 +468,50 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.assertNotIn(presentation, self.bpy.data.collections)
         self.assertNotIn(presentation, hierarchy_collection.children)
 
+    def test_hierarchy_placement_skips_off_scene_membership_for_reachable_collection(self):
+        off_scene = self.bpy.data.collections.new("Off Scene")
+        reachable = self.bpy.data.collections.new("Active Hierarchy")
+        self.bpy.scene_collection.children.link(reachable)
+        root = self.bpy.data.objects.new("Root", None)
+        child = self._add_source("Child")
+        child.parent = root
+        root.children.append(child)
+        off_scene.objects.link(root)
+        reachable.objects.link(root)
+        reachable.objects.link(child)
+        self.context.selected_objects = [root]
+
+        self._create(show_dimensions=False)
+
+        presentation = next(
+            item
+            for item in self.bpy.data.collections
+            if item.get("blendmax_presentation_collection") == "presentation"
+        )
+        self.assertEqual(root.users_collection, [off_scene, reachable])
+        self.assertIn(presentation, reachable.children)
+        self.assertNotIn(presentation, off_scene.children)
+
+    def test_hierarchy_placement_falls_back_to_scene_when_no_membership_is_reachable(self):
+        off_scene = self.bpy.data.collections.new("Off Scene")
+        root = self.bpy.data.objects.new("Root", None)
+        child = self._add_source("Child")
+        child.parent = root
+        root.children.append(child)
+        off_scene.objects.link(root)
+        off_scene.objects.link(child)
+        self.context.selected_objects = [root]
+
+        self._create(show_dimensions=False)
+
+        presentation = next(
+            item
+            for item in self.bpy.data.collections
+            if item.get("blendmax_presentation_collection") == "presentation"
+        )
+        self.assertIn(presentation, self.bpy.scene_collection.children)
+        self.assertNotIn(presentation, off_scene.children)
+
     def test_presentation_collection_moves_when_selection_mode_changes(self):
         root_collection = self.bpy.data.collections.new("Root Collection")
         self.bpy.scene_collection.children.link(root_collection)

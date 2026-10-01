@@ -41,12 +41,32 @@ def _unlink_collection_from_parents(collection, scene_collection=None, keep=None
             parent.children.unlink(collection)
 
 
+def _scene_reachable_collections(scene_collection):
+    reachable = set()
+    pending = [scene_collection]
+    while pending:
+        collection = pending.pop()
+        if collection in reachable:
+            continue
+        reachable.add(collection)
+        pending.extend(collection.children)
+    return reachable
+
+
 def _presentation_collection(context, hierarchy_root=None):
     root_collection = None
-    if hierarchy_root is not None and hierarchy_root.users_collection:
+    if hierarchy_root is not None:
+        reachable = _scene_reachable_collections(context.scene.collection)
         # Blender permits objects in several collections. The first linked
-        # collection is the deterministic owner used for this presentation.
-        root_collection = hierarchy_root.users_collection[0]
+        # collection reachable from this scene is the deterministic owner.
+        root_collection = next(
+            (
+                collection
+                for collection in hierarchy_root.users_collection
+                if collection in reachable
+            ),
+            None,
+        )
     parent_collection = root_collection or context.scene.collection
     collection = next(
         (
