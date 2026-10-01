@@ -384,13 +384,38 @@ class MeasurementCageToolTests(unittest.TestCase):
             cage.data.materials[0].get("blendmax_measurement_material"), "cage"
         )
         self.assertEqual(cage.display_type, "SOLID")
-        self.assertTrue(cage.show_in_front)
+        self.assertFalse(cage.show_in_front)
         self.assertFalse(cage.hide_viewport)
         self.assertEqual(cage["blendmax_measurement_envelope_increment"], 0.5)
         self.assertEqual(cage["blendmax_measurement_divisions"], (2, 1, 1))
         self.assertEqual(cage["blendmax_measurement_dimensions"], (1.0, 1.0, 1.0))
         self.assertEqual(cage["blendmax_measurement_asset_dimensions"], (1.0, 1.0, 1.0))
         self.assertEqual(cage["blendmax_measurement_source"], "Chair")
+
+    def test_cage_defaults_behind_geometry_with_an_in_front_opt_in(self):
+        source = self._add_source("Chair")
+        self.context.selected_objects = [source]
+
+        cage, _envelope = self._create()
+        self.assertFalse(cage.show_in_front)
+
+        self.context.selected_objects = [source]
+        cage, _envelope = self._create(in_front=True)
+        self.assertTrue(cage.show_in_front)
+
+    def test_cage_material_defaults_to_bright_red(self):
+        source = self._add_source("Chair")
+        self.context.selected_objects = [source]
+
+        cage, _envelope = self._create()
+
+        material = cage.data.materials[0]
+        self.assertEqual(material.diffuse_color, (1.0, 0.0, 0.0, 1.0))
+        principled = material.node_tree.nodes.get("Principled BSDF")
+        self.assertEqual(
+            principled.inputs["Base Color"].default_value, (1.0, 0.0, 0.0, 1.0)
+        )
+        self.assertEqual(cage.color, (1.0, 0.0, 0.0, 1.0))
 
     def test_cage_lives_in_the_presentation_collection_without_text_objects(self):
         source = self._add_source("Chair")

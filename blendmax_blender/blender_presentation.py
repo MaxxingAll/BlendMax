@@ -27,6 +27,7 @@ _SOURCE_KEY = "blendmax_measurement_source"
 _SOURCES_KEY = "blendmax_measurement_sources"
 _MATERIAL_KEY = "blendmax_measurement_material"
 _MATERIAL_VALUE = "cage"
+_CAGE_COLOR = (1.0, 0.0, 0.0, 1.0)
 
 
 def _collection_is_linked(collections, target) -> bool:
@@ -159,7 +160,7 @@ def _get_or_create_material():
     if material is None:
         material = bpy.data.materials.new("BlendMax Measurement Cage")
         material[_MATERIAL_KEY] = _MATERIAL_VALUE
-    color = (0.65, 0.65, 0.65, 1.0)
+    color = _CAGE_COLOR
     material.diffuse_color = color
     material.use_nodes = True
     principled = material.node_tree.nodes.get("Principled BSDF")
@@ -268,7 +269,7 @@ def create_measurement_cage(
     *,
     envelope_increment=1.0,
     divisions=(0, 0, 0),
-    in_front=True,
+    in_front=False,
 ):
     """Create or update the single BlendMax measurement cage for the selection."""
     active = context.view_layer.objects.active
@@ -310,6 +311,7 @@ def create_measurement_cage(
     cage.hide_render = False
     cage.show_in_front = bool(in_front)
     cage.display_type = "SOLID"
+    cage.color = _CAGE_COLOR
     cage.hide_set(False)
 
     for obj in context.selected_objects:

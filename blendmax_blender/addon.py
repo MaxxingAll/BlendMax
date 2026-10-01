@@ -201,7 +201,7 @@ class BLENDMAX_OT_create_measurement_cage(bpy.types.Operator):
     in_front: bpy.props.BoolProperty(
         name="In Front",
         description="Keep the cage visible through scene geometry",
-        default=True,
+        default=False,
     )
 
     def execute(self, context):
