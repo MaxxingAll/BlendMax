@@ -15,14 +15,16 @@ called out separately from automated coverage.
 - Adds **BlendMax > Presentation > Create Measurement Cage**, a renderable
   world-axis lattice generated from the shared presentation bounds for one or
   more selected objects and their descendants. Each dimension is rounded up to
-  a configurable envelope increment from the combined bounds' minimum corner,
-  and labels report those standardized envelope dimensions. X/Y/Z divisions
-  and in-front visibility are configurable from the operator. The cage uses
-  beveled curves and a dedicated material so it is visible in the viewport and
-  in renders. Re-running the command updates the existing BlendMax presentation
-  cage instead of accumulating duplicates. A companion
+  a configurable envelope increment from the combined bounds' minimum corner.
+  The default grid targets 1 m cells using those standardized envelope
+  dimensions; per-axis division overrides and in-front visibility are
+  configurable from the operator. The cage contains only the physical lattice,
+  with no dimension text. It uses beveled curves and a dedicated material so it
+  is visible in the viewport and in renders. Re-running the command updates the
+  existing BlendMax presentation cage instead of accumulating duplicates. A
+  companion
   **BlendMax > Presentation > Remove Measurement Cage** command removes the
-  cage, its labels, and their datablocks. The top-level **BlendMax** menu is
+  cage and its supporting datablocks. The top-level **BlendMax** menu is
   registered in Blender's application menu row beside **File**, **Edit**,
   **Render**, **Window**, and **Help**.
 

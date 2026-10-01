@@ -307,33 +307,28 @@ class BLENDMAX_OT_create_measurement_cage(bpy.types.Operator):
     )
     divisions_x: bpy.props.IntProperty(
         name="X Divisions",
-        description="Number of segments along the X axis",
-        default=1,
-        min=1,
+        description="Segments along X; 0 chooses about 1 m grid cells",
+        default=0,
+        min=0,
         max=100,
     )
     divisions_y: bpy.props.IntProperty(
         name="Y Divisions",
-        description="Number of segments along the Y axis",
-        default=1,
-        min=1,
+        description="Segments along Y; 0 chooses about 1 m grid cells",
+        default=0,
+        min=0,
         max=100,
     )
     divisions_z: bpy.props.IntProperty(
         name="Z Divisions",
-        description="Number of segments along the Z axis",
-        default=1,
-        min=1,
+        description="Segments along Z; 0 chooses about 1 m grid cells",
+        default=0,
+        min=0,
         max=100,
-    )
-    show_dimensions: bpy.props.BoolProperty(
-        name="Display Dimensions",
-        description="Show width, depth and height measurement labels",
-        default=True,
     )
     in_front: bpy.props.BoolProperty(
         name="In Front",
-        description="Keep the cage and dimension labels visible through scene geometry",
+        description="Keep the cage visible through scene geometry",
         default=True,
     )
 
@@ -345,7 +340,6 @@ class BLENDMAX_OT_create_measurement_cage(bpy.types.Operator):
                 context,
                 envelope_increment=self.envelope_increment,
                 divisions=(self.divisions_x, self.divisions_y, self.divisions_z),
-                show_dimensions=self.show_dimensions,
                 in_front=self.in_front,
             )
         except ValueError as exc:
@@ -362,13 +356,12 @@ class BLENDMAX_OT_create_measurement_cage(bpy.types.Operator):
 
 
 class BLENDMAX_OT_remove_measurement_cage(bpy.types.Operator):
-    """Remove the BlendMax measurement cage and its dimension labels."""
+    """Remove the BlendMax measurement cage."""
 
     bl_idname = "blendmax.remove_measurement_cage"
     bl_label = "Remove Measurement Cage"
     bl_description = (
-        "Remove the BlendMax measurement cage, its dimension labels, and "
-        "their datablocks"
+        "Remove the BlendMax measurement cage and its supporting datablocks"
     )
     bl_options = {"REGISTER", "UNDO"}
 

@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
-import math
 
 import bpy
 
 from .blender_scene import presentation_bounds
 from .placement import Bounds
-from .presentation_cage import cage_geometry, measurement_envelope
+from .presentation_cage import (
+    cage_geometry,
+    default_grid_divisions,
+    measurement_envelope,
+)
 
 _COLLECTION_NAME = "BlendMax Presentation"
 _COLLECTION_KEY = "blendmax_presentation_collection"
@@ -22,7 +25,6 @@ _KIND_CAGE = "cage"
 _KIND_LABEL = "label"
 _SOURCE_KEY = "blendmax_measurement_source"
 _SOURCES_KEY = "blendmax_measurement_sources"
-_DIMENSION_KEY = "blendmax_measurement_dimension"
 _MATERIAL_KEY = "blendmax_measurement_material"
 _MATERIAL_VALUE = "cage"
 
@@ -171,49 +173,6 @@ def _get_or_create_material():
     return material
 
 
-def _get_or_create_label(collection, dimension):
-    label = next(
-        (
-            obj
-            for obj in bpy.data.objects
-            if _is_cage_object(obj)
-            and obj.get(_KIND_KEY) == _KIND_LABEL
-            and obj.get(_DIMENSION_KEY) == dimension
-        ),
-        None,
-    )
-    if label is None:
-        name = "BlendMax Measurement {0}".format(dimension)
-        curve = bpy.data.curves.new(name, type="FONT")
-        label = bpy.data.objects.new(name, curve)
-        label[_TOOL_KEY] = _TOOL_VALUE
-        label[_KIND_KEY] = _KIND_LABEL
-        label[_DIMENSION_KEY] = dimension
-        collection.objects.link(label)
-    else:
-        _link_only_to(label, collection)
-    return label
-
-
-def _format_dimension(value: float) -> str:
-    return "{0:.3f} m".format(float(value))
-
-
-def _configure_label(label, text, location, rotation, size, in_front, material):
-    label.data.body = text
-    label.data.align_x = "CENTER"
-    label.data.align_y = "CENTER"
-    label.data.size = size
-    label.location = location
-    label.rotation_mode = "XYZ"
-    label.rotation_euler = rotation
-    label.data.materials.clear()
-    label.data.materials.append(material)
-    label.hide_render = False
-    label.show_in_front = bool(in_front)
-    label.hide_set(False)
-
-
 def _reset_world_transform(obj) -> None:
     """Keep generated world-space coordinates in an identity local frame."""
     obj.parent = None
@@ -284,21 +243,31 @@ def _hierarchy_target(sources):
     return None
 
 
-def _hide_extra_labels(visible_dimensions):
-    for obj in bpy.data.objects:
-        if not _is_cage_object(obj) or obj.get(_KIND_KEY) == _KIND_CAGE:
-            continue
-        if obj.get(_DIMENSION_KEY) not in visible_dimensions:
-            obj.hide_set(True)
-            obj.hide_render = True
+def _remove_dimension_labels() -> None:
+    """Remove label objects created by earlier versions of the cage tool."""
+    for obj in tuple(bpy.data.objects):
+        if _is_cage_object(obj) and obj.get(_KIND_KEY) == _KIND_LABEL:
+            _remove_object(obj)
+
+
+def _resolve_divisions(dimensions, requested):
+    if len(requested) != 3:
+        raise ValueError("Measurement cage divisions must contain X, Y and Z.")
+    overrides = tuple(int(value) for value in requested)
+    if any(value < 0 for value in overrides):
+        raise ValueError("Measurement cage divisions must be zero (automatic) or positive.")
+    automatic = default_grid_divisions(dimensions)
+    return tuple(
+        automatic[index] if value == 0 else value
+        for index, value in enumerate(overrides)
+    )
 
 
 def create_measurement_cage(
     context,
     *,
     envelope_increment=1.0,
-    divisions=(1, 1, 1),
-    show_dimensions=True,
+    divisions=(0, 0, 0),
     in_front=True,
 ):
     """Create or update the single BlendMax measurement cage for the selection."""
@@ -316,18 +285,20 @@ def create_measurement_cage(
         raise ValueError("The selected objects have no valid mesh geometry.")
 
     envelope = measurement_envelope(bounds, envelope_increment)
+    resolved_divisions = _resolve_divisions(envelope.dimensions, divisions)
     hierarchy_root = _hierarchy_target(sources)
     collection = _presentation_collection(context, hierarchy_root)
+    _remove_dimension_labels()
     cage = _get_or_create_cage(collection)
     _reset_world_transform(cage)
     material = _get_or_create_material()
-    _update_lattice(cage, envelope, divisions, material)
+    _update_lattice(cage, envelope, resolved_divisions, material)
 
     cage.pop("blendmax_measurement_margin", None)
     cage[_SOURCE_KEY] = sources[0].name
     cage[_SOURCES_KEY] = json.dumps([source.name for source in sources])
     cage["blendmax_measurement_envelope_increment"] = envelope.increment
-    cage["blendmax_measurement_divisions"] = tuple(int(value) for value in divisions)
+    cage["blendmax_measurement_divisions"] = resolved_divisions
     cage["blendmax_measurement_dimensions"] = envelope.dimensions
     cage["blendmax_measurement_asset_dimensions"] = tuple(
         float(value) for value in bounds.dimensions
@@ -340,26 +311,6 @@ def create_measurement_cage(
     cage.show_in_front = bool(in_front)
     cage.display_type = "SOLID"
     cage.hide_set(False)
-
-    visible_dimensions = set()
-    if show_dimensions:
-        width, depth, height = envelope.dimensions
-        extent = max(max(envelope.dimensions), 1e-3)
-        offset = max(extent * 0.025, 0.01)
-        x0, y0, z0 = envelope.minimum
-        x1, y1, z1 = envelope.maximum
-        label_specs = (
-            ("Width", "W {0}".format(_format_dimension(width)), ((x0 + x1) * 0.5, y0 - offset, z1 + offset), (math.pi / 2.0, 0.0, 0.0)),
-            ("Depth", "D {0}".format(_format_dimension(depth)), (x1 + offset, (y0 + y1) * 0.5, z1 + offset), (0.0, math.pi / 2.0, 0.0)),
-            ("Height", "H {0}".format(_format_dimension(height)), (x0 - offset, y0 - offset, (z0 + z1) * 0.5), (math.pi / 2.0, 0.0, 0.0)),
-        )
-        size = min(max(extent * 0.06, 0.02), 0.5)
-        for dimension_name, text, location, rotation in label_specs:
-            label = _get_or_create_label(collection, dimension_name)
-            _reset_world_transform(label)
-            _configure_label(label, text, location, rotation, size, in_front, material)
-            visible_dimensions.add(dimension_name)
-    _hide_extra_labels(visible_dimensions)
 
     for obj in context.selected_objects:
         obj.select_set(False)

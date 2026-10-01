@@ -4,8 +4,8 @@
 collection, one presentation collection, mesh/curve datablocks with user
 counts, and the object/property surface the module touches. The geometry
 math itself lives in ``test_presentation_cage.py``; these tests cover the
-Blender glue: datablock ownership, the remove teardown, source fallback and
-re-targeting, and label reuse by custom property.
+Blender glue: datablock ownership, the remove teardown, source fallback, and
+re-targeting.
 """
 
 from __future__ import annotations
@@ -392,7 +392,7 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.assertEqual(cage["blendmax_measurement_asset_dimensions"], (1.0, 1.0, 1.0))
         self.assertEqual(cage["blendmax_measurement_source"], "Chair")
 
-    def test_cage_and_labels_live_in_the_presentation_collection(self):
+    def test_cage_lives_in_the_presentation_collection_without_text_objects(self):
         source = self._add_source("Chair")
         self.context.selected_objects = [source]
 
@@ -405,7 +405,9 @@ class MeasurementCageToolTests(unittest.TestCase):
         )
         self.assertIn(collection, self.bpy.scene_collection.children)
         tool_objects = self._tool_objects()
-        self.assertEqual(len(tool_objects), 4)
+        self.assertEqual(len(tool_objects), 1)
+        self.assertEqual(self._tool_objects(kind="cage"), tool_objects)
+        self.assertEqual(self._tool_objects(kind="label"), [])
         for obj in tool_objects:
             self.assertIn(collection, obj.users_collection)
 
@@ -420,7 +422,7 @@ class MeasurementCageToolTests(unittest.TestCase):
         parent_collection.objects.link(source)
         self.context.selected_objects = [source]
 
-        self._create(show_dimensions=False)
+        self._create()
 
         presentation = next(
             item
@@ -443,7 +445,7 @@ class MeasurementCageToolTests(unittest.TestCase):
         second_collection.objects.link(second)
         self.context.selected_objects = [first, second]
 
-        self._create(show_dimensions=False)
+        self._create()
 
         presentation = next(
             item
@@ -477,7 +479,7 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.assertIn(presentation, hierarchy_collection.children)
         self.assertNotIn(presentation, self.bpy.scene_collection.children)
         generated = self._tool_objects()
-        self.assertEqual(len(generated), 4)
+        self.assertEqual(len(generated), 1)
         self.assertTrue(all(obj in presentation.objects for obj in generated))
         self.assertTrue(all(obj.parent is None for obj in generated))
         self.assertEqual((root.location, child.location, child.parent), before)
@@ -500,7 +502,7 @@ class MeasurementCageToolTests(unittest.TestCase):
         reachable.objects.link(child)
         self.context.selected_objects = [root]
 
-        self._create(show_dimensions=False)
+        self._create()
 
         presentation = next(
             item
@@ -521,7 +523,7 @@ class MeasurementCageToolTests(unittest.TestCase):
         off_scene.objects.link(child)
         self.context.selected_objects = [root]
 
-        self._create(show_dimensions=False)
+        self._create()
 
         presentation = next(
             item
@@ -541,7 +543,7 @@ class MeasurementCageToolTests(unittest.TestCase):
         root_collection.objects.link(root)
         root_collection.objects.link(source)
         self.context.selected_objects = [root]
-        self._create(show_dimensions=False)
+        self._create()
         presentation = next(
             item
             for item in self.bpy.data.collections
@@ -550,7 +552,7 @@ class MeasurementCageToolTests(unittest.TestCase):
 
         self.context.selected_objects = [source]
         self.context.view_layer.objects.active = source
-        self._create(show_dimensions=False)
+        self._create()
 
         self.assertIn(presentation, self.bpy.scene_collection.children)
         self.assertNotIn(presentation, root_collection.children)
@@ -573,7 +575,7 @@ class MeasurementCageToolTests(unittest.TestCase):
         scene_b.collection.objects.link(source)
         self.context.selected_objects = [source]
 
-        cage, _ = self._create(show_dimensions=False)
+        cage, _ = self._create()
         presentation = next(
             item
             for item in self.bpy.data.collections
@@ -584,7 +586,7 @@ class MeasurementCageToolTests(unittest.TestCase):
 
         self.context.scene = scene_b
         self.context.view_layer.objects.active = source
-        self._create(show_dimensions=False)
+        self._create()
 
         self.assertNotIn(presentation, scene_a.collection.children)
         self.assertIn(presentation, scene_b.collection.children)
@@ -672,7 +674,7 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.assertEqual(self._tool_objects(), [])
         self.assertEqual(list(self.bpy.data.collections), [])
 
-    def test_labels_and_metadata_report_standardized_envelope_dimensions(self):
+    def test_default_divisions_follow_envelope_dimensions_without_labels(self):
         source = self._add_source("Display", scale=(3.6, 2.5, 1.5))
         self.context.selected_objects = [source]
 
@@ -684,20 +686,15 @@ class MeasurementCageToolTests(unittest.TestCase):
             (3.6, 2.5, 1.5),
         )
         self.assertEqual(cage["blendmax_measurement_dimensions"], (4.0, 3.0, 2.0))
-        labels = {
-            obj.get("blendmax_measurement_dimension"): obj.data.body
-            for obj in self._tool_objects(kind="label")
-        }
-        self.assertEqual(labels["Width"], "W 4.000 m")
-        self.assertEqual(labels["Depth"], "D 3.000 m")
-        self.assertEqual(labels["Height"], "H 2.000 m")
+        self.assertEqual(cage["blendmax_measurement_divisions"], (4, 3, 2))
+        self.assertEqual(self._tool_objects(kind="label"), [])
 
     def test_multiple_selected_objects_use_one_combined_cage_including_gaps(self):
         left = self._add_source("Left", location=(0.0, 0.0, 0.0), scale=(2.0, 1.0, 1.0))
         right = self._add_source("Right", location=(5.0, 0.0, 0.0), scale=(2.0, 1.0, 1.0))
         self.context.selected_objects = [left, right]
 
-        cage, envelope = self._create(envelope_increment=1.0, show_dimensions=False)
+        cage, envelope = self._create(envelope_increment=1.0)
 
         self.assertEqual(envelope.minimum, (-1.0, -0.5, -0.5))
         self.assertEqual(envelope.dimensions, (7.0, 1.0, 1.0))
@@ -719,7 +716,7 @@ class MeasurementCageToolTests(unittest.TestCase):
         grandchild.children.append(great_grandchild)
         self.context.selected_objects = [root]
 
-        _cage, envelope = self._create(envelope_increment=1.0, show_dimensions=False)
+        _cage, envelope = self._create(envelope_increment=1.0)
 
         self.assertEqual(envelope.minimum, (1.5, -0.5, -0.5))
         self.assertEqual(envelope.dimensions, (7.0, 1.0, 1.0))
@@ -728,11 +725,11 @@ class MeasurementCageToolTests(unittest.TestCase):
         first = self._add_source("First")
         second = self._add_source("Second", location=(4.0, 0.0, 0.0))
         self.context.selected_objects = [first, second]
-        cage, first_envelope = self._create(show_dimensions=False)
+        cage, first_envelope = self._create()
 
         self.context.selected_objects = [cage]
         self.context.view_layer.objects.active = cage
-        _same_cage, rerun_envelope = self._create(show_dimensions=False)
+        _same_cage, rerun_envelope = self._create()
 
         self.assertEqual(first_envelope, rerun_envelope)
         self.assertEqual(self.context.view_layer.objects.active, first)
@@ -740,7 +737,7 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.assertTrue(second.selected)
         self.assertEqual(len(self._tool_objects(kind="cage")), 1)
 
-    def test_rerun_updates_the_same_cage_and_labels(self):
+    def test_rerun_updates_the_same_cage_without_creating_labels(self):
         source = self._add_source("Chair")
         self.context.selected_objects = [source]
 
@@ -756,12 +753,13 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.assertEqual(len(self.bpy.data.objects), object_count)
         self.assertEqual(len(self.bpy.data.meshes), mesh_count)
         self.assertEqual(len(self.bpy.data.curves), curve_count)
+        self.assertEqual(self._tool_objects(kind="label"), [])
         self.assertNotIn("blendmax_measurement_margin", first_cage._properties)
 
     def test_rerun_removes_an_existing_duplicate_cage(self):
         source = self._add_source("Chair")
         self.context.selected_objects = [source]
-        cage, _ = self._create(show_dimensions=False)
+        cage, _ = self._create()
         collection = self.bpy.data.collections[0]
         duplicate_data = self.bpy.data.curves.new("Duplicate Cage", type="CURVE")
         duplicate = self.bpy.data.objects.new("Duplicate Cage", duplicate_data)
@@ -769,17 +767,16 @@ class MeasurementCageToolTests(unittest.TestCase):
         duplicate["blendmax_presentation_kind"] = "cage"
         collection.objects.link(duplicate)
 
-        updated, _ = self._create(show_dimensions=False)
+        updated, _ = self._create()
 
         self.assertIs(updated, cage)
         self.assertEqual(self._tool_objects(kind="cage"), [cage])
         self.assertNotIn(duplicate_data, self.bpy.data.curves)
 
-    def test_rerun_resets_cage_and_label_transforms_to_world_space(self):
+    def test_rerun_resets_cage_transform_to_world_space(self):
         source = self._add_source("Chair")
         self.context.selected_objects = [source]
         cage, _ = self._create()
-        labels = self._tool_objects(kind="label")
 
         cage.location = (10.0, -4.0, 2.0)
         cage.rotation_euler = (0.5, 0.25, -0.75)
@@ -788,12 +785,6 @@ class MeasurementCageToolTests(unittest.TestCase):
         cage.delta_rotation_euler = (0.1, 0.2, 0.3)
         cage.delta_scale = (2.0, 2.0, 2.0)
         cage.parent = source
-        for label in labels:
-            label.location = (20.0, 30.0, 40.0)
-            label.scale = (2.0, 2.0, 2.0)
-            label.delta_location = (1.0, 2.0, 3.0)
-            label.parent = source
-
         self._create()
 
         self.assertIsNone(cage.parent)
@@ -814,72 +805,28 @@ class MeasurementCageToolTests(unittest.TestCase):
             tuple(sorted((vertices[start], vertices[end]))) for start, end in edges
         }
         self.assertEqual(actual_rods, expected_rods)
-        for label in labels:
-            self.assertIsNone(label.parent)
-            self.assertNotEqual(label.location, (20.0, 30.0, 40.0))
-            self.assertEqual(label.scale, (1.0, 1.0, 1.0))
-            self.assertEqual(label.delta_location, (0.0, 0.0, 0.0))
+        self.assertEqual(self._tool_objects(kind="label"), [])
 
-    def test_dimension_labels_carry_the_dimension_property(self):
-        source = self._add_source("Chair")
-        self.context.selected_objects = [source]
-
-        self._create()
-
-        labels = {
-            obj.get("blendmax_measurement_dimension"): obj
-            for obj in self._tool_objects(kind="label")
-        }
-        self.assertEqual(set(labels), {"Width", "Depth", "Height"})
-        for dimension, label in labels.items():
-            self.assertTrue(label.data.body.startswith(dimension[0] + " "))
-            self.assertFalse(label.hide_render)
-
-    def test_renamed_label_is_reused_instead_of_duplicated(self):
+    def test_updating_cage_removes_legacy_dimension_label_objects(self):
         source = self._add_source("Chair")
         self.context.selected_objects = [source]
         self._create()
-        width_label = next(
-            obj
-            for obj in self._tool_objects(kind="label")
-            if obj.get("blendmax_measurement_dimension") == "Width"
+        collection = self.bpy.data.collections[0]
+        legacy_curve = self.bpy.data.curves.new(
+            "BlendMax Measurement Width", type="FONT"
         )
-        width_label.name = "My Width Label"
-        object_count = len(self.bpy.data.objects)
-        curve_count = len(self.bpy.data.curves)
-
-        self._create()
-
-        self.assertEqual(len(self.bpy.data.objects), object_count)
-        self.assertEqual(len(self.bpy.data.curves), curve_count)
-        self.assertEqual(
-            [
-                obj.name
-                for obj in self._tool_objects(kind="label")
-                if obj.get("blendmax_measurement_dimension") == "Width"
-            ],
-            ["My Width Label"],
+        legacy_label = self.bpy.data.objects.new(
+            "BlendMax Measurement Width", legacy_curve
         )
-        self.assertFalse(width_label.hide_viewport)
+        legacy_label["blendmax_presentation_tool"] = "measurement_cage"
+        legacy_label["blendmax_presentation_kind"] = "label"
+        collection.objects.link(legacy_label)
 
-    def test_labels_are_hidden_but_reused_when_dimensions_are_disabled(self):
-        source = self._add_source("Chair")
-        self.context.selected_objects = [source]
         self._create()
-        labels = self._tool_objects(kind="label")
-        curve_count = len(self.bpy.data.curves)
 
-        self._create(show_dimensions=False)
-
-        self.assertEqual(len(self.bpy.data.curves), curve_count)
-        self.assertTrue(all(label.hide_viewport for label in labels))
-        self.assertTrue(all(label.hide_render for label in labels))
-
-        self._create(show_dimensions=True)
-
-        self.assertEqual(len(self.bpy.data.curves), curve_count)
-        self.assertFalse(any(label.hide_viewport for label in labels))
-        self.assertFalse(any(label.hide_render for label in labels))
+        self.assertNotIn(legacy_label, self.bpy.data.objects)
+        self.assertNotIn(legacy_curve, self.bpy.data.curves)
+        self.assertEqual(self._tool_objects(kind="label"), [])
 
     def test_current_multiple_selection_replaces_the_stored_source_roots(self):
         source_a = self._add_source("Chair")
@@ -944,15 +891,15 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.context.selected_objects = [source]
         self._create()
         cage_curve = self.bpy.data.curves.get("BlendMax Measurement Cage")
-        label_curves = list(self.bpy.data.curves)
+        supporting_curves = list(self.bpy.data.curves)
 
         removed = self.module.remove_measurement_cage(self.context)
 
-        self.assertEqual(removed, 4)
+        self.assertEqual(removed, 1)
         self.assertNotIn(cage_curve, self.bpy.data.curves)
         self.assertEqual(list(self.bpy.data.curves), [])
         self.assertEqual(list(self.bpy.data.materials), [])
-        self.assertEqual(label_curves[0].users, 0)
+        self.assertTrue(all(curve.users == 0 for curve in supporting_curves))
         self.assertEqual(list(self.bpy.data.collections), [])
         self.assertIsNone(self.bpy.data.objects.get("BlendMax Measurement Cage"))
         self.assertEqual(list(self.bpy.data.objects), [source])

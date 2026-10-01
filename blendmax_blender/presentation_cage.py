@@ -101,6 +101,19 @@ def _axis_values(lower: float, upper: float, divisions: int) -> Iterable[float]:
     )
 
 
+def default_grid_divisions(dimensions: Sequence[float]) -> Tuple[int, int, int]:
+    """Choose at least one segment per axis, targeting 1 m grid cells."""
+    if len(dimensions) != 3:
+        raise ValueError("Measurement cage dimensions must contain X, Y and Z.")
+    values = tuple(float(value) for value in dimensions)
+    if any(not math.isfinite(value) or value < 0.0 for value in values):
+        raise ValueError("Measurement cage dimensions must be finite and nonnegative.")
+    return tuple(
+        max(1, math.ceil(value - 1e-9 * max(1.0, value)))
+        for value in values
+    )
+
+
 def cage_geometry(bounds: Bounds, divisions: Sequence[int] = (1, 1, 1)) -> Tuple[Tuple[Vector3, ...], Tuple[Edge, ...]]:
     """Return unique vertices/edges for a six-face measurement grid."""
     if len(divisions) != 3:

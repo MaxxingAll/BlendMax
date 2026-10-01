@@ -191,7 +191,6 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
         operator.divisions_x = 1
         operator.divisions_y = 1
         operator.divisions_z = 1
-        operator.show_dimensions = True
         operator.in_front = True
 
         with patch.dict(

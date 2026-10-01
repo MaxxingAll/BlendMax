@@ -3,10 +3,76 @@ from __future__ import annotations
 import unittest
 
 from blendmax_blender.presentation import PresentationBounds
-from blendmax_blender.presentation_cage import cage_geometry, measurement_envelope
+from blendmax_blender.presentation_cage import (
+    cage_geometry,
+    default_grid_divisions,
+    measurement_envelope,
+)
 
 
 class MeasurementCageGeometryTests(unittest.TestCase):
+    def test_default_grid_gives_two_by_two_cells_on_a_two_metre_face(self):
+        asset = PresentationBounds.from_bounds(((0, 0, 0), (2, 2, 2)))
+        envelope = measurement_envelope(asset, 1.0)
+        divisions = default_grid_divisions(envelope.dimensions)
+        vertices, edges = cage_geometry(
+            (envelope.minimum, envelope.maximum), divisions
+        )
+
+        self.assertEqual(envelope.dimensions, (2.0, 2.0, 2.0))
+        self.assertEqual(divisions, (2, 2, 2))
+        self.assertEqual(divisions[0] * divisions[1], 4)
+        top_face_edges = [
+            (vertices[start], vertices[end])
+            for start, end in edges
+            if vertices[start][2] == 2.0 and vertices[end][2] == 2.0
+        ]
+        x_grid_lines = [
+            edge for edge in top_face_edges if edge[0][1] == edge[1][1]
+        ]
+        y_grid_lines = [
+            edge for edge in top_face_edges if edge[0][0] == edge[1][0]
+        ]
+        self.assertEqual(len(x_grid_lines), 3)
+        self.assertEqual(len(y_grid_lines), 3)
+        self.assertEqual({edge[0][1] for edge in x_grid_lines}, {0.0, 1.0, 2.0})
+        self.assertEqual({edge[0][0] for edge in y_grid_lines}, {0.0, 1.0, 2.0})
+
+    def test_default_grid_follows_a_four_by_three_by_two_metre_envelope(self):
+        asset = PresentationBounds.from_bounds(((0, 0, 0), (4, 3, 2)))
+        envelope = measurement_envelope(asset, 1.0)
+        divisions = default_grid_divisions(envelope.dimensions)
+        vertices, edges = cage_geometry(
+            (envelope.minimum, envelope.maximum), divisions
+        )
+
+        self.assertEqual(envelope.dimensions, (4.0, 3.0, 2.0))
+        self.assertEqual(divisions, (4, 3, 2))
+        self.assertEqual(divisions[0] * divisions[1], 12)
+        top_face_edges = [
+            (vertices[start], vertices[end])
+            for start, end in edges
+            if vertices[start][2] == 2.0 and vertices[end][2] == 2.0
+        ]
+        self.assertEqual(len(top_face_edges), divisions[0] + divisions[1] + 2)
+        x_grid_lines = [
+            edge for edge in top_face_edges if edge[0][1] == edge[1][1]
+        ]
+        y_grid_lines = [
+            edge for edge in top_face_edges if edge[0][0] == edge[1][0]
+        ]
+        self.assertEqual(len(x_grid_lines), divisions[1] + 1)
+        self.assertEqual(len(y_grid_lines), divisions[0] + 1)
+        self.assertEqual(
+            {edge[0][1] for edge in x_grid_lines}, {0.0, 1.0, 2.0, 3.0}
+        )
+        self.assertEqual(
+            {edge[0][0] for edge in y_grid_lines}, {0.0, 1.0, 2.0, 3.0, 4.0}
+        )
+
+    def test_default_grid_keeps_degenerate_axes_at_one_division(self):
+        self.assertEqual(default_grid_divisions((0.0, 2.0, 3.0)), (1, 2, 3))
+
     def test_unit_divisions_produce_only_the_outer_box(self):
         vertices, edges = cage_geometry(
             ((0.0, 0.0, 0.0), (2.0, 3.0, 4.0)),
