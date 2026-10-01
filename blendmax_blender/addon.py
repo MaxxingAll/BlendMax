@@ -372,10 +372,10 @@ class BLENDMAX_OT_remove_measurement_cage(bpy.types.Operator):
     )
     bl_options = {"REGISTER", "UNDO"}
 
-    def execute(self, _context):
+    def execute(self, context):
         from .blender_presentation import remove_measurement_cage
 
-        removed = remove_measurement_cage()
+        removed = remove_measurement_cage(context)
         if removed:
             self.report({"INFO"}, "Measurement Cage removed.")
         else:

@@ -254,6 +254,10 @@ class FakeChildren(list):
         if item not in self:
             self.append(item)
 
+    def unlink(self, item):
+        if item in self:
+            self.remove(item)
+
 
 class FakeCollection:
     def __init__(self, name):
@@ -385,6 +389,115 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.assertEqual(len(tool_objects), 4)
         for obj in tool_objects:
             self.assertIn(collection, obj.users_collection)
+
+    def test_single_selected_child_with_parent_uses_scene_root_collection(self):
+        parent = self.bpy.data.objects.new("Hierarchy Parent", None)
+        source = self._add_source("Single Child")
+        source.parent = parent
+        parent.children.append(source)
+        parent_collection = self.bpy.data.collections.new("Asset Group")
+        self.bpy.scene_collection.children.link(parent_collection)
+        parent_collection.objects.link(parent)
+        parent_collection.objects.link(source)
+        self.context.selected_objects = [source]
+
+        self._create(show_dimensions=False)
+
+        presentation = next(
+            item
+            for item in self.bpy.data.collections
+            if item.get("blendmax_presentation_collection") == "presentation"
+        )
+        self.assertIn(presentation, self.bpy.scene_collection.children)
+        self.assertNotIn(presentation, parent_collection.children)
+        self.assertIs(source.parent, parent)
+        self.assertIsNone(self._tool_objects(kind="cage")[0].parent)
+
+    def test_multiple_selection_uses_scene_root_not_source_collections(self):
+        first = self._add_source("First")
+        second = self._add_source("Second", location=(3.0, 0.0, 0.0))
+        first_collection = self.bpy.data.collections.new("First Collection")
+        second_collection = self.bpy.data.collections.new("Second Collection")
+        self.bpy.scene_collection.children.link(first_collection)
+        self.bpy.scene_collection.children.link(second_collection)
+        first_collection.objects.link(first)
+        second_collection.objects.link(second)
+        self.context.selected_objects = [first, second]
+
+        self._create(show_dimensions=False)
+
+        presentation = next(
+            item
+            for item in self.bpy.data.collections
+            if item.get("blendmax_presentation_collection") == "presentation"
+        )
+        self.assertIn(presentation, self.bpy.scene_collection.children)
+        self.assertNotIn(presentation, first_collection.children)
+        self.assertNotIn(presentation, second_collection.children)
+
+    def test_selected_hierarchy_root_places_presentation_in_its_collection(self):
+        hierarchy_collection = self.bpy.data.collections.new("BOOTH_ROOT")
+        self.bpy.scene_collection.children.link(hierarchy_collection)
+        root = self.bpy.data.objects.new("BOOTH_ROOT", None)
+        child = self._add_source("Child_A", location=(2.0, 0.0, 0.0))
+        root.location = (3.0, 4.0, 5.0)
+        child.parent = root
+        root.children.append(child)
+        hierarchy_collection.objects.link(root)
+        hierarchy_collection.objects.link(child)
+        self.context.selected_objects = [root]
+        before = (root.location, child.location, child.parent)
+
+        self._create()
+
+        presentation = next(
+            item
+            for item in self.bpy.data.collections
+            if item.get("blendmax_presentation_collection") == "presentation"
+        )
+        self.assertIn(presentation, hierarchy_collection.children)
+        self.assertNotIn(presentation, self.bpy.scene_collection.children)
+        generated = self._tool_objects()
+        self.assertEqual(len(generated), 4)
+        self.assertTrue(all(obj in presentation.objects for obj in generated))
+        self.assertTrue(all(obj.parent is None for obj in generated))
+        self.assertEqual((root.location, child.location, child.parent), before)
+
+        self.module.remove_measurement_cage(self.context)
+
+        self.assertNotIn(presentation, self.bpy.data.collections)
+        self.assertNotIn(presentation, hierarchy_collection.children)
+
+    def test_presentation_collection_moves_when_selection_mode_changes(self):
+        root_collection = self.bpy.data.collections.new("Root Collection")
+        self.bpy.scene_collection.children.link(root_collection)
+        root = self.bpy.data.objects.new("Root", None)
+        source = self._add_source("Child")
+        source.parent = root
+        root.children.append(source)
+        root_collection.objects.link(root)
+        root_collection.objects.link(source)
+        self.context.selected_objects = [root]
+        self._create(show_dimensions=False)
+        presentation = next(
+            item
+            for item in self.bpy.data.collections
+            if item.get("blendmax_presentation_collection") == "presentation"
+        )
+
+        self.context.selected_objects = [source]
+        self.context.view_layer.objects.active = source
+        self._create(show_dimensions=False)
+
+        self.assertIn(presentation, self.bpy.scene_collection.children)
+        self.assertNotIn(presentation, root_collection.children)
+        self.assertEqual(
+            sum(
+                item.get("blendmax_presentation_collection") == "presentation"
+                for item in self.bpy.data.collections
+            ),
+            1,
+        )
 
     def test_source_transforms_and_hierarchy_are_unchanged(self):
         parent = self._add_source("Parent")
@@ -710,7 +823,7 @@ class MeasurementCageToolTests(unittest.TestCase):
         cage_curve = self.bpy.data.curves.get("BlendMax Measurement Cage")
         label_curves = list(self.bpy.data.curves)
 
-        removed = self.module.remove_measurement_cage()
+        removed = self.module.remove_measurement_cage(self.context)
 
         self.assertEqual(removed, 4)
         self.assertNotIn(cage_curve, self.bpy.data.curves)
@@ -722,7 +835,7 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.assertEqual(list(self.bpy.data.objects), [source])
 
     def test_remove_without_a_cage_is_a_no_op(self):
-        self.assertEqual(self.module.remove_measurement_cage(), 0)
+        self.assertEqual(self.module.remove_measurement_cage(self.context), 0)
         self.assertEqual(list(self.bpy.data.collections), [])
 
     def test_recreating_a_non_mesh_cage_frees_the_stale_datablock(self):

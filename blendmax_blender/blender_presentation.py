@@ -32,7 +32,22 @@ def _is_cage_object(obj) -> bool:
     return callable(getter) and getter(_TOOL_KEY) == _TOOL_VALUE
 
 
-def _presentation_collection(context):
+def _unlink_collection_from_parents(collection, scene_collection=None, keep=None):
+    parents = list(bpy.data.collections)
+    if scene_collection is not None:
+        parents.append(scene_collection)
+    for parent in parents:
+        if parent is not keep and collection in parent.children:
+            parent.children.unlink(collection)
+
+
+def _presentation_collection(context, hierarchy_root=None):
+    root_collection = None
+    if hierarchy_root is not None and hierarchy_root.users_collection:
+        # Blender permits objects in several collections. The first linked
+        # collection is the deterministic owner used for this presentation.
+        root_collection = hierarchy_root.users_collection[0]
+    parent_collection = root_collection or context.scene.collection
     collection = next(
         (
             item
@@ -44,9 +59,13 @@ def _presentation_collection(context):
     if collection is None:
         collection = bpy.data.collections.new(_COLLECTION_NAME)
         collection[_COLLECTION_KEY] = _COLLECTION_VALUE
-        context.scene.collection.children.link(collection)
-    elif collection.name not in {item.name for item in context.scene.collection.children}:
-        context.scene.collection.children.link(collection)
+    _unlink_collection_from_parents(
+        collection,
+        scene_collection=context.scene.collection,
+        keep=parent_collection,
+    )
+    if collection not in parent_collection.children:
+        parent_collection.children.link(collection)
     return collection
 
 
@@ -230,6 +249,13 @@ def _source_roots(context, cage=None):
     return [active] if active is not None and not _is_cage_object(active) else []
 
 
+def _hierarchy_target(sources):
+    """Only a single selected root with descendants selects hierarchy placement."""
+    if len(sources) == 1 and sources[0].children:
+        return sources[0]
+    return None
+
+
 def _hide_extra_labels(visible_dimensions):
     for obj in bpy.data.objects:
         if not _is_cage_object(obj) or obj.get(_KIND_KEY) == _KIND_CAGE:
@@ -262,7 +288,8 @@ def create_measurement_cage(
         raise ValueError("The selected objects have no valid mesh geometry.")
 
     envelope = measurement_envelope(bounds, envelope_increment)
-    collection = _presentation_collection(context)
+    hierarchy_root = _hierarchy_target(sources)
+    collection = _presentation_collection(context, hierarchy_root)
     cage = _get_or_create_cage(collection)
     _reset_world_transform(cage)
     material = _get_or_create_material()
@@ -314,7 +341,7 @@ def create_measurement_cage(
     return cage, envelope
 
 
-def remove_measurement_cage() -> int:
+def remove_measurement_cage(context=None) -> int:
     """Remove the BlendMax measurement cage and all of its supporting objects.
 
     Objects are removed together with their mesh/curve datablocks once
@@ -342,5 +369,9 @@ def remove_measurement_cage() -> int:
         None,
     )
     if collection is not None and not collection.objects and not collection.children:
+        _unlink_collection_from_parents(
+            collection,
+            scene_collection=(context.scene.collection if context is not None else None),
+        )
         bpy.data.collections.remove(collection)
     return removed
