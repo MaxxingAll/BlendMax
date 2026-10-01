@@ -21,7 +21,7 @@ created automatically by Python.
 | Component | Version | Status |
 | --- | --- | --- |
 | 3ds Max exporter and cleanup | `0.1.0-alpha.4.3.0` | Host verified in 3ds Max 2025.3 |
-| Blender importer | `0.1.10` | Renderable Measurement Cage lattice and structured import summary |
+| Blender importer | `0.1.11` | Measurement Cage, structured import summary, and version-based restart notice |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
 | Automated suite | See CI | Python 3.11–3.13 |
 
@@ -139,7 +139,7 @@ continue running stale code.
 
 ## Install the Blender importer
 
-Build or download `blendmax_importer-0.1.10.zip`, then in Blender:
+Build or download `blendmax_importer-0.1.11.zip`, then in Blender:
 
 1. Open **Edit > Preferences > Get Extensions**.
 2. Open the menu in the top-right and choose **Install from Disk**.
@@ -147,11 +147,14 @@ Build or download `blendmax_importer-0.1.10.zip`, then in Blender:
 4. Use **File > Import > BlendMax Asset (.blendmax)**.
 
 After installing or updating the extension, restart Blender to load the new
-code. BlendMax does not provide an in-process reload control or a restart
-notice; the native Get Extensions flow does not expose the successful-update
-event needed to show one accurately. Updating the installed extension does not
-change the repository working tree, which still needs to be installed into
-Blender before its code can be used.
+code. If the installed manifest version changes while Blender remains open,
+BlendMax shows a **Restart Blender** notice in Add-on Preferences with both the
+running and installed versions. The notice compares those version strings and
+does not depend on an extension-update callback. Changes that do not bump
+`version` in `blender_manifest.toml` cannot trigger it; development builds must
+bump the manifest version when those changes need a restart notice. Updating
+the installed extension does not change the repository working tree, which
+still needs to be installed into Blender before its code can be used.
 
 To build the ZIP from source:
 

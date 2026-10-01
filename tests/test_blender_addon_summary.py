@@ -18,6 +18,9 @@ def load_addon(module_name="blendmax_blender._addon_summary_test"):
     class FakeOperator:
         pass
 
+    class FakePreferences:
+        pass
+
     class FakeImportHelper:
         pass
 
@@ -33,10 +36,36 @@ def load_addon(module_name="blendmax_blender._addon_summary_test"):
             if item in self:
                 super().remove(item)
 
+    class FakeRow:
+        def __init__(self, layout):
+            self.layout = layout
+            self.alert = False
+
+        def operator(self, *args, **kwargs):
+            self.layout.operator_calls.append((args, kwargs))
+
+    class FakeLayout:
+        def __init__(self):
+            self.operator_calls = []
+            self.labels = []
+
+        def box(self):
+            return self
+
+        def column(self):
+            return self
+
+        def row(self):
+            return FakeRow(self)
+
+        def label(self, *args, **kwargs):
+            self.labels.append((args, kwargs))
+
     fake_bpy = ModuleType("bpy")
     # Blender draws ``TOPBAR_MT_editor_menus`` beside File/Edit/Render/Window/Help.
     fake_bpy.types = SimpleNamespace(
         Operator=FakeOperator,
+        AddonPreferences=FakePreferences,
         Menu=FakeMenu,
         TOPBAR_MT_editor_menus=FakeMenuCollection(),
         TOPBAR_MT_file_import=FakeMenuCollection(),
@@ -58,6 +87,11 @@ def load_addon(module_name="blendmax_blender._addon_summary_test"):
     fake_io_utils = ModuleType("bpy_extras.io_utils")
     fake_io_utils.ImportHelper = FakeImportHelper
     fake_extras.io_utils = fake_io_utils
+    restart_events = []
+    fake_restart_notice = ModuleType("blendmax_blender.restart_notice")
+    fake_restart_notice.register = lambda: restart_events.append("register")
+    fake_restart_notice.unregister = lambda: restart_events.append("unregister")
+    fake_restart_notice.draw_notice = lambda _layout: False
 
     addon_path = (
         Path(__file__).resolve().parents[1] / "blendmax_blender" / "addon.py"
@@ -73,11 +107,14 @@ def load_addon(module_name="blendmax_blender._addon_summary_test"):
             "bpy.props": fake_bpy.props,
             "bpy_extras": fake_extras,
             "bpy_extras.io_utils": fake_io_utils,
+            "blendmax_blender.restart_notice": fake_restart_notice,
         },
     ):
         spec.loader.exec_module(module)
     module._test_registered_classes = registered_classes
     module._test_unregistered_classes = unregistered_classes
+    module._test_restart_events = restart_events
+    module._test_fake_layout = FakeLayout
     return module
 
 
@@ -168,21 +205,22 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
             self.assertEqual(self.addon._icon("objects"), "[O]")
             self.assertEqual(self.addon._icon("warnings"), "[!]")
 
-    def test_restart_state_and_process_probing_are_absent(self):
-        addon_path = (
-            Path(__file__).resolve().parents[1] / "blendmax_blender" / "addon.py"
-        )
-        addon_tree = ast.parse(addon_path.read_text(encoding="utf-8"))
+    def test_restart_module_has_no_pid_or_persistent_json_state(self):
         package_root = Path(__file__).resolve().parents[1] / "blendmax_blender"
-        self.assertFalse((package_root / ("restart_" + "notice.py")).exists())
+        trees = [
+            ast.parse((package_root / filename).read_text(encoding="utf-8"))
+            for filename in ("addon.py", "restart_notice.py")
+        ]
         identifiers = {
             node.id.lower()
-            for node in ast.walk(addon_tree)
+            for tree in trees
+            for node in ast.walk(tree)
             if isinstance(node, ast.Name)
         }
         attributes = {
             node.attr.lower()
-            for node in ast.walk(addon_tree)
+            for tree in trees
+            for node in ast.walk(tree)
             if isinstance(node, ast.Attribute)
         }
         self.assertFalse(any("pid" in name for name in identifiers | attributes))
@@ -192,7 +230,8 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
                 and any(alias.name == "json" for alias in node.names)
             )
             or (isinstance(node, ast.ImportFrom) and node.module == "json")
-            for node in ast.walk(addon_tree)
+            for tree in trees
+            for node in ast.walk(tree)
         )
         self.assertFalse(imports_json)
 
@@ -213,22 +252,47 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
             )
         )
         self.assertFalse(hasattr(self.addon, "BLENDMAX_OT_hot_reload"))
-        self.assertFalse(hasattr(self.addon, "BLENDMAX_Preferences"))
+        self.assertTrue(hasattr(self.addon, "BLENDMAX_Preferences"))
+        self.assertIn(self.addon.BLENDMAX_Preferences, self.addon._CLASSES)
 
-    def test_addon_registers_without_restart_or_reload_module(self):
+    def test_restart_notice_is_wired_to_addon_registration_and_preferences(self):
         addon_path = (
             Path(__file__).resolve().parents[1] / "blendmax_blender" / "addon.py"
         )
-        import_modules = {
-            node.module
-            for node in ast.walk(
-                ast.parse(addon_path.read_text(encoding="utf-8"))
+        self.assertTrue(
+            any(
+                isinstance(node, ast.ImportFrom)
+                and any(alias.name == "restart_notice" for alias in node.names)
+                for node in ast.walk(
+                    ast.parse(addon_path.read_text(encoding="utf-8"))
+                )
             )
-            if isinstance(node, ast.ImportFrom)
-        }
-        self.assertNotIn("restart" + "_notice", import_modules)
+        )
         self.addon.register()
+        self.assertEqual(self.addon._test_restart_events, ["register"])
+        layout = self.addon._test_fake_layout()
+        preferences = self.addon.BLENDMAX_Preferences()
+        preferences.layout = layout
+        preferences.draw(None)
+        self.assertEqual(
+            layout.labels,
+            [
+                (
+                    (),
+                    {
+                        "text": (
+                            "Restart Blender after installing or updating BlendMax "
+                            "to load the new code."
+                        )
+                    },
+                )
+            ],
+        )
         self.addon.unregister()
+        self.assertEqual(
+            self.addon._test_restart_events,
+            ["register", "unregister"],
+        )
 
 
 class BlendMaxMenuRegistrationTests(unittest.TestCase):

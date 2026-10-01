@@ -4,16 +4,21 @@ This file records user-visible changes to the 3ds Max exporter/cleanup and the
 Blender importer. BlendMax is still alpha software; host-tested baselines are
 called out separately from automated coverage.
 
-## Blender Importer 0.1.10 — Unreleased
+## Blender Importer 0.1.11 — Unreleased
 
 ### Changed
 
-- Bumps the Blender importer and extension version to **0.1.10**.
-- Removes the obsolete BlendMax restart notice and its persisted process-ID
-  state, along with the obsolete in-process reload operator, state, timer,
-  Preferences UI, and registration. After installing or updating the extension,
-  restart Blender to load the new code. No custom restart prompt or replacement
-  reload mechanism is provided.
+- Bumps the Blender importer and extension version to **0.1.11**.
+- Adds a cached **Restart Blender** notice in Add-on Preferences when the
+  version loaded in this Blender process differs from the version currently in
+  `blender_manifest.toml`. It compares version equality and does not depend on
+  an extension-update callback or an updater.
+- Keeps the loaded version in Blender's process-local driver namespace so
+  disabling and re-enabling the add-on does not hide a pending notice. After
+  Blender restarts, the currently installed version becomes the new baseline.
+  Manifest reads happen in a timer, not during UI drawing.
+- Changes that do not bump the manifest `version` do not trigger the notice;
+  development builds must bump it when a change needs a restart notice.
 
 ### Added
 
@@ -146,9 +151,8 @@ called out separately from automated coverage.
 ### Added
 
 - Adds a compact **⚠ Restart Blender** notice in BlendMax Add-on Preferences
-  when a one-restart refresh is pending. *(This notice was removed in 0.1.10;
-  Blender's native extension installation flow does not provide the successful
-  update callback needed to show it accurately.)*
+  when a one-restart refresh is pending. *(Replaced in 0.1.11 by a notice based
+  on the running-versus-installed manifest version.)*
 
 ### Release metadata
 

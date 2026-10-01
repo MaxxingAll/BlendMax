@@ -11,6 +11,7 @@ import bpy
 from bpy.props import BoolProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 
+from . import restart_notice
 from .errors import BlendMaxImportError
 from .importer import import_blendmax
 from .models import ImportSummary
@@ -331,6 +332,19 @@ class BLENDMAX_OT_import_asset(bpy.types.Operator, ImportHelper):
         return {"FINISHED"}
 
 
+class BLENDMAX_Preferences(bpy.types.AddonPreferences):
+    bl_idname = __package__
+
+    def draw(self, _context):
+        if not restart_notice.draw_notice(self.layout):
+            self.layout.label(
+                text=(
+                    "Restart Blender after installing or updating BlendMax "
+                    "to load the new code."
+                )
+            )
+
+
 def _menu_import(self, _context) -> None:
     self.layout.operator(
         BLENDMAX_OT_import_asset.bl_idname,
@@ -339,6 +353,7 @@ def _menu_import(self, _context) -> None:
 
 
 _CLASSES = (
+    BLENDMAX_Preferences,
     BLENDMAX_OT_import_asset,
     BLENDMAX_OT_create_measurement_cage,
     BLENDMAX_OT_remove_measurement_cage,
@@ -352,9 +367,11 @@ def register() -> None:
         bpy.utils.register_class(item)
     bpy.types.TOPBAR_MT_file_import.append(_menu_import)
     bpy.types.TOPBAR_MT_editor_menus.append(_menu_blendmax)
+    restart_notice.register()
 
 
 def unregister() -> None:
+    restart_notice.unregister()
     bpy.types.TOPBAR_MT_editor_menus.remove(_menu_blendmax)
     bpy.types.TOPBAR_MT_file_import.remove(_menu_import)
     for item in reversed(_CLASSES):

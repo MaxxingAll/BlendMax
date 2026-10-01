@@ -1,4 +1,4 @@
-# BlendMax Blender Importer 0.1.10 Test Matrix
+# BlendMax Blender Importer 0.1.11 Test Matrix
 
 
 ## Material-name collision reservation (`.001`) — PENDING HOST TEST
@@ -45,10 +45,10 @@ Primary tested target: Blender 5.2. Minimum declared version: Blender 4.2.0. No
 maximum Blender version is declared; API variation is contained in the Blender
 adapter through operator, socket, and property feature detection.
 
-The importer does not run a background service, persistent handler, or polling
-loop. Installing or updating the extension requires restarting Blender to load
-the new code; BlendMax has no in-process reload control or custom restart
-notice.
+The importer does not run a background service or persistent handler. A
+lightweight timer checks the installed manifest version every five seconds;
+Preferences draw only the cached version-mismatch state. BlendMax has no
+in-process reload control or updater callback integration.
 
 ## Automated status
 
@@ -56,7 +56,7 @@ GitHub Actions runs the ordinary Python test suite on Python 3.11, 3.12, and
 3.13. The suite covers Blender packaging/manifest behavior, importer
 translation, V-Ray parameter and map contracts, diagnostics grouping, Max
 cleanup/export validation, installer / update paths, and extension registration
-with no custom reload or restart state. The exact suite count is intentionally
+plus restart-notice state handling. The exact suite count is intentionally
 taken from the latest CI run rather than maintained as a static number here.
 
 The headless V-Ray fixtures are deliberately simulated manifests, not claims
@@ -66,16 +66,16 @@ ground truth for renderer-specific host behavior.
 
 ## Version metadata
 
-- Extension version: **0.1.10** — declared in `blender_manifest.toml`, which is
+- Extension version: **0.1.11** — declared in `blender_manifest.toml`, which is
   the metadata Blender reads for an installed extension and the value the build
-  uses to name the artifact (`blendmax_importer-0.1.10.zip`).
+  uses to name the artifact (`blendmax_importer-0.1.11.zip`).
 - `blender_version_min`: **4.2.0**.
 - `__init__.py` mirrors the version in `__version__` and in the legacy `bl_info`
   dict. Nothing in the repository reads those two, so
   `tests/test_blender_extension_build.py` (`BlenderVersionMetadataTests`) pins
   all three against each other and fails if any one moves alone.
 - A fourth value is a hand-maintained expectation rather than a declaration: the
-  literal `"0.1.10"` asserted by `BlenderExtensionBuildTests` in the same file. It
+  literal `"0.1.11"` asserted by `BlenderExtensionBuildTests` in the same file. It
   must move with the other three, or that test fails with no other explanation.
 
 ## Archive validation coverage
@@ -143,12 +143,18 @@ it is unit-tested without `bpy`. None of it is host-verified inside Blender.
 
 ## Blender extension update — PENDING HOST TEST
 
-1. Build `blendmax_importer-0.1.10.zip` and install it through **Install from Disk**.
-2. Confirm Blender registers the extension under its `bl_ext.*` package namespace.
-3. Restart Blender after installation or update.
-4. Confirm the updated BlendMax code is active and the importer can be enabled
-   and used normally.
-5. Confirm there is no in-process reload control and no custom restart notice.
+1. Install version N-1 and start Blender.
+2. Confirm the restart notice is absent.
+3. Update to N through Blender's native Extensions UI without restarting.
+4. Wait about five seconds and confirm Preferences show the red **Restart
+   Blender** action, with both the running and installed versions.
+5. Restart Blender and confirm the notice disappears and the importer works.
+6. Repeat the update through **Install from Disk**.
+7. After updating without restarting, disable and re-enable BlendMax; confirm
+   the notice remains until Blender restarts.
+
+Changes that do not bump `version` in `blender_manifest.toml` cannot trigger the
+notice. Development builds must bump the manifest version when needed.
 
 Record the exact Blender version, build ZIP, and result here after host
 validation. The automated suite cannot verify extension-loader behavior because
@@ -238,9 +244,9 @@ Live `getPropNames` confirmed these actual keys and readable values:
 ## Pass criteria
 
 - Import completes without a Python traceback.
-- The extension loads updated code after Blender is restarted following install
-  or update.
-- No in-process reload control or custom restart-required state is present.
+- The notice appears only while running and installed manifest versions differ,
+  and clears after Blender restarts.
+- UI drawing uses cached version state and performs no file I/O.
 - Relative object transforms, hierarchy, UVs, normals, tangents, and material
   indices visually match the FBX/export manifest after world-origin placement.
 - No unpacked image points at the importer's temporary directory.
