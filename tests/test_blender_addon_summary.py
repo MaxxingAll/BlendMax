@@ -359,6 +359,35 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
             ],
         )
 
+    def test_restart_popup_operator_requires_the_props_popup_options(self):
+        # WindowManager.invoke_props_popup refuses operators without REGISTER
+        # and UNDO ("incorrect invoke function"), so the option set is pinned.
+        self.assertEqual(
+            self.addon.BLENDMAX_OT_restart_notice_popup.bl_options,
+            {"REGISTER", "INTERNAL", "UNDO"},
+        )
+
+    def test_restart_popup_invoke_uses_props_popup_with_the_event(self):
+        operator = self.addon.BLENDMAX_OT_restart_notice_popup()
+        calls = []
+
+        class FakeWindowManager:
+            def invoke_props_popup(self, passed_operator, passed_event):
+                calls.append((passed_operator, passed_event))
+                return {"RUNNING_MODAL"}
+
+        class FakeEvent:
+            type = "MOUSEMOVE"
+            value = "NOTHING"
+
+        event = FakeEvent()
+        result = operator.invoke(
+            SimpleNamespace(window_manager=FakeWindowManager()), event
+        )
+
+        self.assertEqual(calls, [(operator, event)])
+        self.assertEqual(result, {"RUNNING_MODAL"})
+
 
 class BlendMaxMenuRegistrationTests(unittest.TestCase):
     """The BlendMax menu belongs in Blender's global top application menu row."""

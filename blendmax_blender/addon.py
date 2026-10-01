@@ -264,10 +264,17 @@ class BLENDMAX_OT_restart_notice_popup(bpy.types.Operator):
 
     bl_idname = "blendmax.restart_notice_popup"
     bl_label = "BlendMax Was Updated"
-    bl_options = {"INTERNAL"}
+    # WindowManager.invoke_props_popup requires both REGISTER and UNDO on the
+    # operator; without them Blender refuses to show the popup with an
+    # "incorrect invoke function" error. Same option set as BlenderKit's
+    # post-update report popup.
+    bl_options = {"REGISTER", "INTERNAL", "UNDO"}
 
-    def invoke(self, context, _event):
-        return context.window_manager.invoke_popup(self, width=340)
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_popup(self, event)
+
+    def execute(self, _context):
+        return {"FINISHED"}
 
     def draw(self, _context):
         layout = self.layout
