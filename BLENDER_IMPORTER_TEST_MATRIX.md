@@ -1,4 +1,4 @@
-# BlendMax Blender Importer 0.1.11 Test Matrix
+# BlendMax Blender Importer 0.1.12 Test Matrix
 
 
 ## Material-name collision reservation (`.001`) — PENDING HOST TEST
@@ -66,16 +66,16 @@ ground truth for renderer-specific host behavior.
 
 ## Version metadata
 
-- Extension version: **0.1.11** — declared in `blender_manifest.toml`, which is
+- Extension version: **0.1.12** — declared in `blender_manifest.toml`, which is
   the metadata Blender reads for an installed extension and the value the build
-  uses to name the artifact (`blendmax_importer-0.1.11.zip`).
+  uses to name the artifact (`blendmax_importer-0.1.12.zip`).
 - `blender_version_min`: **4.2.0**.
 - `__init__.py` mirrors the version in `__version__` and in the legacy `bl_info`
   dict. Nothing in the repository reads those two, so
   `tests/test_blender_extension_build.py` (`BlenderVersionMetadataTests`) pins
   all three against each other and fails if any one moves alone.
 - A fourth value is a hand-maintained expectation rather than a declaration: the
-  literal `"0.1.11"` asserted by `BlenderExtensionBuildTests` in the same file. It
+  literal `"0.1.12"` asserted by `BlenderExtensionBuildTests` in the same file. It
   must move with the other three, or that test fails with no other explanation.
 
 ## Archive validation coverage
