@@ -1,4 +1,4 @@
-# BlendMax Blender Importer 0.1.9 Test Matrix
+# BlendMax Blender Importer 0.1.10 Test Matrix
 
 
 ## Material-name collision reservation (`.001`) — PENDING HOST TEST
@@ -46,7 +46,7 @@ maximum Blender version is declared; API variation is contained in the Blender
 adapter through operator, socket, and property feature detection.
 
 The importer does not run a background service, persistent handler, or polling
-loop. The 0.1.9 developer workflow adds one-shot use of `bpy.app.timers` only to
+loop. The 0.1.10 developer workflow adds one-shot use of `bpy.app.timers` only to
 defer the **Reload BlendMax** operation until the current Preferences operator
 has returned.
 
@@ -69,16 +69,16 @@ ground truth for renderer-specific host behavior.
 
 ## Version metadata
 
-- Extension version: **0.1.9** — declared in `blender_manifest.toml`, which is
+- Extension version: **0.1.10** — declared in `blender_manifest.toml`, which is
   the metadata Blender reads for an installed extension and the value the build
-  uses to name the artifact (`blendmax_importer-0.1.9.zip`).
+  uses to name the artifact (`blendmax_importer-0.1.10.zip`).
 - `blender_version_min`: **4.2.0**.
 - `__init__.py` mirrors the version in `__version__` and in the legacy `bl_info`
   dict. Nothing in the repository reads those two, so
   `tests/test_blender_extension_build.py` (`BlenderVersionMetadataTests`) pins
   all three against each other and fails if any one moves alone.
 - A fourth value is a hand-maintained expectation rather than a declaration: the
-  literal `"0.1.9"` asserted by `BlenderExtensionBuildTests` in the same file. It
+  literal `"0.1.10"` asserted by `BlenderExtensionBuildTests` in the same file. It
   must move with the other three, or that test fails with no other explanation.
 
 ## Archive validation coverage
@@ -165,7 +165,7 @@ it is unit-tested without `bpy`. None of it is host-verified inside Blender.
 
 ### B. Blender extension ZIP layout — PENDING HOST TEST
 
-1. Build `blendmax_importer-0.1.9.zip` and install it through **Install from Disk**.
+1. Build `blendmax_importer-0.1.10.zip` and install it through **Install from Disk**.
 2. Confirm Blender registers the extension under its `bl_ext.*` package namespace.
 3. Open **Edit > Preferences > Extensions > BlendMax Importer** and confirm
    **Reload BlendMax** is available.

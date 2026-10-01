@@ -4,7 +4,11 @@ This file records user-visible changes to the 3ds Max exporter/cleanup and the
 Blender importer. BlendMax is still alpha software; host-tested baselines are
 called out separately from automated coverage.
 
-## Blender Importer 0.1.9 — Unreleased
+## Blender Importer 0.1.10 — Unreleased
+
+### Changed
+
+- Bumps the Blender importer and extension version to **0.1.10**.
 
 ### Added
 
