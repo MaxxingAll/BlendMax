@@ -22,8 +22,9 @@ called out separately from automated coverage.
   in renders. Re-running the command updates the existing BlendMax presentation
   cage instead of accumulating duplicates. A companion
   **BlendMax > Presentation > Remove Measurement Cage** command removes the
-  cage, its labels, and their datablocks, and the BlendMax menu is registered
-  in the 3D Viewport header.
+  cage, its labels, and their datablocks. The top-level **BlendMax** menu is
+  registered in Blender's application menu row beside **File**, **Edit**,
+  **Render**, **Window**, and **Help**.
 
 ### Fixed
 

@@ -42,12 +42,12 @@ def load_addon(module_name="blendmax_blender._addon_summary_test", config_direct
         config_directory = tempfile.mkdtemp(prefix="blendmax-addon-test-")
 
     fake_bpy = ModuleType("bpy")
-    # ``TOPBAR_MT_editor_menus`` is deliberately absent: the BlendMax menu is
-    # 3D-viewport specific and must register on the viewport's menu row.
+    # Blender draws ``TOPBAR_MT_editor_menus`` beside File/Edit/Render/Window/Help.
     fake_bpy.types = SimpleNamespace(
         Operator=FakeOperator,
         AddonPreferences=FakePreferences,
         Menu=FakeMenu,
+        TOPBAR_MT_editor_menus=FakeMenuCollection(),
         TOPBAR_MT_file_import=FakeMenuCollection(),
         VIEW3D_MT_editor_menus=FakeMenuCollection(),
     )
@@ -467,7 +467,7 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
 
 
 class BlendMaxMenuRegistrationTests(unittest.TestCase):
-    """The BlendMax menu belongs on the 3D viewport's menu row, not the top bar."""
+    """The BlendMax menu belongs in Blender's global top application menu row."""
 
     def setUp(self):
         self.addon = load_addon()
@@ -476,14 +476,16 @@ class BlendMaxMenuRegistrationTests(unittest.TestCase):
     def tearDown(self):
         self.addon.unregister()
 
-    def test_blendmax_menu_registers_on_the_3d_viewport_menu_row(self):
+    def test_blendmax_menu_registers_in_the_top_application_menu_row(self):
         types = self.addon.bpy.types
-        self.assertIn(self.addon._menu_blendmax, types.VIEW3D_MT_editor_menus)
+        self.assertIn(self.addon._menu_blendmax, types.TOPBAR_MT_editor_menus)
+        self.assertNotIn(self.addon._menu_blendmax, types.VIEW3D_MT_editor_menus)
         self.assertIn(self.addon._menu_import, types.TOPBAR_MT_file_import)
 
-    def test_unregister_removes_the_viewport_menu(self):
+    def test_unregister_removes_the_top_application_menu(self):
         self.addon.unregister()
         types = self.addon.bpy.types
+        self.assertNotIn(self.addon._menu_blendmax, types.TOPBAR_MT_editor_menus)
         self.assertNotIn(self.addon._menu_blendmax, types.VIEW3D_MT_editor_menus)
         self.assertNotIn(self.addon._menu_import, types.TOPBAR_MT_file_import)
 

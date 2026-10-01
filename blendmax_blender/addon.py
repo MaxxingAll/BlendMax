@@ -494,11 +494,11 @@ def register() -> None:
     for item in _CLASSES:
         bpy.utils.register_class(item)
     bpy.types.TOPBAR_MT_file_import.append(_menu_import)
-    bpy.types.VIEW3D_MT_editor_menus.append(_menu_blendmax)
+    bpy.types.TOPBAR_MT_editor_menus.append(_menu_blendmax)
 
 
 def unregister() -> None:
-    bpy.types.VIEW3D_MT_editor_menus.remove(_menu_blendmax)
+    bpy.types.TOPBAR_MT_editor_menus.remove(_menu_blendmax)
     bpy.types.TOPBAR_MT_file_import.remove(_menu_import)
     for item in reversed(_CLASSES):
         bpy.utils.unregister_class(item)
