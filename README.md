@@ -149,8 +149,11 @@ Build or download `blendmax_importer-0.1.12.zip`, then in Blender:
 After installing or updating the extension, restart Blender to load the new
 code. If the installed manifest version changes while Blender remains open,
 BlendMax shows a **Restart Blender** notice in Add-on Preferences with both the
-running and installed versions. The notice compares those version strings and
-does not depend on an extension-update callback. Changes that do not bump
+running and installed versions. The state lives in
+`blendmax/blendmax_restart_state.json` under Blender's user config directory:
+it is set when the versions diverge and consumed once Blender restarts into
+the updated code. The notice does not depend on an extension-update callback
+or an updater. Changes that do not bump
 `version` in `blender_manifest.toml` cannot trigger it; development builds must
 bump the manifest version when those changes need a restart notice. Updating
 the installed extension does not change the repository working tree, which

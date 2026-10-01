@@ -8,13 +8,17 @@ called out separately from automated coverage.
 
 ### Changed
 
-- Bumps the Blender importer and extension version to **0.1.12**, so Blender
-  sessions running 0.1.11 can detect the installed update and show the restart
-  notice.
+- Bumps the Blender importer and extension version to **0.1.12**. 0.1.12 is
+  the first released build that carries the restart notice, so once it is
+  running the next update is detected; earlier builds cannot flag the 0.1.12
+  install itself.
 - Adds a cached **Restart Blender** notice in Add-on Preferences when the
   version loaded in this Blender process differs from the version currently in
-  `blender_manifest.toml`. It compares version equality and does not depend on
-  an extension-update callback or an updater.
+  `blender_manifest.toml`. The notice is driven by a small persisted state
+  record (`blendmax/blendmax_restart_state.json` under Blender's user config
+  directory) that is set when the versions diverge and consumed once the
+  updated code is running; it does not depend on an extension-update callback
+  or an updater.
 - Keeps the loaded version in Blender's process-local driver namespace so
   disabling and re-enabling the add-on does not hide a pending notice. After
   Blender restarts, the currently installed version becomes the new baseline.
@@ -153,7 +157,7 @@ called out separately from automated coverage.
 ### Added
 
 - Adds a compact **⚠ Restart Blender** notice in BlendMax Add-on Preferences
-  when a one-restart refresh is pending. *(Replaced in 0.1.11 by a notice based
+  when a one-restart refresh is pending. *(Replaced in 0.1.12 by a notice based
   on the running-versus-installed manifest version.)*
 
 ### Release metadata
