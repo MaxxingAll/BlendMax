@@ -64,21 +64,9 @@ def _scene_reachable_collections(scene_collection):
     return reachable
 
 
-def _presentation_collection(context, hierarchy_root=None):
-    root_collection = None
-    if hierarchy_root is not None:
-        reachable = _scene_reachable_collections(context.scene.collection)
-        # Blender permits objects in several collections. The first linked
-        # collection reachable from this scene is the deterministic owner.
-        root_collection = next(
-            (
-                collection
-                for collection in hierarchy_root.users_collection
-                if collection in reachable
-            ),
-            None,
-        )
-    parent_collection = root_collection or context.scene.collection
+def _presentation_collection(context, parent_collection=None):
+    if parent_collection is None:
+        parent_collection = context.scene.collection
     collection = next(
         (
             item
@@ -237,11 +225,37 @@ def _source_roots(context, cage=None):
     return [active] if active is not None and not _is_cage_object(active) else []
 
 
-def _hierarchy_target(sources):
-    """Only a single selected root with descendants selects hierarchy placement."""
-    if len(sources) == 1 and sources[0].children:
-        return sources[0]
-    return None
+def _shared_dedicated_collection(context, sources):
+    """The single dedicated collection shared by every source, if any.
+
+    Placement nests the presentation collection inside it. Loose objects
+    (scene master membership), the presentation collection itself, and
+    selections sharing more than one collection fall back to the scene root.
+    """
+    reachable = _scene_reachable_collections(context.scene.collection)
+    excluded = {context.scene.collection.as_pointer()}
+    excluded.update(
+        item.as_pointer()
+        for item in bpy.data.collections
+        if item.get(_COLLECTION_KEY) == _COLLECTION_VALUE
+    )
+    shared = None
+    for source in sources:
+        own = {
+            item.as_pointer(): item
+            for item in source.users_collection
+            if item.as_pointer() not in excluded and item in reachable
+        }
+        if not own:
+            return None
+        shared = own if shared is None else {
+            pointer: item for pointer, item in shared.items() if pointer in own
+        }
+        if not shared:
+            return None
+    if shared is None or len(shared) != 1:
+        return None
+    return next(iter(shared.values()))
 
 
 def _remove_dimension_labels() -> None:
@@ -287,8 +301,8 @@ def create_measurement_cage(
 
     envelope = measurement_envelope(bounds, envelope_increment)
     resolved_divisions = _resolve_divisions(envelope.dimensions, divisions)
-    hierarchy_root = _hierarchy_target(sources)
-    collection = _presentation_collection(context, hierarchy_root)
+    target_collection = _shared_dedicated_collection(context, sources)
+    collection = _presentation_collection(context, target_collection)
     _remove_dimension_labels()
     cage = _get_or_create_cage(collection)
     _reset_world_transform(cage)

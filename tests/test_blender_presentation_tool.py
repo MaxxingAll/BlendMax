@@ -436,7 +436,7 @@ class MeasurementCageToolTests(unittest.TestCase):
         for obj in tool_objects:
             self.assertIn(collection, obj.users_collection)
 
-    def test_single_selected_child_with_parent_uses_scene_root_collection(self):
+    def test_single_selected_child_nests_in_its_dedicated_collection(self):
         parent = self.bpy.data.objects.new("Hierarchy Parent", None)
         source = self._add_source("Single Child")
         source.parent = parent
@@ -454,8 +454,8 @@ class MeasurementCageToolTests(unittest.TestCase):
             for item in self.bpy.data.collections
             if item.get("blendmax_presentation_collection") == "presentation"
         )
-        self.assertIn(presentation, self.bpy.scene_collection.children)
-        self.assertNotIn(presentation, parent_collection.children)
+        self.assertIn(presentation, parent_collection.children)
+        self.assertNotIn(presentation, self.bpy.scene_collection.children)
         self.assertIs(source.parent, parent)
         self.assertIsNone(self._tool_objects(kind="cage")[0].parent)
 
@@ -558,7 +558,7 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.assertIn(presentation, self.bpy.scene_collection.children)
         self.assertNotIn(presentation, off_scene.children)
 
-    def test_presentation_collection_moves_when_selection_mode_changes(self):
+    def test_presentation_collection_moves_when_placement_changes(self):
         root_collection = self.bpy.data.collections.new("Root Collection")
         self.bpy.scene_collection.children.link(root_collection)
         root = self.bpy.data.objects.new("Root", None)
@@ -574,9 +574,12 @@ class MeasurementCageToolTests(unittest.TestCase):
             for item in self.bpy.data.collections
             if item.get("blendmax_presentation_collection") == "presentation"
         )
+        self.assertIn(presentation, root_collection.children)
 
-        self.context.selected_objects = [source]
-        self.context.view_layer.objects.active = source
+        loose = self._add_source("Loose")
+        self.bpy.scene_collection.objects.link(loose)
+        self.context.selected_objects = [loose]
+        self.context.view_layer.objects.active = loose
         self._create()
 
         self.assertIn(presentation, self.bpy.scene_collection.children)
@@ -588,6 +591,65 @@ class MeasurementCageToolTests(unittest.TestCase):
             ),
             1,
         )
+
+    def test_collection_grouped_selection_nests_the_presentation_collection(self):
+        asset_collection = self.bpy.data.collections.new("Asset Collection")
+        self.bpy.scene_collection.children.link(asset_collection)
+        first = self._add_source("Part_A")
+        second = self._add_source("Part_B", location=(1.0, 0.0, 0.0))
+        third = self._add_source("Part_C", location=(0.0, 1.0, 0.0))
+        for obj in (first, second, third):
+            asset_collection.objects.link(obj)
+        self.context.selected_objects = [first, second, third]
+
+        self._create()
+
+        presentation = next(
+            item
+            for item in self.bpy.data.collections
+            if item.get("blendmax_presentation_collection") == "presentation"
+        )
+        self.assertIn(presentation, asset_collection.children)
+        self.assertNotIn(presentation, self.bpy.scene_collection.children)
+
+    def test_loose_objects_keep_the_presentation_collection_at_the_scene_root(self):
+        first = self._add_source("Loose_A")
+        second = self._add_source("Loose_B", location=(2.0, 0.0, 0.0))
+        self.bpy.scene_collection.objects.link(first)
+        self.bpy.scene_collection.objects.link(second)
+        self.context.selected_objects = [first, second]
+
+        self._create()
+
+        presentation = next(
+            item
+            for item in self.bpy.data.collections
+            if item.get("blendmax_presentation_collection") == "presentation"
+        )
+        self.assertIn(presentation, self.bpy.scene_collection.children)
+
+    def test_shared_ambiguous_collections_keep_the_presentation_at_the_scene_root(self):
+        alpha = self.bpy.data.collections.new("Alpha")
+        beta = self.bpy.data.collections.new("Beta")
+        self.bpy.scene_collection.children.link(alpha)
+        self.bpy.scene_collection.children.link(beta)
+        first = self._add_source("First")
+        second = self._add_source("Second", location=(1.0, 0.0, 0.0))
+        for collection in (alpha, beta):
+            collection.objects.link(first)
+            collection.objects.link(second)
+        self.context.selected_objects = [first, second]
+
+        self._create()
+
+        presentation = next(
+            item
+            for item in self.bpy.data.collections
+            if item.get("blendmax_presentation_collection") == "presentation"
+        )
+        self.assertIn(presentation, self.bpy.scene_collection.children)
+        self.assertNotIn(presentation, alpha.children)
+        self.assertNotIn(presentation, beta.children)
 
     def test_relocation_unlinks_presentation_from_other_scene_master_collections(self):
         source = self._add_source("Shared Source")

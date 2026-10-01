@@ -40,8 +40,10 @@ called out separately from automated coverage.
   a configurable envelope increment from the combined bounds' minimum corner.
   The default grid targets 1 m cells using those standardized envelope
   dimensions; per-axis division overrides, and in-front visibility (disabled
-  by default) are configurable from the operator. The cage contains only the
-  physical lattice, with no dimension text. It uses beveled curves and a
+  by default) are configurable from the operator. When every selected object
+  shares one dedicated collection, the presentation collection nests inside
+  that collection; loose objects keep it at the scene root. The cage contains
+  only the physical lattice, with no dimension text. It uses beveled curves and a
   dedicated bright-red material so it is visible in the viewport and in
   renders. Re-running the command updates the
   existing BlendMax presentation cage instead of accumulating duplicates. A
