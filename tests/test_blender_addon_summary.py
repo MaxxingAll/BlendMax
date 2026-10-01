@@ -205,7 +205,7 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
             self.assertEqual(self.addon._icon("objects"), "[O]")
             self.assertEqual(self.addon._icon("warnings"), "[!]")
 
-    def test_restart_module_has_no_pid_or_persistent_json_state(self):
+    def test_restart_module_has_no_pid_state(self):
         package_root = Path(__file__).resolve().parents[1] / "blendmax_blender"
         trees = [
             ast.parse((package_root / filename).read_text(encoding="utf-8"))
@@ -224,14 +224,33 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
             if isinstance(node, ast.Attribute)
         }
         self.assertFalse(any("pid" in name for name in identifiers | attributes))
+
+    def test_restart_state_is_confined_to_the_documented_file(self):
+        package_root = Path(__file__).resolve().parents[1] / "blendmax_blender"
+        notice_tree = ast.parse(
+            (package_root / "restart_notice.py").read_text(encoding="utf-8")
+        )
+        addon_tree = ast.parse(
+            (package_root / "addon.py").read_text(encoding="utf-8")
+        )
+        state_filenames = [
+            node.value.value
+            for node in ast.walk(notice_tree)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "_STATE_FILENAME"
+                for target in node.targets
+            )
+            and isinstance(node.value, ast.Constant)
+        ]
+        self.assertEqual(state_filenames, ["blendmax_restart_state.json"])
         imports_json = any(
             (
                 isinstance(node, ast.Import)
                 and any(alias.name == "json" for alias in node.names)
             )
             or (isinstance(node, ast.ImportFrom) and node.module == "json")
-            for tree in trees
-            for node in ast.walk(tree)
+            for node in ast.walk(addon_tree)
         )
         self.assertFalse(imports_json)
 
