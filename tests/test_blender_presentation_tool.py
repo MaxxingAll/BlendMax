@@ -92,6 +92,9 @@ class FakeObject:
         self.scale = (1.0, 1.0, 1.0)
         self.rotation_mode = "XYZ"
         self.rotation_euler = (0.0, 0.0, 0.0)
+        self.delta_location = (0.0, 0.0, 0.0)
+        self.delta_rotation_euler = (0.0, 0.0, 0.0)
+        self.delta_scale = (1.0, 1.0, 1.0)
         self.parent = None
         self.bound_box = _CUBE_CORNERS
         self._properties = {}
@@ -348,6 +351,48 @@ class MeasurementCageToolTests(unittest.TestCase):
         self.assertEqual(len(self.bpy.data.objects), object_count)
         self.assertEqual(len(self.bpy.data.meshes), mesh_count)
         self.assertEqual(len(self.bpy.data.curves), curve_count)
+
+    def test_rerun_resets_cage_and_label_transforms_to_world_space(self):
+        source = self._add_source("Chair")
+        self.context.selected_objects = [source]
+        cage, _ = self._create()
+        labels = self._tool_objects(kind="label")
+
+        cage.location = (10.0, -4.0, 2.0)
+        cage.rotation_euler = (0.5, 0.25, -0.75)
+        cage.scale = (2.0, 3.0, 4.0)
+        cage.delta_location = (1.0, 2.0, 3.0)
+        cage.delta_rotation_euler = (0.1, 0.2, 0.3)
+        cage.delta_scale = (2.0, 2.0, 2.0)
+        cage.parent = source
+        for label in labels:
+            label.location = (20.0, 30.0, 40.0)
+            label.scale = (2.0, 2.0, 2.0)
+            label.delta_location = (1.0, 2.0, 3.0)
+            label.parent = source
+
+        self._create()
+
+        self.assertIsNone(cage.parent)
+        self.assertEqual(cage.location, (0.0, 0.0, 0.0))
+        self.assertEqual(cage.rotation_euler, (0.0, 0.0, 0.0))
+        self.assertEqual(cage.scale, (1.0, 1.0, 1.0))
+        self.assertEqual(cage.delta_location, (0.0, 0.0, 0.0))
+        self.assertEqual(cage.delta_rotation_euler, (0.0, 0.0, 0.0))
+        self.assertEqual(cage.delta_scale, (1.0, 1.0, 1.0))
+        self.assertEqual(len(cage.data.vertices), 8)
+        expected_vertices, _edges = cage_geometry(
+            ((-0.5, -0.5, -0.5), (0.5, 0.5, 0.5))
+        )
+        self.assertEqual(
+            sorted(tuple(point) for point in cage.data.vertices),
+            sorted(expected_vertices),
+        )
+        for label in labels:
+            self.assertIsNone(label.parent)
+            self.assertNotEqual(label.location, (20.0, 30.0, 40.0))
+            self.assertEqual(label.scale, (1.0, 1.0, 1.0))
+            self.assertEqual(label.delta_location, (0.0, 0.0, 0.0))
 
     def test_dimension_labels_carry_the_dimension_property(self):
         source = self._add_source("Chair")

@@ -139,6 +139,18 @@ def _configure_label(label, text, location, rotation, size, in_front):
     label.hide_set(False)
 
 
+def _reset_world_transform(obj) -> None:
+    """Keep generated world-space coordinates in an identity local frame."""
+    obj.parent = None
+    obj.location = (0.0, 0.0, 0.0)
+    obj.rotation_mode = "XYZ"
+    obj.rotation_euler = (0.0, 0.0, 0.0)
+    obj.scale = (1.0, 1.0, 1.0)
+    obj.delta_location = (0.0, 0.0, 0.0)
+    obj.delta_rotation_euler = (0.0, 0.0, 0.0)
+    obj.delta_scale = (1.0, 1.0, 1.0)
+
+
 def _bounds_pair(bounds) -> Bounds:
     return bounds.minimum, bounds.maximum
 
@@ -191,6 +203,7 @@ def create_measurement_cage(context, *, margin=0.0, divisions=(1, 1, 1), show_di
     cage_bounds = bounds.expanded(amount)
     collection = _presentation_collection(context)
     cage = _get_or_create_cage(collection)
+    _reset_world_transform(cage)
     _update_mesh(cage, cage_bounds, divisions)
 
     cage[_SOURCE_KEY] = source.name
@@ -218,6 +231,7 @@ def create_measurement_cage(context, *, margin=0.0, divisions=(1, 1, 1), show_di
         size = min(max(extent * 0.06, 0.02), 0.5)
         for dimension_name, text, location, rotation in label_specs:
             label = _get_or_create_label(collection, dimension_name)
+            _reset_world_transform(label)
             _configure_label(label, text, location, rotation, size, in_front)
             visible_dimensions.add(dimension_name)
     _hide_extra_labels(visible_dimensions)
