@@ -287,6 +287,7 @@ class FakeBpyData:
         self.objects = FakeObjectManager()
         self.collections = FakeCollectionManager()
         self.materials = FakeMaterialManager()
+        self.scenes = []
 
 
 class FakeBpy:
@@ -294,14 +295,16 @@ class FakeBpy:
 
     def __init__(self):
         self.data = FakeBpyData()
-        self.scene_collection = FakeCollection("Scene Collection")
+        self.scene = SimpleNamespace(collection=FakeCollection("Scene Collection"))
+        self.data.scenes.append(self.scene)
+        self.scene_collection = self.scene.collection
 
 
 class MeasurementCageToolTests(unittest.TestCase):
     def setUp(self):
         self.bpy = FakeBpy()
         self.context = SimpleNamespace(
-            scene=SimpleNamespace(collection=self.bpy.scene_collection),
+            scene=self.bpy.scene,
             view_layer=SimpleNamespace(objects=SimpleNamespace(active=None)),
             selected_objects=[],
         )
@@ -542,6 +545,35 @@ class MeasurementCageToolTests(unittest.TestCase):
             ),
             1,
         )
+
+    def test_relocation_unlinks_presentation_from_other_scene_master_collections(self):
+        source = self._add_source("Shared Source")
+        scene_a = self.context.scene
+        scene_b = SimpleNamespace(
+            collection=FakeCollection("Scene B Collection")
+        )
+        self.bpy.data.scenes.append(scene_b)
+        scene_a.collection.objects.link(source)
+        scene_b.collection.objects.link(source)
+        self.context.selected_objects = [source]
+
+        cage, _ = self._create(show_dimensions=False)
+        presentation = next(
+            item
+            for item in self.bpy.data.collections
+            if item.get("blendmax_presentation_collection") == "presentation"
+        )
+        generated_before = tuple(self._tool_objects())
+        self.assertIn(presentation, scene_a.collection.children)
+
+        self.context.scene = scene_b
+        self.context.view_layer.objects.active = source
+        self._create(show_dimensions=False)
+
+        self.assertNotIn(presentation, scene_a.collection.children)
+        self.assertIn(presentation, scene_b.collection.children)
+        self.assertEqual(tuple(self._tool_objects()), generated_before)
+        self.assertIs(self._tool_objects(kind="cage")[0], cage)
 
     def test_source_transforms_and_hierarchy_are_unchanged(self):
         parent = self._add_source("Parent")

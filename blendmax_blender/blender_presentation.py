@@ -34,8 +34,10 @@ def _is_cage_object(obj) -> bool:
 
 def _unlink_collection_from_parents(collection, scene_collection=None, keep=None):
     parents = list(bpy.data.collections)
+    parents.extend(scene.collection for scene in getattr(bpy.data, "scenes", ()))
     if scene_collection is not None:
-        parents.append(scene_collection)
+        if scene_collection not in parents:
+            parents.append(scene_collection)
     for parent in parents:
         if parent is not keep and collection in parent.children:
             parent.children.unlink(collection)
