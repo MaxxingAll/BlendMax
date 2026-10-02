@@ -4,14 +4,13 @@ This file records user-visible changes to the 3ds Max exporter/cleanup and the
 Blender importer. BlendMax is still alpha software; host-tested baselines are
 called out separately from automated coverage.
 
-## Blender Importer 0.1.12 — Unreleased
+## Blender Importer 0.1.20 — Unreleased
 
 ### Changed
 
-- Bumps the Blender importer and extension version to **0.1.12**. 0.1.12 is
-  the first released build that carries the restart notice, so once it is
-  running the next update is detected; earlier builds cannot flag the 0.1.12
-  install itself.
+- Aligns the Blender importer and extension version at **0.1.20** across the
+  manifest, Python metadata, build output, documentation, and version tests.
+  This is the version used for the current Blender host validation.
 - Adds a cached **Restart Blender** notice in Add-on Preferences when the
   version loaded in this Blender process differs from the version currently in
   `blender_manifest.toml`. The notice is driven by a small persisted state

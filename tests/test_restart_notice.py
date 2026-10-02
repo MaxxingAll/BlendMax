@@ -33,7 +33,7 @@ class RestartNoticeTests(unittest.TestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         self.manifest = Path(self.tempdir.name) / "blender_manifest.toml"
         self._mtime_ns = 1_700_000_000_000_000_000
-        self.write_manifest("0.1.10")
+        self.write_manifest("0.1.19")
 
         self.timers = FakeTimers()
         self.handlers = []
@@ -111,101 +111,101 @@ class RestartNoticeTests(unittest.TestCase):
     def test_fresh_start_matches_manifest_without_restart_notice(self):
         self.start_and_poll()
 
-        self.assertEqual(self.notice.running_version(), "0.1.10")
-        self.assertEqual(self.notice.disk_version(), "0.1.10")
+        self.assertEqual(self.notice.running_version(), "0.1.19")
+        self.assertEqual(self.notice.disk_version(), "0.1.19")
         self.assertFalse(self.notice.restart_needed())
         self.assertEqual(
             self.read_state(),
             {
                 "just_updated": False,
-                "running_version": "0.1.10",
-                "installed_version": "0.1.10",
+                "running_version": "0.1.19",
+                "installed_version": "0.1.19",
                 "popup_shown": False,
             },
         )
 
     def test_new_disk_version_requires_restart(self):
         self.start_and_poll()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
 
         self.notice._poll()
 
-        self.assertEqual(self.notice.running_version(), "0.1.10")
-        self.assertEqual(self.notice.disk_version(), "0.1.11")
+        self.assertEqual(self.notice.running_version(), "0.1.19")
+        self.assertEqual(self.notice.disk_version(), "0.1.20")
         self.assertTrue(self.notice.restart_needed())
         self.assertEqual(
             self.read_state(),
             {
                 "just_updated": True,
-                "running_version": "0.1.10",
-                "installed_version": "0.1.11",
+                "running_version": "0.1.19",
+                "installed_version": "0.1.20",
                 "popup_shown": False,
             },
         )
 
     def test_invalid_toml_preserves_last_valid_state(self):
         self.start_and_poll()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
         self.notice._poll()
-        self.write_manifest(contents='version = "0.1.12\n')
+        self.write_manifest(contents='version = "0.1.21\n')
 
         self.notice._poll()
 
-        self.assertEqual(self.notice.disk_version(), "0.1.11")
+        self.assertEqual(self.notice.disk_version(), "0.1.20")
         self.assertTrue(self.notice.restart_needed())
 
     def test_deleted_manifest_preserves_last_valid_state(self):
         self.start_and_poll()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
         self.notice._poll()
         self.manifest.unlink()
 
         self.notice._poll()
 
-        self.assertEqual(self.notice.disk_version(), "0.1.11")
+        self.assertEqual(self.notice.disk_version(), "0.1.20")
         self.assertTrue(self.notice.restart_needed())
 
     def test_downgrade_also_requires_restart(self):
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
         self.start_and_poll()
-        self.write_manifest("0.1.10")
+        self.write_manifest("0.1.19")
 
         self.notice._poll()
 
-        self.assertEqual(self.notice.running_version(), "0.1.11")
-        self.assertEqual(self.notice.disk_version(), "0.1.10")
+        self.assertEqual(self.notice.running_version(), "0.1.20")
+        self.assertEqual(self.notice.disk_version(), "0.1.19")
         self.assertTrue(self.notice.restart_needed())
 
     def test_matching_disk_version_clears_notice(self):
         self.start_and_poll()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
         self.notice._poll()
         self.assertTrue(self.notice.restart_needed())
 
-        self.write_manifest("0.1.10")
+        self.write_manifest("0.1.19")
         self.notice._poll()
 
-        self.assertEqual(self.notice.disk_version(), "0.1.10")
+        self.assertEqual(self.notice.disk_version(), "0.1.19")
         self.assertFalse(self.notice.restart_needed())
         self.assertFalse(self.read_state()["just_updated"])
 
     def test_disable_and_reenable_preserves_running_version(self):
         self.start_and_poll()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
         self.notice._poll()
         self.notice.unregister()
 
         self.notice.register()
         self.notice._poll()
 
-        self.assertEqual(self.notice.running_version(), "0.1.10")
-        self.assertEqual(self.notice.disk_version(), "0.1.11")
+        self.assertEqual(self.notice.running_version(), "0.1.19")
+        self.assertEqual(self.notice.disk_version(), "0.1.20")
         self.assertTrue(self.notice.restart_needed())
         self.assertTrue(self.read_state()["just_updated"])
 
     def test_simulated_blender_restart_consumes_pending_state(self):
         self.start_and_poll()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
         self.notice._poll()
         self.assertTrue(self.read_state()["just_updated"])
         self.notice.unregister()
@@ -216,15 +216,15 @@ class RestartNoticeTests(unittest.TestCase):
         restarted.register()
         restarted._poll()
 
-        self.assertEqual(restarted.running_version(), "0.1.11")
-        self.assertEqual(restarted.disk_version(), "0.1.11")
+        self.assertEqual(restarted.running_version(), "0.1.20")
+        self.assertEqual(restarted.disk_version(), "0.1.20")
         self.assertFalse(restarted.restart_needed())
         self.assertEqual(
             self.read_state(),
             {
                 "just_updated": False,
-                "running_version": "0.1.11",
-                "installed_version": "0.1.11",
+                "running_version": "0.1.20",
+                "installed_version": "0.1.20",
                 "popup_shown": False,
             },
         )
@@ -232,34 +232,34 @@ class RestartNoticeTests(unittest.TestCase):
 
     def test_further_update_while_pending_refreshes_record(self):
         self.start_and_poll()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
         self.notice._poll()
-        self.write_manifest("0.1.12")
+        self.write_manifest("0.1.21")
         self.notice._poll()
 
-        self.assertEqual(self.notice.running_version(), "0.1.10")
-        self.assertEqual(self.notice.disk_version(), "0.1.12")
+        self.assertEqual(self.notice.running_version(), "0.1.19")
+        self.assertEqual(self.notice.disk_version(), "0.1.21")
         self.assertTrue(self.notice.restart_needed())
-        self.assertEqual(self.read_state()["installed_version"], "0.1.12")
+        self.assertEqual(self.read_state()["installed_version"], "0.1.21")
 
     def test_corrupt_state_file_is_replaced_on_next_register(self):
         self.start_and_poll()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
         self.notice._poll()
         self.notice.unregister()
         self.state_path().write_text("{not valid json", encoding="utf-8")
 
         self.notice.register()
 
-        self.assertEqual(self.notice.running_version(), "0.1.10")
-        self.assertEqual(self.notice.disk_version(), "0.1.11")
+        self.assertEqual(self.notice.running_version(), "0.1.19")
+        self.assertEqual(self.notice.disk_version(), "0.1.20")
         self.assertTrue(self.notice.restart_needed())
         self.assertEqual(
             self.read_state(),
             {
                 "just_updated": True,
-                "running_version": "0.1.10",
-                "installed_version": "0.1.11",
+                "running_version": "0.1.19",
+                "installed_version": "0.1.20",
                 "popup_shown": False,
             },
         )
@@ -267,17 +267,17 @@ class RestartNoticeTests(unittest.TestCase):
     def test_notice_still_works_without_a_config_directory(self):
         self.bpy.utils = SimpleNamespace()
         self.start_and_poll()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
 
         self.notice._poll()
 
-        self.assertEqual(self.notice.running_version(), "0.1.10")
-        self.assertEqual(self.notice.disk_version(), "0.1.11")
+        self.assertEqual(self.notice.running_version(), "0.1.19")
+        self.assertEqual(self.notice.disk_version(), "0.1.20")
         self.assertTrue(self.notice.restart_needed())
 
     def test_unregister_removes_timers_and_armed_dialog_handler(self):
         self.notice.register()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
         self.notice._poll()
         self.assertTrue(self.timers.is_registered(self.notice._poll))
         self.assertIn(self.notice._popup_handler, self.handlers)
@@ -296,7 +296,7 @@ class RestartNoticeTests(unittest.TestCase):
 
     def test_draw_uses_cached_versions_without_reading_files(self):
         self.start_and_poll()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
         self.notice._poll()
 
         class Row:
@@ -344,14 +344,14 @@ class RestartNoticeTests(unittest.TestCase):
         self.assertEqual(
             [kwargs["text"] for _args, kwargs in layout.labels],
             [
-                "Installed BlendMax version: 0.1.11",
-                "Running BlendMax version: 0.1.10",
+                "Installed BlendMax version: 0.1.20",
+                "Running BlendMax version: 0.1.19",
             ],
         )
 
     def test_update_detection_arms_a_one_shot_dialog_handler(self):
         self.start_and_poll()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
 
         self.notice._poll()
 
@@ -364,7 +364,7 @@ class RestartNoticeTests(unittest.TestCase):
 
     def test_dialog_handler_shows_once_and_records_it(self):
         self.start_and_poll()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
         self.notice._poll()
 
         self.notice._popup_handler(None)
@@ -382,7 +382,7 @@ class RestartNoticeTests(unittest.TestCase):
     def test_background_mode_does_not_arm_the_dialog_handler(self):
         self.bpy.app.background = True
         self.start_and_poll()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
 
         self.notice._poll()
 
@@ -392,7 +392,7 @@ class RestartNoticeTests(unittest.TestCase):
 
     def test_dialog_failure_keeps_the_notice_unshown(self):
         self.start_and_poll()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
         self.notice._poll()
 
         def boom(*_args):
@@ -409,7 +409,7 @@ class RestartNoticeTests(unittest.TestCase):
 
     def test_dismissed_dialog_is_not_reshown_on_reenable(self):
         self.start_and_poll()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
         self.notice._poll()
         self.notice._popup_handler(None)
         self.notice.unregister()
@@ -423,7 +423,7 @@ class RestartNoticeTests(unittest.TestCase):
 
     def test_register_rearms_a_dialog_that_never_showed(self):
         self.start_and_poll()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
         self.notice._poll()
         self.assertFalse(self.read_state()["popup_shown"])
         self.notice.unregister()
@@ -436,27 +436,27 @@ class RestartNoticeTests(unittest.TestCase):
 
     def test_new_update_event_rearms_the_dialog(self):
         self.start_and_poll()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
         self.notice._poll()
         self.notice._popup_handler(None)
 
-        self.write_manifest("0.1.12")
+        self.write_manifest("0.1.21")
         self.notice._poll()
 
         self.assertTrue(self.notice._popup_pending)
         self.assertIn(self.notice._popup_handler, self.handlers)
         self.notice._popup_handler(None)
         self.assertEqual(len(self.ops_calls), 2)
-        self.assertEqual(self.read_state()["installed_version"], "0.1.12")
+        self.assertEqual(self.read_state()["installed_version"], "0.1.21")
         self.assertTrue(self.read_state()["popup_shown"])
 
     def test_matching_version_cancels_a_pending_dialog(self):
         self.start_and_poll()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
         self.notice._poll()
         self.assertTrue(self.notice._popup_pending)
 
-        self.write_manifest("0.1.10")
+        self.write_manifest("0.1.19")
         self.notice._poll()
 
         self.assertFalse(self.notice._popup_pending)
@@ -478,7 +478,7 @@ class RestartNoticeTests(unittest.TestCase):
 
     def test_rejected_dialog_call_keeps_the_notice_unshown(self):
         self.start_and_poll()
-        self.write_manifest("0.1.11")
+        self.write_manifest("0.1.20")
         self.notice._poll()
         self.bpy.ops.blendmax.restart_notice_popup = lambda *args: {"PASS_THROUGH"}
 

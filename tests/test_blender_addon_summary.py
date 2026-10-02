@@ -98,8 +98,8 @@ def load_addon(module_name="blendmax_blender._addon_summary_test"):
     fake_restart_notice.register = lambda: restart_events.append("register")
     fake_restart_notice.unregister = lambda: restart_events.append("unregister")
     fake_restart_notice.draw_notice = lambda _layout: False
-    fake_restart_notice.disk_version = lambda: "0.1.11"
-    fake_restart_notice.running_version = lambda: "0.1.10"
+    fake_restart_notice.disk_version = lambda: "0.1.20"
+    fake_restart_notice.running_version = lambda: "0.1.19"
 
     addon_path = (
         Path(__file__).resolve().parents[1] / "blendmax_blender" / "addon.py"
@@ -341,8 +341,8 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
             [
                 "BlendMax was updated.",
                 "Restart Blender to load the new code.",
-                "Installed BlendMax version: 0.1.11",
-                "Running BlendMax version: 0.1.10",
+                "Installed BlendMax version: 0.1.20",
+                "Running BlendMax version: 0.1.19",
             ],
         )
         self.assertEqual(
