@@ -13,4 +13,4 @@ blender_version_min = "4.2.0"
 license = ["SPDX:GPL-3.0-or-later"]
 
 [permissions]
-files = "Import user-selected BlendMax packages and their packaged textures"
+files = "Import user-selected BlendMax packages and packaged textures"
