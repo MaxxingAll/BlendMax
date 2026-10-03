@@ -1,288 +1,302 @@
-"""One-restart state for BlendMax add-on installation notices."""
+"""Restart notice for BlendMax, with BlenderKit-style persisted state.
+
+A state file records that a different BlendMax version is installed while
+older code is still running. The notice is drawn from that record, and the
+record is consumed once the updated code is actually running. BlendMax ships
+no updater, so a timer compares the manifest version on disk with the version
+captured when this Blender process first registered the add-on. When the
+watch first detects a change it arms a one-shot depsgraph handler that
+invokes the restart dialog -- BlenderKit's success-popup pattern, because a
+timer callback cannot reliably open an operator popup. The dialog is offered
+once per update, and the preferences notice remains the persistent record.
+"""
 
 from __future__ import annotations
 
 import json
-import os
-import sys
+import tomllib
 from pathlib import Path
 
-_IS_WINDOWS = sys.platform == "win32"
-_STATE_FILENAME = "blendmax_restart_notice.json"
-
-# Win32 constants for the non-destructive liveness probe. Deliberately NOT
-# PROCESS_TERMINATE: this code must never be able to end a process it only
-# means to observe. See _windows_pid_is_alive().
-#
-# SYNCHRONIZE is required to wait on the process object. The probe signals
-# liveness via the wait state rather than the exit code, because
-# GetExitCodeProcess cannot distinguish a running process from one that exited
-# with STILL_ACTIVE (259) — see _windows_pid_is_alive().
-_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-_SYNCHRONIZE = 0x00100000
-_WAIT_OBJECT_0 = 0x00000000
-_WAIT_TIMEOUT = 0x00000102
-_ERROR_INVALID_PARAMETER = 87
-_ERROR_ACCESS_DENIED = 5
+import bpy
 
 
-def _state_path(bpy) -> Path:
-    directory = bpy.utils.user_resource(
-        "CONFIG",
-        path="blendmax",
-        create=True,
-    )
+_MANIFEST = Path(__file__).resolve().parent / "blender_manifest.toml"
+_NAMESPACE_KEY = "blendmax.running_version"
+_STATE_FILENAME = "blendmax_restart_state.json"
+_POLL_SECONDS = 5.0
+
+_last_mtime = None
+_disk_version = None
+_needed = False
+_popup_pending = False
+_popup_shown = False
+
+
+def _read_manifest_version():
+    """Return the manifest version, or None while the file is unavailable."""
+    try:
+        with _MANIFEST.open("rb") as manifest_file:
+            version = tomllib.load(manifest_file).get("version")
+    except Exception:
+        return None
+    return version if isinstance(version, str) and version else None
+
+
+def _state_path():
+    """Return the persisted state file path, or None when unavailable."""
+    try:
+        directory = bpy.utils.user_resource("CONFIG", path="blendmax", create=True)
+    except Exception:
+        return None
+    if not directory:
+        return None
     return Path(directory) / _STATE_FILENAME
 
 
-def _read_state(path: Path) -> dict:
-    try:
-        with path.open("r", encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, ValueError, TypeError):
+def _read_state():
+    """Return the persisted notice state; unreadable content means empty."""
+    path = _state_path()
+    if path is None:
         return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _write_state(path: Path, state: dict) -> bool:
-    """Write state to disk.
-
-    ``OSError`` is swallowed so Preferences/registration cannot crash if the
-    config directory is unwritable. A failed write means the persistent
-    one-shot flag may not survive a BlendMax module reload. The in-process
-    cache in ``addon.py`` still prevents a second use until that reload.
-    """
-
     try:
-        with path.open("w", encoding="utf-8") as handle:
-            json.dump(state, handle)
-    except OSError:
-        return False
-    return True
+        with path.open("r", encoding="utf-8") as state_file:
+            state = json.load(state_file)
+    except Exception:
+        return {}
+    return state if isinstance(state, dict) else {}
 
 
-def _clear_state(path: Path) -> None:
+def _write_state(just_updated, running, installed, popup_shown):
+    """Write the persisted notice state, skipping identical content."""
+    path = _state_path()
+    if path is None:
+        return
+    state = {
+        "just_updated": bool(just_updated),
+        "running_version": running,
+        "installed_version": installed,
+        "popup_shown": bool(popup_shown),
+    }
     try:
-        path.unlink()
-    except FileNotFoundError:
+        if _read_state() == state:
+            return
+        with path.open("w", encoding="utf-8") as state_file:
+            json.dump(state, state_file, indent=2, sort_keys=True)
+            state_file.write("\n")
+    except Exception:
+        # The notice still works; only the persisted record is lost.
         pass
-    except OSError:
+
+
+def running_version():
+    """Return the BlendMax version captured for this Blender process."""
+    return bpy.app.driver_namespace.get(_NAMESPACE_KEY)
+
+
+def disk_version():
+    """Return the last valid version read from the installed manifest."""
+    return _disk_version
+
+
+def restart_needed():
+    """Return the cached restart state without touching the filesystem."""
+    return _needed
+
+
+def _tag_redraw():
+    try:
+        for window in bpy.context.window_manager.windows:
+            for area in window.screen.areas:
+                area.tag_redraw()
+    except Exception:
         pass
 
 
-def _persist_state(path: Path, state: dict) -> bool:
-    if state:
-        return _write_state(path, state)
-    _clear_state(path)
-    return True
+def _record_pending(disk):
+    """Record that `disk` is installed while older code is still running."""
+    global _disk_version, _needed, _popup_shown
+
+    changed = not _needed or _disk_version != disk
+    _disk_version = disk
+    _needed = True
+    if changed:
+        # A new update event may ask for the dialog again.
+        _popup_shown = False
+    _write_state(True, running_version(), disk, _popup_shown)
+    if changed:
+        _request_popup()
+        _tag_redraw()
 
 
-def _windows_pid_is_alive(pid: int) -> bool:
-    """Non-destructive liveness probe using a query-only process handle.
+def _record_clear(disk):
+    """Record that the running process and the installed code now match."""
+    global _disk_version, _needed, _popup_pending, _popup_shown
 
-    ``os.kill(pid, 0)`` is not a safe probe on Windows. Verified on CPython
-    3.11 (MSC v.1944, 64-bit): calling it against a live, unrelated child
-    process terminates it — the child reaped with exit status 3221225794
-    (``0xC0000142``, ``STATUS_DLL_INIT_FAILED``), the signature of
-    ``TerminateProcess``. Windows has no "signal 0" concept, so CPython's
-    ``os.kill`` maps the call onto a real termination.
+    changed = _needed or _disk_version != disk
+    _disk_version = disk
+    _needed = False
+    _popup_pending = False
+    _popup_shown = False
+    _remove_popup_handler()
+    _write_state(False, running_version(), disk, False)
+    if changed:
+        _tag_redraw()
 
-    Persisted PIDs from a previous Blender session can be recycled by an
-    unrelated process, and ``_pruned_consumed_pids`` calls this probe on those
-    persisted values — so the old implementation could kill a bystander.
 
-    Liveness is decided by the **wait state** of the process object, not by its
-    exit code. ``GetExitCodeProcess`` returns ``STILL_ACTIVE`` (259) for a
-    running process, but 259 is also a legal exit code, so a process that
-    exited with status 259 is indistinguishable from a live one and would be
-    retained forever as a stale PID. ``WaitForSingleObject(handle, 0)`` returns
-    ``WAIT_OBJECT_0`` only once the process object is signaled — i.e. the
-    process has actually terminated — which stays correct whatever exit code it
-    used.
+def _show_popup():
+    """Invoke the restart dialog; may raise.
 
-    The handle is opened with ``PROCESS_QUERY_LIMITED_INFORMATION |
-    SYNCHRONIZE``: query and wait rights only, so it cannot terminate or signal
-    anything. Access failures are classified by ``GetLastError``.
+    BlenderKit's success-popup pattern: the operator runs from a depsgraph
+    handler without a context override. An invocation Blender rejects
+    comes back as a result set without RUNNING_MODAL instead of raising,
+    so the result is checked before the dialog counts as offered.
     """
+    result = bpy.ops.blendmax.restart_notice_popup("INVOKE_DEFAULT")
+    if "RUNNING_MODAL" not in result:
+        raise RuntimeError(
+            "restart dialog was rejected: {0!r}".format(result)
+        )
 
-    import ctypes
-    from ctypes import wintypes
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+def _popup_handler(scene, depsgraph=None):
+    """Run the one-shot restart dialog on the next depsgraph update.
 
-    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    kernel32.CloseHandle.restype = wintypes.BOOL
-    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    Depsgraph-update handlers are called as either ``(scene)`` or
+    ``(scene, depsgraph)``; this handler accepts both forms.
+    """
+    global _popup_pending, _popup_shown
 
-    access = _PROCESS_QUERY_LIMITED_INFORMATION | _SYNCHRONIZE
-    handle = kernel32.OpenProcess(access, False, pid)
-    if not handle:
-        # ACCESS_DENIED means the process is there but owned by someone else:
-        # still alive. INVALID_PARAMETER means no such PID.
-        return ctypes.get_last_error() == _ERROR_ACCESS_DENIED
+    _remove_popup_handler()
+    if not _popup_pending or _popup_shown:
+        return
     try:
-        # WAIT_OBJECT_0 => signaled => the process has exited. WAIT_TIMEOUT =>
-        # still running. Anything else is treated as dead, matching the old
-        # probe's conservative handling of unexpected OS failures.
-        return kernel32.WaitForSingleObject(handle, 0) == _WAIT_TIMEOUT
-    finally:
-        kernel32.CloseHandle(handle)
+        _show_popup()
+    except Exception:
+        # The preferences notice remains; re-enabling the add-on retries.
+        return
+    _popup_pending = False
+    _popup_shown = True
+    _write_state(True, running_version(), _disk_version, True)
 
 
-def _pid_is_alive(pid: int) -> bool:
-    if not isinstance(pid, int) or pid <= 0:
-        return False
-    if _IS_WINDOWS:
-        return _windows_pid_is_alive(pid)
+def _remove_popup_handler():
+    """Drop the armed restart-dialog handler, if any."""
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
+        bpy.app.handlers.depsgraph_update_post.remove(_popup_handler)
+    except Exception:
+        pass
+
+
+def _request_popup():
+    """Arm the one-shot restart dialog; called once per update event."""
+    global _popup_pending
+
+    if _popup_shown:
+        return
+    _popup_pending = True
+    if getattr(bpy.app, "background", False):
+        return
+    try:
+        handlers = bpy.app.handlers.depsgraph_update_post
+    except Exception:
+        return
+    if any(handler is _popup_handler for handler in handlers):
+        return
+    handlers.append(_popup_handler)
+
+
+def _poll():
+    global _last_mtime
+
+    try:
+        mtime = _MANIFEST.stat().st_mtime_ns
     except OSError:
-        return False
-    return True
+        # Keep the last good state while the extension files are being replaced.
+        return _POLL_SECONDS
 
+    if mtime == _last_mtime:
+        return _POLL_SECONDS
 
-def _consumed_pids_from_state(state: dict) -> list:
-    pids = []
-    stored = state.get("hot_reload_consumed_pids")
-    if isinstance(stored, list):
-        for pid in stored:
-            if isinstance(pid, int) and pid not in pids:
-                pids.append(pid)
-    legacy = state.get("hot_reload_consumed_pid")
-    if isinstance(legacy, int) and legacy not in pids:
-        pids.append(legacy)
-    return pids
+    disk = _read_manifest_version()
+    if disk is None:
+        # Keep the last good state; retry when the manifest next changes.
+        return _POLL_SECONDS
+    _last_mtime = mtime
 
+    running = running_version()
+    if running is None:
+        return _POLL_SECONDS
 
-def _pruned_consumed_pids(pids, current_pid: int) -> list:
-    kept = []
-    for pid in pids:
-        if pid == current_pid or _pid_is_alive(pid):
-            if pid not in kept:
-                kept.append(pid)
-    return kept
-
-
-def _store_consumed_pids(state: dict, pids) -> None:
-    state.pop("hot_reload_consumed_pid", None)
-    if pids:
-        state["hot_reload_consumed_pids"] = list(pids)
+    if disk != running:
+        _record_pending(disk)
     else:
-        state.pop("hot_reload_consumed_pids", None)
+        _record_clear(disk)
+
+    return _POLL_SECONDS
 
 
-def _drop_restart_notice_fields(state: dict) -> None:
-    state.pop("pending_pid", None)
-    state.pop("hot_reload_pending_pid", None)
-
-
-def restart_notice_required(bpy) -> bool:
-    """Return whether the current Blender process still needs a restart.
-
-    The first registration records the current process ID and shows the notice.
-    A later Blender process consumes that state, which makes the notice vanish
-    after one full Blender restart while keeping it visible through re-enables
-    in the original process. A successful hot reload is represented by a
-    one-shot current-process reload marker and consumes the notice on the first
-    successful registration of the reloaded module.
-    """
-
-    path = _state_path(bpy)
-    state = _read_state(path)
-    current_pid = os.getpid()
-    pending_pid = state.get("pending_pid")
-    hot_reload_pending_pid = state.get("hot_reload_pending_pid")
-
-    if hot_reload_pending_pid == current_pid:
-        _drop_restart_notice_fields(state)
-        _store_consumed_pids(
-            state,
-            _pruned_consumed_pids(_consumed_pids_from_state(state), current_pid),
-        )
-        _persist_state(path, state)
+def draw_notice(layout):
+    """Draw the cached restart action; this function performs no file I/O."""
+    if not _needed:
         return False
 
-    if pending_pid is None:
-        state["pending_pid"] = current_pid
-        _store_consumed_pids(
-            state,
-            _pruned_consumed_pids(_consumed_pids_from_state(state), current_pid),
-        )
-        _write_state(path, state)
-        return True
-
-    if pending_pid == current_pid:
-        return True
-
-    _drop_restart_notice_fields(state)
-    _store_consumed_pids(
-        state,
-        _pruned_consumed_pids(_consumed_pids_from_state(state), current_pid),
-    )
-    _persist_state(path, state)
-    return False
+    box = layout.box()
+    column = box.column()
+    row = column.row()
+    row.alert = True
+    row.operator("wm.quit_blender", text="Restart Blender", icon="ERROR")
+    column.label(text="Installed BlendMax version: {0}".format(_disk_version))
+    column.label(text="Running BlendMax version: {0}".format(running_version()))
+    return True
 
 
-def mark_hot_reload_pending(bpy) -> None:
-    """Mark that the next successful registration is caused by a hot reload."""
+def register():
+    """Capture this process's baseline version and start the update watch."""
+    global _last_mtime, _disk_version, _needed
+    global _popup_pending, _popup_shown
 
-    path = _state_path(bpy)
-    current_pid = os.getpid()
-    state = _read_state(path)
-    state["pending_pid"] = current_pid
-    state["hot_reload_pending_pid"] = current_pid
-    _write_state(path, state)
+    _last_mtime = None
+    _disk_version = None
+    _needed = False
+    _popup_pending = False
+    _popup_shown = False
+    _remove_popup_handler()
+
+    namespace = bpy.app.driver_namespace
+    baseline = namespace.get(_NAMESPACE_KEY)
+    disk = _read_manifest_version()
+
+    if baseline is None and disk is not None:
+        # First register of this Blender process: the code that just loaded is
+        # the code on disk, so any pending state left by an earlier session
+        # has been consumed by this start.
+        baseline = disk
+        namespace[_NAMESPACE_KEY] = baseline
+        _disk_version = disk
+        _write_state(False, baseline, disk, False)
+    elif baseline is not None:
+        state = _read_state()
+        _disk_version = state.get("installed_version")
+        _needed = bool(state.get("just_updated"))
+        _popup_shown = bool(state.get("popup_shown"))
+        if disk is not None:
+            if disk != baseline:
+                # Re-registered while a different version is installed, for
+                # example after disabling, updating, and re-enabling.
+                _record_pending(disk)
+            else:
+                _record_clear(disk)
+        if _needed and not _popup_shown:
+            # A previous session could not show the dialog; try again.
+            _request_popup()
+
+    timers = bpy.app.timers
+    if not timers.is_registered(_poll):
+        timers.register(_poll, first_interval=0.0, persistent=True)
 
 
-def mark_hot_reload_failed(bpy) -> None:
-    """Restore the normal same-process restart notice after a failed reload."""
-
-    path = _state_path(bpy)
-    current_pid = os.getpid()
-    state = _read_state(path)
-    state["pending_pid"] = current_pid
-    state.pop("hot_reload_pending_pid", None)
-    _write_state(path, state)
-
-
-def hot_reload_consumed_for_current_process(bpy) -> bool:
-    """Return whether this Blender process has already used Hot Reload."""
-
-    path = _state_path(bpy)
-    state = _read_state(path)
-    return os.getpid() in _consumed_pids_from_state(state)
-
-
-def mark_hot_reload_consumed(bpy) -> None:
-    """Record that Hot Reload has been used in the current Blender process."""
-
-    path = _state_path(bpy)
-    current_pid = os.getpid()
-    state = _read_state(path)
-    pids = _pruned_consumed_pids(_consumed_pids_from_state(state), current_pid)
-    if current_pid not in pids:
-        pids.append(current_pid)
-    _store_consumed_pids(state, pids)
-    _write_state(path, state)
-
-
-def unmark_hot_reload_consumed(bpy) -> None:
-    """Remove the current process from the Hot Reload consumed set."""
-
-    path = _state_path(bpy)
-    current_pid = os.getpid()
-    state = _read_state(path)
-    pids = [
-        pid
-        for pid in _pruned_consumed_pids(_consumed_pids_from_state(state), current_pid)
-        if pid != current_pid
-    ]
-    _store_consumed_pids(state, pids)
-    _persist_state(path, state)
+def unregister():
+    timers = bpy.app.timers
+    if timers.is_registered(_poll):
+        timers.unregister(_poll)
+    _remove_popup_handler()

@@ -6,28 +6,17 @@ import os
 import sys
 import textwrap
 import time
-import traceback
 
 import bpy
 from bpy.props import BoolProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 
+from . import restart_notice
 from .errors import BlendMaxImportError
 from .importer import import_blendmax
 from .models import ImportSummary
-from .restart_notice import (
-    hot_reload_consumed_for_current_process,
-    mark_hot_reload_consumed,
-    mark_hot_reload_failed,
-    mark_hot_reload_pending,
-    restart_notice_required,
-    unmark_hot_reload_consumed,
-)
 
 
-_RESTART_NOTICE_REQUIRED = False
-_RELOAD_PENDING = False
-_HOT_RELOAD_CONSUMED = None
 _SUMMARY_WIDTH = 60
 _DETAIL_WIDTH = 72
 _STDOUT_UTF8_CONFIGURED = False
@@ -42,123 +31,6 @@ _ICONS = {
     "notes": ("✎", "[i]"),
     "time": ("⏱", "[t]"),
 }
-
-
-class BLENDMAX_OT_restart_blender_notice(bpy.types.Operator):
-    bl_idname = "blendmax.restart_blender_notice"
-    bl_label = "Restart Blender"
-    bl_description = (
-        "Restart Blender to apply recent BlendMax changes. "
-        "This notice disappears automatically after Blender is restarted."
-    )
-
-    def execute(self, _context):
-        self.report({"INFO"}, "Please restart Blender to apply recent BlendMax changes.")
-        return {"FINISHED"}
-
-
-def _hot_reload() -> None:
-    """Reload BlendMax from the installed module location after the operator returns."""
-    global _RELOAD_PENDING
-    module_name = __package__
-    try:
-        mark_hot_reload_pending(bpy)
-        bpy.ops.preferences.addon_disable(module=module_name)
-
-        for name in list(sys.modules):
-            if name == module_name or name.startswith(module_name + "."):
-                del sys.modules[name]
-
-        bpy.ops.preferences.addon_enable(module=module_name)
-        print("BlendMax: hot reload completed successfully.")
-    except Exception as exc:
-        mark_hot_reload_failed(bpy)
-        print("BlendMax: hot reload failed: {0}".format(exc))
-        traceback.print_exc()
-    finally:
-        _RELOAD_PENDING = False
-    return None
-
-
-def _hot_reload_button_text(*, reload_pending: bool, reload_consumed: bool) -> str:
-    if reload_pending:
-        return "Reloading BlendMax…"
-    if reload_consumed:
-        return "BlendMax Reload Used"
-    return "Reload BlendMax"
-
-
-def _hot_reload_is_consumed() -> bool:
-    """Return cached Hot Reload consumed state, loading it from disk once."""
-
-    global _HOT_RELOAD_CONSUMED
-    if _HOT_RELOAD_CONSUMED is None:
-        _HOT_RELOAD_CONSUMED = hot_reload_consumed_for_current_process(bpy)
-    return bool(_HOT_RELOAD_CONSUMED)
-
-
-class BLENDMAX_OT_hot_reload(bpy.types.Operator):
-    bl_idname = "blendmax.hot_reload"
-    bl_label = "Reload BlendMax"
-    bl_description = (
-        "Reload the currently installed BlendMax extension copy once in this "
-        "Blender session without restarting Blender. Repeated in-process "
-        "reloads are blocked because BlendMax's own module reload resets "
-        "in-memory flags; restart Blender to reload again."
-    )
-
-    def execute(self, _context):
-        global _RELOAD_PENDING, _HOT_RELOAD_CONSUMED
-        if _hot_reload_is_consumed():
-            return {"CANCELLED"}
-        if _RELOAD_PENDING:
-            self.report({"INFO"}, "BlendMax reload is already scheduled.")
-            return {"FINISHED"}
-
-        # Persist before the timer so a second invoke cannot sneak through
-        # during the 0.1s deferral. Roll both flags back if registration fails.
-        mark_hot_reload_consumed(bpy)
-        _HOT_RELOAD_CONSUMED = True
-        _RELOAD_PENDING = True
-        try:
-            bpy.app.timers.register(_hot_reload, first_interval=0.1)
-        except Exception:
-            unmark_hot_reload_consumed(bpy)
-            _HOT_RELOAD_CONSUMED = False
-            _RELOAD_PENDING = False
-            return {"CANCELLED"}
-        self.report({"INFO"}, "BlendMax reload scheduled.")
-        return {"FINISHED"}
-
-
-class BLENDMAX_Preferences(bpy.types.AddonPreferences):
-    bl_idname = __package__
-
-    def draw(self, _context):
-        layout = self.layout
-        reload_pending = _RELOAD_PENDING
-        reload_consumed = _hot_reload_is_consumed()
-
-        row = layout.row()
-        row.enabled = not reload_consumed
-        row.operator(
-            BLENDMAX_OT_hot_reload.bl_idname,
-            text=_hot_reload_button_text(
-                reload_pending=reload_pending,
-                reload_consumed=reload_consumed,
-            ),
-            icon="FILE_REFRESH",
-        )
-        if _RESTART_NOTICE_REQUIRED:
-            layout.operator(
-                BLENDMAX_OT_restart_blender_notice.bl_idname,
-                text="⚠ Restart Blender",
-                icon="ERROR",
-            )
-        elif reload_consumed and not reload_pending:
-            layout.label(text="Restart Blender to reload again.")
-        else:
-            layout.label(text="BlendMax is ready to use.")
 
 
 def _enable_console_colors() -> bool:
@@ -286,6 +158,183 @@ def _print_import_summary(summary: ImportSummary, elapsed_seconds: float) -> Non
     print(separator)
 
 
+class BLENDMAX_OT_create_measurement_cage(bpy.types.Operator):
+    """Create or update the renderable BlendMax measurement cage."""
+
+    bl_idname = "blendmax.create_measurement_cage"
+    bl_label = "Create Measurement Cage"
+    bl_description = (
+        "Create or update a renderable measurement lattice around the selected "
+        "objects and their descendants"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    envelope_increment: bpy.props.FloatProperty(
+        name="Envelope Increment",
+        description="Round each cage dimension up to this world-space increment",
+        default=1.0,
+        min=0.000001,
+        soft_max=10.0,
+        subtype="DISTANCE",
+    )
+    divisions_x: bpy.props.IntProperty(
+        name="X Divisions",
+        description="Segments along X; 0 chooses about 1 m grid cells",
+        default=0,
+        min=0,
+        max=100,
+    )
+    divisions_y: bpy.props.IntProperty(
+        name="Y Divisions",
+        description="Segments along Y; 0 chooses about 1 m grid cells",
+        default=0,
+        min=0,
+        max=100,
+    )
+    divisions_z: bpy.props.IntProperty(
+        name="Z Divisions",
+        description="Segments along Z; 0 chooses about 1 m grid cells",
+        default=0,
+        min=0,
+        max=100,
+    )
+    in_front: bpy.props.BoolProperty(
+        name="In Front",
+        description="Keep the cage visible through scene geometry",
+        default=False,
+    )
+
+    def execute(self, context):
+        from .blender_presentation import create_measurement_cage
+
+        try:
+            _cage, envelope = create_measurement_cage(
+                context,
+                envelope_increment=self.envelope_increment,
+                divisions=(self.divisions_x, self.divisions_y, self.divisions_z),
+                in_front=self.in_front,
+            )
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+
+        self.report(
+            {"INFO"},
+            "Measurement Cage: W {0:.3f} m, D {1:.3f} m, H {2:.3f} m.".format(
+                *envelope.dimensions
+            ),
+        )
+        return {"FINISHED"}
+
+
+class BLENDMAX_OT_remove_measurement_cage(bpy.types.Operator):
+    """Remove the BlendMax measurement cage."""
+
+    bl_idname = "blendmax.remove_measurement_cage"
+    bl_label = "Remove Measurement Cage"
+    bl_description = (
+        "Remove the BlendMax measurement cage and its supporting datablocks"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        from .blender_presentation import remove_measurement_cage
+
+        removed = remove_measurement_cage(context)
+        if removed:
+            self.report({"INFO"}, "Measurement Cage removed.")
+        else:
+            self.report({"INFO"}, "No BlendMax measurement cage to remove.")
+        return {"FINISHED"}
+
+
+class BLENDMAX_OT_restart_notice_later(bpy.types.Operator):
+    """Keep working; the restart notice stays in the add-on preferences."""
+
+    bl_idname = "blendmax.restart_notice_later"
+    bl_label = "Later"
+    bl_options = {"INTERNAL"}
+
+    def execute(self, _context):
+        return {"FINISHED"}
+
+
+class BLENDMAX_OT_restart_notice_popup(bpy.types.Operator):
+    """BlendMax was updated while this session was running."""
+
+    bl_idname = "blendmax.restart_notice_popup"
+    bl_label = "BlendMax Was Updated"
+    # WindowManager.invoke_props_popup requires both REGISTER and UNDO on the
+    # operator; without them Blender refuses to show the popup with an
+    # "incorrect invoke function" error. Same option set as BlenderKit's
+    # post-update report popup.
+    bl_options = {"REGISTER", "INTERNAL", "UNDO"}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_popup(self, event)
+
+    def execute(self, _context):
+        return {"FINISHED"}
+
+    def draw(self, _context):
+        layout = self.layout
+        heading = layout.row()
+        heading.alert = True
+        heading.label(text="BlendMax was updated.", icon="ERROR")
+        layout.label(text="Restart Blender to load the new code.")
+        layout.separator()
+        layout.label(
+            text="Installed BlendMax version: {0}".format(
+                restart_notice.disk_version()
+            )
+        )
+        layout.label(
+            text="Running BlendMax version: {0}".format(
+                restart_notice.running_version()
+            )
+        )
+        layout.separator()
+        buttons = layout.row()
+        buttons.operator(
+            "wm.quit_blender", text="Restart Blender", icon="ERROR"
+        )
+        buttons.operator(
+            BLENDMAX_OT_restart_notice_later.bl_idname, text="Later"
+        )
+
+
+class BLENDMAX_MT_presentation(bpy.types.Menu):
+    bl_idname = "BLENDMAX_MT_presentation"
+    bl_label = "Presentation"
+
+    def draw(self, _context):
+        self.layout.operator(
+            BLENDMAX_OT_create_measurement_cage.bl_idname,
+            text="Create Measurement Cage",
+            icon="CUBE",
+        )
+        self.layout.operator(
+            BLENDMAX_OT_remove_measurement_cage.bl_idname,
+            text="Remove Measurement Cage",
+            icon="TRASH",
+        )
+
+
+class BLENDMAX_MT_main(bpy.types.Menu):
+    bl_idname = "BLENDMAX_MT_main"
+    bl_label = "BlendMax"
+
+    def draw(self, _context):
+        self.layout.menu(
+            BLENDMAX_MT_presentation.bl_idname,
+            icon="SCENE_DATA",
+        )
+
+
+def _menu_blendmax(self, _context) -> None:
+    self.layout.menu(BLENDMAX_MT_main.bl_idname)
+
+
 class BLENDMAX_OT_import_asset(bpy.types.Operator, ImportHelper):
     bl_idname = "import_scene.blendmax_asset"
     bl_label = "Import BlendMax Asset"
@@ -338,6 +387,19 @@ class BLENDMAX_OT_import_asset(bpy.types.Operator, ImportHelper):
         return {"FINISHED"}
 
 
+class BLENDMAX_Preferences(bpy.types.AddonPreferences):
+    bl_idname = __package__
+
+    def draw(self, _context):
+        if not restart_notice.draw_notice(self.layout):
+            self.layout.label(
+                text=(
+                    "Restart Blender after installing or updating BlendMax "
+                    "to load the new code."
+                )
+            )
+
+
 def _menu_import(self, _context) -> None:
     self.layout.operator(
         BLENDMAX_OT_import_asset.bl_idname,
@@ -347,23 +409,27 @@ def _menu_import(self, _context) -> None:
 
 _CLASSES = (
     BLENDMAX_Preferences,
-    BLENDMAX_OT_restart_blender_notice,
-    BLENDMAX_OT_hot_reload,
     BLENDMAX_OT_import_asset,
+    BLENDMAX_OT_create_measurement_cage,
+    BLENDMAX_OT_remove_measurement_cage,
+    BLENDMAX_OT_restart_notice_popup,
+    BLENDMAX_OT_restart_notice_later,
+    BLENDMAX_MT_presentation,
+    BLENDMAX_MT_main,
 )
 
 
 def register() -> None:
-    global _RESTART_NOTICE_REQUIRED, _HOT_RELOAD_CONSUMED
-    _RESTART_NOTICE_REQUIRED = restart_notice_required(bpy)
-    _HOT_RELOAD_CONSUMED = hot_reload_consumed_for_current_process(bpy)
-
     for item in _CLASSES:
         bpy.utils.register_class(item)
     bpy.types.TOPBAR_MT_file_import.append(_menu_import)
+    bpy.types.TOPBAR_MT_editor_menus.append(_menu_blendmax)
+    restart_notice.register()
 
 
 def unregister() -> None:
+    restart_notice.unregister()
+    bpy.types.TOPBAR_MT_editor_menus.remove(_menu_blendmax)
     bpy.types.TOPBAR_MT_file_import.remove(_menu_import)
     for item in reversed(_CLASSES):
         bpy.utils.unregister_class(item)

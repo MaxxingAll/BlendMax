@@ -21,7 +21,7 @@ created automatically by Python.
 | Component | Version | Status |
 | --- | --- | --- |
 | 3ds Max exporter and cleanup | `0.1.0-alpha.4.3.0` | Host verified in 3ds Max 2025.3 |
-| Blender importer | `0.1.9` | Structured import summary and in-process hot reload |
+| Blender importer | `0.1.20` | Measurement Cage, structured import summary, and a version-based restart notice with a one-shot dialog |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
 | Automated suite | See CI | Python 3.11–3.13 |
 
@@ -139,22 +139,29 @@ continue running stale code.
 
 ## Install the Blender importer
 
-Build or download `blendmax_importer-0.1.9.zip`, then in Blender:
+Build or download `blendmax_importer-0.1.20.zip`, then in Blender:
 
 1. Open **Edit > Preferences > Get Extensions**.
 2. Open the menu in the top-right and choose **Install from Disk**.
 3. Select the importer ZIP and enable **BlendMax Importer** if needed.
 4. Use **File > Import > BlendMax Asset (.blendmax)**.
 
-Installing a newer version of the same extension ZIP updates the isolated
-extension. The **Reload BlendMax** control in Add-on Preferences performs a
-single deferred in-process reload of the currently installed extension copy,
-once per Blender process. BlendMax's own module reload resets in-memory flags,
-so a second in-process click is blocked; restart Blender to reload again. After
-that click the button stays disabled until Blender is restarted. It does not
-watch the source tree or run continuously. Editing the repository working tree
-therefore requires updating the installed extension copy (or pointing Blender
-at that working copy) before using Reload BlendMax.
+After installing or updating the extension, restart Blender to load the new
+code. If the installed manifest version changes while Blender remains open,
+BlendMax shows a **Restart Blender** notice in Add-on Preferences with both the
+running and installed versions, and pops a one-shot restart dialog
+(BlenderKit-style) offering **Restart Blender** or **Later**. The dialog is
+offered once per detected update, appears on Blender's next scene update
+after the change is detected, and is skipped in background sessions. The state
+lives in
+`blendmax/blendmax_restart_state.json` under Blender's user config directory:
+it is set when the versions diverge and consumed once Blender restarts into
+the updated code. The notice does not depend on an extension-update callback
+or an updater. Changes that do not bump
+`version` in `blender_manifest.toml` cannot trigger it; development builds must
+bump the manifest version when those changes need a restart notice. Updating
+the installed extension does not change the repository working tree, which
+still needs to be installed into Blender before its code can be used.
 
 To build the ZIP from source:
 
@@ -313,8 +320,8 @@ The automated suite covers scene and visibility-preflight rules, cleanup plannin
 Multi/Sub ID lookup, compact face selections, the 500-object boundary, exact and fallback
 bounds, size policy, texture ownership and collisions,
 group isolation and restoration, archive creation, FBX state restoration,
-AppBundle construction, installation, hot-reloading after an in-session ZIP
-update, ZIP update safety, duplicate-name material fingerprints, Physical
+AppBundle construction, installation, ZIP update safety, duplicate-name
+material fingerprints, Physical
 Material property and nested-map comparison, merge approval/refusal, Blender manifest
 parsing, secure extraction, V-Ray and Physical Material interpretation, legacy schema fallback,
 origin placement, nested-group anchoring, reproducible extension packaging,

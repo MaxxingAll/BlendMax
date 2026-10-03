@@ -4,7 +4,53 @@ This file records user-visible changes to the 3ds Max exporter/cleanup and the
 Blender importer. BlendMax is still alpha software; host-tested baselines are
 called out separately from automated coverage.
 
-## Blender Importer 0.1.9 — Unreleased
+## Blender Importer 0.1.20 — Unreleased
+
+### Changed
+
+- Aligns the Blender importer and extension version at **0.1.20** across the
+  manifest, Python metadata, build output, documentation, and version tests.
+  This is the version used for the current Blender host validation.
+- Adds a cached **Restart Blender** notice in Add-on Preferences when the
+  version loaded in this Blender process differs from the version currently in
+  `blender_manifest.toml`. The notice is driven by a small persisted state
+  record (`blendmax/blendmax_restart_state.json` under Blender's user config
+  directory) that is set when the versions diverge and consumed once the
+  updated code is running; it does not depend on an extension-update callback
+  or an updater.
+- Adds a one-shot **Restart Blender** dialog when the update is detected. It
+  follows BlenderKit's success-popup pattern: a floating dialog with
+  **Restart Blender** and **Later** actions that appears without opening
+  Preferences, invoked from a one-shot scene update rather than a timer.
+  It is offered once per update event (recorded in the same state file), is
+  skipped in background sessions, and never replaces the preferences notice.
+- Keeps the loaded version in Blender's process-local driver namespace so
+  disabling and re-enabling the add-on does not hide a pending notice. After
+  Blender restarts, the currently installed version becomes the new baseline.
+  Manifest reads happen in a timer, not during UI drawing.
+- Changes that do not bump the manifest `version` do not trigger the notice;
+  development builds must bump it when a change needs a restart notice.
+
+### Added
+
+- Adds **BlendMax > Presentation > Create Measurement Cage**, a renderable
+  world-axis lattice generated from the shared presentation bounds for one or
+  more selected objects and their descendants. Each dimension is rounded up to
+  a configurable envelope increment from the combined bounds' minimum corner.
+  The default grid targets 1 m cells using those standardized envelope
+  dimensions; per-axis division overrides, and in-front visibility (disabled
+  by default) are configurable from the operator. When every selected object
+  shares one dedicated collection, the presentation collection nests inside
+  that collection; loose objects keep it at the scene root. The cage contains
+  only the physical lattice, with no dimension text. It uses beveled curves and a
+  dedicated bright-red material so it is visible in the viewport and in
+  renders. Re-running the command updates the
+  existing BlendMax presentation cage instead of accumulating duplicates. A
+  companion
+  **BlendMax > Presentation > Remove Measurement Cage** command removes the
+  cage and its supporting datablocks. The top-level **BlendMax** menu is
+  registered in Blender's application menu row beside **File**, **Edit**,
+  **Render**, **Window**, and **Help**.
 
 ### Fixed
 
@@ -74,26 +120,6 @@ called out separately from automated coverage.
   controller; otherwise a synthetic controller is created.
 - Stores controller provenance, including `blendmax_original_*`, plus
   `blendmax_controller` and `blendmax_controller_source` metadata.
-- Adds a **Reload BlendMax** control in Add-on Preferences for a one-shot,
-  deferred in-process reload of the currently installed Blender extension copy.
-  The control can be used only once per Blender process because BlendMax's own
-  module reload resets in-memory flags; repeated in-process reloads previously
-  scheduled duplicate timers and spammed the Info Log. The first click greys
-  it out as **Reloading BlendMax…**, and after the add-on reloads it stays
-  disabled as **BlendMax Reload Used** with a **Restart Blender to reload again**
-  hint until Blender itself is restarted. Concurrent Blender processes keep
-  independent consumed markers in the shared config state.
-- Reload purges the active package and its submodules from `sys.modules` before
-  re-enabling the same installed extension, so newly installed code can be
-  loaded without restarting Blender.
-- A successful reload consumes the pending restart notice on that first
-  registration, including when the installed version is newer than the running
-  module. No second reload is required just to clear the notice.
-- Later clicks in the same Blender process are rejected and do not schedule
-  another reload.
-- Reload failures print the full traceback, keep Hot Reload consumed, and
-  restore the normal restart-notice state so a failed reload is not treated as
-  successful. Restart Blender to recover.
 
 ### Changed
 
@@ -106,10 +132,6 @@ called out separately from automated coverage.
   flushes, so imported hierarchy transforms are not distorted during adoption.
 - Degenerate bounds use a tiny epsilon on zero-extent controller axes to keep the
   controller matrix invertible while remaining visually flat on the affected axis.
-- Restart-notice suppression is represented by a one-shot current-process reload
-  marker rather than a sticky version flag. The marker is consumed only by the
-  registration produced by the requested reload, so later genuine update/restart
-  states can surface normally.
 
 ### Release metadata
 
@@ -117,10 +139,7 @@ called out separately from automated coverage.
 
 ### Verification
 
-- Restored direct coverage for the ordinary one-restart state transition.
-- Added coverage that a first successful hot reload consumes the notice and that
-  a failed reload restores it.
-- Real Blender extension install/reload verification remains a host-level gate
+- Real Blender extension installation behavior remains a host-level gate
   because the ordinary Python CI suite does not import `bpy`.
 
 ## Blender Importer 0.1.7 — 2026-09-04
@@ -146,11 +165,8 @@ called out separately from automated coverage.
 ### Added
 
 - Adds a compact **⚠ Restart Blender** notice in BlendMax Add-on Preferences
-  when a one-restart refresh is pending. Hovering the control explains that a
-  Blender restart applies recent BlendMax changes and clears the notice
-  automatically after the next Blender process starts.
-- Stores the one-restart state in Blender's user configuration resource path so
-  the notice survives the current Blender session and is consumed after restart.
+  when a one-restart refresh is pending. *(Replaced in 0.1.12 by a notice based
+  on the running-versus-installed manifest version.)*
 
 ### Release metadata
 

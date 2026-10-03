@@ -32,7 +32,7 @@ class BlenderExtensionBuildTests(unittest.TestCase):
             self.assertIn("addon.py", names)
             self.assertNotIn("blendmax_blender/__init__.py", names)
             self.assertEqual(metadata["id"], "blendmax_importer")
-            self.assertEqual(metadata["version"], "0.1.9")
+            self.assertEqual(metadata["version"], "0.1.20")
             self.assertEqual(metadata["blender_version_min"], "4.2.0")
 
     def test_build_is_reproducible(self):
@@ -54,7 +54,7 @@ class BlenderVersionMetadataTests(unittest.TestCase):
     release without anything noticing. Every test here fails if those three
     disagree, so that drift cannot recur silently.
 
-    A fourth value must also move on release: the literal ``"0.1.9"`` asserted
+    A fourth value must also move on release: the literal ``"0.1.20"`` asserted
     by :class:`BlenderExtensionBuildTests`. It is an independent expectation
     rather than a declaration, so it is deliberately left in step by hand.
 

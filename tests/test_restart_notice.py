@@ -1,402 +1,493 @@
 from __future__ import annotations
 
+import importlib.util
+import json
+import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-from blendmax_blender import restart_notice
-
-
-class FakeUtils:
-    def __init__(self, directory):
-        self.directory = str(directory)
-
-    def user_resource(self, resource_type, *, path="", create=False):
-        self.last_call = (resource_type, path, create)
-        return self.directory
+from types import ModuleType, SimpleNamespace
+from unittest.mock import patch
 
 
-class FakeBpy:
-    def __init__(self, directory):
-        self.utils = FakeUtils(directory)
+class FakeTimers:
+    def __init__(self):
+        self.callbacks = []
+        self.register_calls = 0
+
+    def is_registered(self, callback):
+        return any(item is callback for item in self.callbacks)
+
+    def register(self, callback, *, first_interval, persistent):
+        self.register_calls += 1
+        self.callbacks.append(callback)
+        return callback
+
+    def unregister(self, callback):
+        self.callbacks = [item for item in self.callbacks if item is not callback]
 
 
 class RestartNoticeTests(unittest.TestCase):
-    def test_first_registration_requires_restart(self):
-        with tempfile.TemporaryDirectory() as directory:
-            bpy = FakeBpy(directory)
-            with patch.object(restart_notice.os, "getpid", return_value=101):
-                self.assertTrue(restart_notice.restart_notice_required(bpy))
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.manifest = Path(self.tempdir.name) / "blender_manifest.toml"
+        self._mtime_ns = 1_700_000_000_000_000_000
+        self.write_manifest("0.1.19")
 
-            state = Path(directory) / "blendmax_restart_notice.json"
-            self.assertTrue(state.exists())
-            self.assertEqual(
-                restart_notice._read_state(state),
-                {"pending_pid": 101},
-            )
-
-    def test_same_process_keeps_restart_notice_visible(self):
-        with tempfile.TemporaryDirectory() as directory:
-            bpy = FakeBpy(directory)
-            with patch.object(restart_notice.os, "getpid", return_value=101):
-                self.assertTrue(restart_notice.restart_notice_required(bpy))
-                self.assertTrue(restart_notice.restart_notice_required(bpy))
-
-    def test_new_process_consumes_restart_notice(self):
-        with tempfile.TemporaryDirectory() as directory:
-            bpy = FakeBpy(directory)
-            with patch.object(restart_notice.os, "getpid", return_value=101):
-                self.assertTrue(restart_notice.restart_notice_required(bpy))
-
-            with patch.object(restart_notice.os, "getpid", return_value=202):
-                self.assertFalse(restart_notice.restart_notice_required(bpy))
-
-            state = Path(directory) / "blendmax_restart_notice.json"
-            self.assertFalse(state.exists())
-
-    def test_hot_reload_suppresses_notice_on_first_successful_registration(self):
-        with tempfile.TemporaryDirectory() as directory:
-            bpy = FakeBpy(directory)
-            with patch.object(restart_notice.os, "getpid", return_value=101):
-                self.assertTrue(restart_notice.restart_notice_required(bpy))
-                restart_notice.mark_hot_reload_pending(bpy)
-
-                state = Path(directory) / "blendmax_restart_notice.json"
-                self.assertEqual(
-                    restart_notice._read_state(state),
-                    {
-                        "pending_pid": 101,
-                        "hot_reload_pending_pid": 101,
-                    },
-                )
-
-                self.assertFalse(restart_notice.restart_notice_required(bpy))
-                self.assertFalse(state.exists())
-                self.assertTrue(restart_notice.restart_notice_required(bpy))
-
-    def test_failed_hot_reload_restores_pending_notice(self):
-        with tempfile.TemporaryDirectory() as directory:
-            bpy = FakeBpy(directory)
-            with patch.object(restart_notice.os, "getpid", return_value=101):
-                self.assertTrue(restart_notice.restart_notice_required(bpy))
-                restart_notice.mark_hot_reload_pending(bpy)
-                restart_notice.mark_hot_reload_failed(bpy)
-                self.assertTrue(restart_notice.restart_notice_required(bpy))
-
-            state = Path(directory) / "blendmax_restart_notice.json"
-            self.assertEqual(restart_notice._read_state(state), {"pending_pid": 101})
-
-    def test_hot_reload_consumed_matches_current_process_only(self):
-        with tempfile.TemporaryDirectory() as directory:
-            bpy = FakeBpy(directory)
-            with patch.object(restart_notice.os, "getpid", return_value=1234):
-                self.assertIs(
-                    restart_notice.hot_reload_consumed_for_current_process(bpy),
-                    False,
-                )
-                restart_notice.mark_hot_reload_consumed(bpy)
-                self.assertIs(
-                    restart_notice.hot_reload_consumed_for_current_process(bpy),
-                    True,
-                )
-
-            with patch.object(restart_notice.os, "getpid", return_value=5678):
-                self.assertIs(
-                    restart_notice.hot_reload_consumed_for_current_process(bpy),
-                    False,
-                )
-
-    def test_mark_hot_reload_consumed_preserves_restart_notice_fields(self):
-        with tempfile.TemporaryDirectory() as directory:
-            bpy = FakeBpy(directory)
-            with patch.object(restart_notice.os, "getpid", return_value=101):
-                self.assertTrue(restart_notice.restart_notice_required(bpy))
-                restart_notice.mark_hot_reload_consumed(bpy)
-
-            state = Path(directory) / "blendmax_restart_notice.json"
-            self.assertEqual(
-                restart_notice._read_state(state),
-                {
-                    "pending_pid": 101,
-                    "hot_reload_consumed_pids": [101],
-                },
-            )
-
-    def test_successful_hot_reload_notice_clear_preserves_consumed_pid(self):
-        with tempfile.TemporaryDirectory() as directory:
-            bpy = FakeBpy(directory)
-            with patch.object(restart_notice.os, "getpid", return_value=101):
-                self.assertTrue(restart_notice.restart_notice_required(bpy))
-                restart_notice.mark_hot_reload_consumed(bpy)
-                restart_notice.mark_hot_reload_pending(bpy)
-                self.assertFalse(restart_notice.restart_notice_required(bpy))
-                self.assertIs(
-                    restart_notice.hot_reload_consumed_for_current_process(bpy),
-                    True,
-                )
-
-            state = Path(directory) / "blendmax_restart_notice.json"
-            self.assertEqual(
-                restart_notice._read_state(state),
-                {"hot_reload_consumed_pids": [101]},
-            )
-
-    def test_failed_hot_reload_preserves_consumed_pid(self):
-        with tempfile.TemporaryDirectory() as directory:
-            bpy = FakeBpy(directory)
-            with patch.object(restart_notice.os, "getpid", return_value=101):
-                self.assertTrue(restart_notice.restart_notice_required(bpy))
-                restart_notice.mark_hot_reload_consumed(bpy)
-                restart_notice.mark_hot_reload_pending(bpy)
-                restart_notice.mark_hot_reload_failed(bpy)
-                self.assertTrue(restart_notice.restart_notice_required(bpy))
-                self.assertIs(
-                    restart_notice.hot_reload_consumed_for_current_process(bpy),
-                    True,
-                )
-
-            state = Path(directory) / "blendmax_restart_notice.json"
-            self.assertEqual(
-                restart_notice._read_state(state),
-                {
-                    "pending_pid": 101,
-                    "hot_reload_consumed_pids": [101],
-                },
-            )
-
-    def test_new_process_restart_notice_preserves_other_consumed_pids(self):
-        with tempfile.TemporaryDirectory() as directory:
-            bpy = FakeBpy(directory)
-            with patch.object(restart_notice.os, "getpid", return_value=101):
-                self.assertTrue(restart_notice.restart_notice_required(bpy))
-                restart_notice.mark_hot_reload_consumed(bpy)
-
-            with patch.object(restart_notice, "_pid_is_alive", return_value=True):
-                with patch.object(restart_notice.os, "getpid", return_value=202):
-                    self.assertFalse(restart_notice.restart_notice_required(bpy))
-                    self.assertIs(
-                        restart_notice.hot_reload_consumed_for_current_process(bpy),
-                        False,
-                    )
-
-            state = Path(directory) / "blendmax_restart_notice.json"
-            self.assertEqual(
-                restart_notice._read_state(state),
-                {"hot_reload_consumed_pids": [101]},
-            )
-
-    def test_concurrent_blender_processes_keep_independent_consumed_state(self):
-        with tempfile.TemporaryDirectory() as directory:
-            bpy = FakeBpy(directory)
-            with patch.object(restart_notice, "_pid_is_alive", return_value=True):
-                with patch.object(restart_notice.os, "getpid", return_value=101):
-                    restart_notice.mark_hot_reload_consumed(bpy)
-                with patch.object(restart_notice.os, "getpid", return_value=202):
-                    restart_notice.mark_hot_reload_consumed(bpy)
-                    self.assertIs(
-                        restart_notice.hot_reload_consumed_for_current_process(bpy),
-                        True,
-                    )
-                with patch.object(restart_notice.os, "getpid", return_value=101):
-                    self.assertIs(
-                        restart_notice.hot_reload_consumed_for_current_process(bpy),
-                        True,
-                    )
-
-            state = Path(directory) / "blendmax_restart_notice.json"
-            self.assertEqual(
-                restart_notice._read_state(state),
-                {"hot_reload_consumed_pids": [101, 202]},
-            )
-
-    def test_legacy_scalar_consumed_pid_is_honored(self):
-        with tempfile.TemporaryDirectory() as directory:
-            bpy = FakeBpy(directory)
-            state = Path(directory) / "blendmax_restart_notice.json"
-            restart_notice._write_state(state, {"hot_reload_consumed_pid": 101})
-            with patch.object(restart_notice.os, "getpid", return_value=101):
-                self.assertIs(
-                    restart_notice.hot_reload_consumed_for_current_process(bpy),
-                    True,
-                )
-                restart_notice.mark_hot_reload_consumed(bpy)
-            self.assertEqual(
-                restart_notice._read_state(state),
-                {"hot_reload_consumed_pids": [101]},
-            )
-
-    def test_unmark_hot_reload_consumed_removes_only_current_pid(self):
-        with tempfile.TemporaryDirectory() as directory:
-            bpy = FakeBpy(directory)
-            with patch.object(restart_notice, "_pid_is_alive", return_value=True):
-                with patch.object(restart_notice.os, "getpid", return_value=101):
-                    restart_notice.mark_hot_reload_consumed(bpy)
-                with patch.object(restart_notice.os, "getpid", return_value=202):
-                    restart_notice.mark_hot_reload_consumed(bpy)
-                    restart_notice.unmark_hot_reload_consumed(bpy)
-                    self.assertIs(
-                        restart_notice.hot_reload_consumed_for_current_process(bpy),
-                        False,
-                    )
-                with patch.object(restart_notice.os, "getpid", return_value=101):
-                    self.assertIs(
-                        restart_notice.hot_reload_consumed_for_current_process(bpy),
-                        True,
-                    )
-
-
-class FakeKernel32:
-    """Stand-in for kernel32 with the three calls the probe makes.
-
-    Attributes are ``MagicMock``s so the ctypes ``argtypes``/``restype``
-    assignments the probe performs are accepted. Models the Win32 contract the
-    real API guarantees: OpenProcess returns a handle or NULL (with
-    GetLastError set); WaitForSingleObject returns WAIT_OBJECT_0 once the
-    process object is signaled (process terminated) and WAIT_TIMEOUT while it
-    is still running.
-    """
-
-    def __init__(self, handle, *, wait_result=0x00000102, last_error=0):
-        self._handle = handle
-        self._wait_result = wait_result
-        self.last_error = last_error
-        self.opened_with = []
-        self.closed = []
-        self.waited = []
-
-        self.OpenProcess = MagicMock(side_effect=self._open_process)
-        self.CloseHandle = MagicMock(side_effect=self._close_handle)
-        self.WaitForSingleObject = MagicMock(side_effect=self._wait)
-
-    def _open_process(self, access, inherit, pid):
-        self.opened_with.append((access, inherit, pid))
-        return self._handle
-
-    def _close_handle(self, handle):
-        self.closed.append(handle)
-        return 1
-
-    def _wait(self, handle, timeout):
-        self.waited.append((handle, timeout))
-        return self._wait_result
-
-
-class WindowsPidLivenessTests(unittest.TestCase):
-    """The Windows path must never reach a process-terminating API."""
-
-    def _probe(self, kernel32, pid=4242):
-        with patch.object(restart_notice, "_IS_WINDOWS", True):
-            with patch("ctypes.WinDLL", return_value=kernel32, create=True):
-                with patch(
-                    "ctypes.get_last_error",
-                    return_value=kernel32.last_error,
-                    create=True,
-                ):
-                    return restart_notice._windows_pid_is_alive(pid)
-
-    def test_live_process_is_alive(self):
-        """WAIT_TIMEOUT means the process object is not signaled: still running."""
-        kernel32 = FakeKernel32(handle=123, wait_result=restart_notice._WAIT_TIMEOUT)
-        self.assertIs(self._probe(kernel32), True)
-        self.assertEqual(kernel32.waited, [(123, 0)])
-        self.assertEqual(kernel32.closed, [123])
-
-    def test_exited_process_is_dead(self):
-        kernel32 = FakeKernel32(handle=123, wait_result=restart_notice._WAIT_OBJECT_0)
-        self.assertIs(self._probe(kernel32), False)
-
-    def test_terminated_process_that_exited_with_259_is_dead(self):
-        """Regression: exit code 259 must not be mistaken for STILL_ACTIVE.
-
-        GetExitCodeProcess returns 259 both for a running process and for one
-        that exited with status 259, so liveness is read from the wait state.
-        A process that exited with 259 is signaled, hence WAIT_OBJECT_0.
-        """
-        kernel32 = FakeKernel32(handle=123, wait_result=restart_notice._WAIT_OBJECT_0)
-        self.assertIs(self._probe(kernel32), False)
-
-    def test_unexpected_wait_result_is_dead(self):
-        """Anything that is neither signaled nor timed out stays conservative."""
-        kernel32 = FakeKernel32(handle=123, wait_result=0xFFFFFFFF)  # WAIT_FAILED
-        self.assertIs(self._probe(kernel32), False)
-        self.assertEqual(kernel32.closed, [123])
-
-    def test_nonexistent_process_is_dead(self):
-        kernel32 = FakeKernel32(
-            handle=0, last_error=restart_notice._ERROR_INVALID_PARAMETER
+        self.timers = FakeTimers()
+        self.handlers = []
+        self.ops_calls = []
+        self.bpy = ModuleType("bpy")
+        self.bpy.app = SimpleNamespace(
+            driver_namespace={},
+            timers=self.timers,
+            background=False,
+            handlers=SimpleNamespace(depsgraph_update_post=self.handlers),
         )
-        self.assertIs(self._probe(kernel32), False)
-        self.assertEqual(kernel32.closed, [])
+        self.bpy.context = SimpleNamespace(
+            window_manager=SimpleNamespace(windows=[]),
+        )
+        self.bpy.utils = SimpleNamespace(user_resource=self.user_resource)
+        self.bpy.ops = SimpleNamespace(
+            blendmax=SimpleNamespace(restart_notice_popup=self.record_popup_op)
+        )
+        self.notice = self.load_notice("blendmax_blender._restart_notice_test")
+        self.notice._MANIFEST = self.manifest
 
-    def test_access_denied_process_still_counts_as_alive(self):
-        kernel32 = FakeKernel32(handle=0, last_error=restart_notice._ERROR_ACCESS_DENIED)
-        self.assertIs(self._probe(kernel32), True)
+    def tearDown(self):
+        if self.notice is not None:
+            self.notice.unregister()
+        self.tempdir.cleanup()
 
-    def test_probe_requests_query_and_wait_access_only(self):
-        """Regression: PROCESS_TERMINATE must never be requested."""
-        kernel32 = FakeKernel32(handle=123)
-        self._probe(kernel32)
-        access = kernel32.opened_with[0][0]
-        self.assertTrue(access & restart_notice._PROCESS_QUERY_LIMITED_INFORMATION)
-        self.assertTrue(access & restart_notice._SYNCHRONIZE)
-        self.assertFalse(access & 0x0001, "PROCESS_TERMINATE bit must be clear")
+    def record_popup_op(self, *args):
+        self.ops_calls.append(args)
+        return {"RUNNING_MODAL"}
 
-    def test_windows_path_does_not_call_os_kill(self):
-        """Regression: the Windows branch never touches os.kill."""
-        kernel32 = FakeKernel32(handle=123, wait_result=restart_notice._WAIT_TIMEOUT)
-        with patch.object(restart_notice, "_IS_WINDOWS", True):
-            with patch("ctypes.WinDLL", return_value=kernel32, create=True):
-                with patch.object(
-                    restart_notice.os, "kill", side_effect=AssertionError("os.kill called")
-                ) as kill:
-                    self.assertIs(restart_notice._pid_is_alive(4242), True)
-                    kill.assert_not_called()
+    def user_resource(self, resource_type, path="", create=False):
+        self.assertEqual(resource_type, "CONFIG")
+        directory = Path(self.tempdir.name) / "config" / path
+        if create:
+            directory.mkdir(parents=True, exist_ok=True)
+        return str(directory)
 
-    def test_invalid_pid_short_circuits_before_any_os_call(self):
-        with patch.object(restart_notice, "_IS_WINDOWS", True):
-            with patch.object(
-                restart_notice, "_windows_pid_is_alive", side_effect=AssertionError("probe ran")
-            ) as probe:
-                self.assertIs(restart_notice._pid_is_alive(0), False)
-                self.assertIs(restart_notice._pid_is_alive(-1), False)
-                self.assertIs(restart_notice._pid_is_alive("4242"), False)
-                probe.assert_not_called()
+    def state_path(self):
+        return (
+            Path(self.tempdir.name)
+            / "config"
+            / "blendmax"
+            / "blendmax_restart_state.json"
+        )
 
+    def read_state(self):
+        with self.state_path().open("r", encoding="utf-8") as state_file:
+            return json.load(state_file)
 
-class PosixPidLivenessTests(unittest.TestCase):
-    """The POSIX branch keeps its original os.kill semantics."""
+    def load_notice(self, module_name):
+        module_path = (
+            Path(__file__).resolve().parents[1]
+            / "blendmax_blender"
+            / "restart_notice.py"
+        )
+        spec = importlib.util.spec_from_file_location(module_name, module_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("Could not load restart notice test module.")
+        module = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {"bpy": self.bpy}):
+            spec.loader.exec_module(module)
+        return module
 
-    def _posix_probe(self, pid, kill_side_effect):
-        with patch.object(restart_notice, "_IS_WINDOWS", False):
-            with patch.object(restart_notice.os, "kill", side_effect=kill_side_effect) as k:
-                return restart_notice._pid_is_alive(pid), k
+    def write_manifest(self, version=None, *, contents=None):
+        if contents is None:
+            contents = 'version = "{0}"\n'.format(version)
+        self.manifest.write_text(contents, encoding="utf-8")
+        self._mtime_ns += 5_000_000_000
+        os.utime(self.manifest, ns=(self._mtime_ns, self._mtime_ns))
 
-    def test_live_process_is_alive(self):
-        result, kill = self._posix_probe(4242, None)
-        self.assertIs(result, True)
-        kill.assert_called_once_with(4242, 0)
+    def start_and_poll(self):
+        self.notice.register()
+        self.assertEqual(self.notice._poll(), self.notice._POLL_SECONDS)
 
-    def test_missing_process_is_dead(self):
-        result, _ = self._posix_probe(4242, ProcessLookupError())
-        self.assertIs(result, False)
+    def test_fresh_start_matches_manifest_without_restart_notice(self):
+        self.start_and_poll()
 
-    def test_permission_error_counts_as_alive(self):
-        result, _ = self._posix_probe(4242, PermissionError())
-        self.assertIs(result, True)
+        self.assertEqual(self.notice.running_version(), "0.1.19")
+        self.assertEqual(self.notice.disk_version(), "0.1.19")
+        self.assertFalse(self.notice.restart_needed())
+        self.assertEqual(
+            self.read_state(),
+            {
+                "just_updated": False,
+                "running_version": "0.1.19",
+                "installed_version": "0.1.19",
+                "popup_shown": False,
+            },
+        )
 
-    def test_unexpected_os_error_is_dead(self):
-        result, _ = self._posix_probe(4242, OSError("boom"))
-        self.assertIs(result, False)
+    def test_new_disk_version_requires_restart(self):
+        self.start_and_poll()
+        self.write_manifest("0.1.20")
 
-    def test_posix_branch_does_not_use_the_windows_probe(self):
-        with patch.object(restart_notice, "_IS_WINDOWS", False):
-            with patch.object(
-                restart_notice, "_windows_pid_is_alive", side_effect=AssertionError("windows probe ran")
-            ) as probe:
-                with patch.object(restart_notice.os, "kill", return_value=None):
-                    self.assertIs(restart_notice._pid_is_alive(4242), True)
-                probe.assert_not_called()
+        self.notice._poll()
+
+        self.assertEqual(self.notice.running_version(), "0.1.19")
+        self.assertEqual(self.notice.disk_version(), "0.1.20")
+        self.assertTrue(self.notice.restart_needed())
+        self.assertEqual(
+            self.read_state(),
+            {
+                "just_updated": True,
+                "running_version": "0.1.19",
+                "installed_version": "0.1.20",
+                "popup_shown": False,
+            },
+        )
+
+    def test_invalid_toml_preserves_last_valid_state(self):
+        self.start_and_poll()
+        self.write_manifest("0.1.20")
+        self.notice._poll()
+        self.write_manifest(contents='version = "0.1.21\n')
+
+        self.notice._poll()
+
+        self.assertEqual(self.notice.disk_version(), "0.1.20")
+        self.assertTrue(self.notice.restart_needed())
+
+    def test_deleted_manifest_preserves_last_valid_state(self):
+        self.start_and_poll()
+        self.write_manifest("0.1.20")
+        self.notice._poll()
+        self.manifest.unlink()
+
+        self.notice._poll()
+
+        self.assertEqual(self.notice.disk_version(), "0.1.20")
+        self.assertTrue(self.notice.restart_needed())
+
+    def test_downgrade_also_requires_restart(self):
+        self.write_manifest("0.1.20")
+        self.start_and_poll()
+        self.write_manifest("0.1.19")
+
+        self.notice._poll()
+
+        self.assertEqual(self.notice.running_version(), "0.1.20")
+        self.assertEqual(self.notice.disk_version(), "0.1.19")
+        self.assertTrue(self.notice.restart_needed())
+
+    def test_matching_disk_version_clears_notice(self):
+        self.start_and_poll()
+        self.write_manifest("0.1.20")
+        self.notice._poll()
+        self.assertTrue(self.notice.restart_needed())
+
+        self.write_manifest("0.1.19")
+        self.notice._poll()
+
+        self.assertEqual(self.notice.disk_version(), "0.1.19")
+        self.assertFalse(self.notice.restart_needed())
+        self.assertFalse(self.read_state()["just_updated"])
+
+    def test_disable_and_reenable_preserves_running_version(self):
+        self.start_and_poll()
+        self.write_manifest("0.1.20")
+        self.notice._poll()
+        self.notice.unregister()
+
+        self.notice.register()
+        self.notice._poll()
+
+        self.assertEqual(self.notice.running_version(), "0.1.19")
+        self.assertEqual(self.notice.disk_version(), "0.1.20")
+        self.assertTrue(self.notice.restart_needed())
+        self.assertTrue(self.read_state()["just_updated"])
+
+    def test_simulated_blender_restart_consumes_pending_state(self):
+        self.start_and_poll()
+        self.write_manifest("0.1.20")
+        self.notice._poll()
+        self.assertTrue(self.read_state()["just_updated"])
+        self.notice.unregister()
+        self.bpy.app.driver_namespace.clear()
+
+        restarted = self.load_notice("blendmax_blender._restart_notice_fresh")
+        restarted._MANIFEST = self.manifest
+        restarted.register()
+        restarted._poll()
+
+        self.assertEqual(restarted.running_version(), "0.1.20")
+        self.assertEqual(restarted.disk_version(), "0.1.20")
+        self.assertFalse(restarted.restart_needed())
+        self.assertEqual(
+            self.read_state(),
+            {
+                "just_updated": False,
+                "running_version": "0.1.20",
+                "installed_version": "0.1.20",
+                "popup_shown": False,
+            },
+        )
+        restarted.unregister()
+
+    def test_further_update_while_pending_refreshes_record(self):
+        self.start_and_poll()
+        self.write_manifest("0.1.20")
+        self.notice._poll()
+        self.write_manifest("0.1.21")
+        self.notice._poll()
+
+        self.assertEqual(self.notice.running_version(), "0.1.19")
+        self.assertEqual(self.notice.disk_version(), "0.1.21")
+        self.assertTrue(self.notice.restart_needed())
+        self.assertEqual(self.read_state()["installed_version"], "0.1.21")
+
+    def test_corrupt_state_file_is_replaced_on_next_register(self):
+        self.start_and_poll()
+        self.write_manifest("0.1.20")
+        self.notice._poll()
+        self.notice.unregister()
+        self.state_path().write_text("{not valid json", encoding="utf-8")
+
+        self.notice.register()
+
+        self.assertEqual(self.notice.running_version(), "0.1.19")
+        self.assertEqual(self.notice.disk_version(), "0.1.20")
+        self.assertTrue(self.notice.restart_needed())
+        self.assertEqual(
+            self.read_state(),
+            {
+                "just_updated": True,
+                "running_version": "0.1.19",
+                "installed_version": "0.1.20",
+                "popup_shown": False,
+            },
+        )
+
+    def test_notice_still_works_without_a_config_directory(self):
+        self.bpy.utils = SimpleNamespace()
+        self.start_and_poll()
+        self.write_manifest("0.1.20")
+
+        self.notice._poll()
+
+        self.assertEqual(self.notice.running_version(), "0.1.19")
+        self.assertEqual(self.notice.disk_version(), "0.1.20")
+        self.assertTrue(self.notice.restart_needed())
+
+    def test_unregister_removes_timers_and_armed_dialog_handler(self):
+        self.notice.register()
+        self.write_manifest("0.1.20")
+        self.notice._poll()
+        self.assertTrue(self.timers.is_registered(self.notice._poll))
+        self.assertIn(self.notice._popup_handler, self.handlers)
+
+        self.notice.unregister()
+
+        self.assertFalse(self.timers.is_registered(self.notice._poll))
+        self.assertNotIn(self.notice._popup_handler, self.handlers)
+
+    def test_timer_registration_is_idempotent(self):
+        self.notice.register()
+        self.notice.register()
+
+        self.assertEqual(self.timers.register_calls, 1)
+        self.assertEqual(len(self.timers.callbacks), 1)
+
+    def test_draw_uses_cached_versions_without_reading_files(self):
+        self.start_and_poll()
+        self.write_manifest("0.1.20")
+        self.notice._poll()
+
+        class Row:
+            def __init__(self):
+                self.alert = False
+                self.operator_call = None
+
+            def operator(self, *args, **kwargs):
+                self.operator_call = (args, kwargs)
+
+        class Layout:
+            def __init__(self):
+                self.row_item = Row()
+                self.labels = []
+
+            def box(self):
+                return self
+
+            def column(self):
+                return self
+
+            def row(self):
+                return self.row_item
+
+            def label(self, *args, **kwargs):
+                self.labels.append((args, kwargs))
+
+        layout = Layout()
+        with patch.object(
+            self.notice,
+            "_read_manifest_version",
+            side_effect=AssertionError("draw must not read the manifest"),
+        ), patch.object(
+            self.notice,
+            "_read_state",
+            side_effect=AssertionError("draw must not read the state file"),
+        ):
+            self.assertTrue(self.notice.draw_notice(layout))
+
+        self.assertTrue(layout.row_item.alert)
+        self.assertEqual(
+            layout.row_item.operator_call,
+            (("wm.quit_blender",), {"text": "Restart Blender", "icon": "ERROR"}),
+        )
+        self.assertEqual(
+            [kwargs["text"] for _args, kwargs in layout.labels],
+            [
+                "Installed BlendMax version: 0.1.20",
+                "Running BlendMax version: 0.1.19",
+            ],
+        )
+
+    def test_update_detection_arms_a_one_shot_dialog_handler(self):
+        self.start_and_poll()
+        self.write_manifest("0.1.20")
+
+        self.notice._poll()
+
+        self.assertTrue(self.notice._popup_pending)
+        self.assertEqual(self.handlers.count(self.notice._popup_handler), 1)
+
+        self.notice._request_popup()
+
+        self.assertEqual(self.handlers.count(self.notice._popup_handler), 1)
+
+    def test_dialog_handler_shows_once_and_records_it(self):
+        self.start_and_poll()
+        self.write_manifest("0.1.20")
+        self.notice._poll()
+
+        self.notice._popup_handler(None)
+
+        self.assertEqual(self.ops_calls, [("INVOKE_DEFAULT",)])
+        self.assertFalse(self.notice._popup_pending)
+        self.assertTrue(self.notice._popup_shown)
+        self.assertNotIn(self.notice._popup_handler, self.handlers)
+        self.assertTrue(self.read_state()["popup_shown"])
+
+        self.notice._popup_handler(None)
+
+        self.assertEqual(self.ops_calls, [("INVOKE_DEFAULT",)])
+
+    def test_background_mode_does_not_arm_the_dialog_handler(self):
+        self.bpy.app.background = True
+        self.start_and_poll()
+        self.write_manifest("0.1.20")
+
+        self.notice._poll()
+
+        self.assertTrue(self.notice._popup_pending)
+        self.assertNotIn(self.notice._popup_handler, self.handlers)
+        self.assertFalse(self.read_state()["popup_shown"])
+
+    def test_dialog_failure_keeps_the_notice_unshown(self):
+        self.start_and_poll()
+        self.write_manifest("0.1.20")
+        self.notice._poll()
+
+        def boom(*_args):
+            raise RuntimeError("no window")
+
+        self.bpy.ops.blendmax.restart_notice_popup = boom
+
+        self.notice._popup_handler(None)
+
+        self.assertFalse(self.notice._popup_shown)
+        self.assertFalse(self.read_state()["popup_shown"])
+        self.assertNotIn(self.notice._popup_handler, self.handlers)
+        self.assertTrue(self.notice.restart_needed())
+
+    def test_dismissed_dialog_is_not_reshown_on_reenable(self):
+        self.start_and_poll()
+        self.write_manifest("0.1.20")
+        self.notice._poll()
+        self.notice._popup_handler(None)
+        self.notice.unregister()
+
+        self.notice.register()
+
+        self.assertTrue(self.notice.restart_needed())
+        self.assertFalse(self.notice._popup_pending)
+        self.assertNotIn(self.notice._popup_handler, self.handlers)
+        self.assertTrue(self.read_state()["popup_shown"])
+
+    def test_register_rearms_a_dialog_that_never_showed(self):
+        self.start_and_poll()
+        self.write_manifest("0.1.20")
+        self.notice._poll()
+        self.assertFalse(self.read_state()["popup_shown"])
+        self.notice.unregister()
+
+        self.notice.register()
+
+        self.assertTrue(self.notice.restart_needed())
+        self.assertTrue(self.notice._popup_pending)
+        self.assertIn(self.notice._popup_handler, self.handlers)
+
+    def test_new_update_event_rearms_the_dialog(self):
+        self.start_and_poll()
+        self.write_manifest("0.1.20")
+        self.notice._poll()
+        self.notice._popup_handler(None)
+
+        self.write_manifest("0.1.21")
+        self.notice._poll()
+
+        self.assertTrue(self.notice._popup_pending)
+        self.assertIn(self.notice._popup_handler, self.handlers)
+        self.notice._popup_handler(None)
+        self.assertEqual(len(self.ops_calls), 2)
+        self.assertEqual(self.read_state()["installed_version"], "0.1.21")
+        self.assertTrue(self.read_state()["popup_shown"])
+
+    def test_matching_version_cancels_a_pending_dialog(self):
+        self.start_and_poll()
+        self.write_manifest("0.1.20")
+        self.notice._poll()
+        self.assertTrue(self.notice._popup_pending)
+
+        self.write_manifest("0.1.19")
+        self.notice._poll()
+
+        self.assertFalse(self.notice._popup_pending)
+        self.assertNotIn(self.notice._popup_handler, self.handlers)
+        self.notice._popup_handler(None)
+        self.assertEqual(self.ops_calls, [])
+        self.assertFalse(self.read_state()["popup_shown"])
+
+    def test_show_popup_invokes_the_operator_without_a_context_override(self):
+        self.notice._show_popup()
+
+        self.assertEqual(self.ops_calls, [("INVOKE_DEFAULT",)])
+
+    def test_show_popup_rejects_an_invalid_call(self):
+        self.bpy.ops.blendmax.restart_notice_popup = lambda *args: {"PASS_THROUGH"}
+
+        with self.assertRaises(RuntimeError):
+            self.notice._show_popup()
+
+    def test_rejected_dialog_call_keeps_the_notice_unshown(self):
+        self.start_and_poll()
+        self.write_manifest("0.1.20")
+        self.notice._poll()
+        self.bpy.ops.blendmax.restart_notice_popup = lambda *args: {"PASS_THROUGH"}
+
+        self.notice._popup_handler(None)
+
+        self.assertFalse(self.notice._popup_shown)
+        self.assertFalse(self.read_state()["popup_shown"])
+        self.assertNotIn(self.notice._popup_handler, self.handlers)
+        self.assertTrue(self.notice.restart_needed())
 
 
 if __name__ == "__main__":

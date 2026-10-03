@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "blendmax_importer"
-version = "0.1.9"
+version = "0.1.20"
 name = "BlendMax Importer"
 tagline = "Import BlendMax assets exported from 3ds Max"
 maintainer = "MaxxingAll"
@@ -13,4 +13,4 @@ blender_version_min = "4.2.0"
 license = ["SPDX:GPL-3.0-or-later"]
 
 [permissions]
-files = "Import user-selected BlendMax packages and their packaged textures"
+files = "Import user-selected BlendMax packages and packaged textures"
