@@ -214,6 +214,32 @@ class MeasurementEnvelopeTests(unittest.TestCase):
 
         self.assertEqual(envelope.dimensions[2], 3.0)
 
+    def test_sub_ulp_noise_overrun_snaps_to_the_exact_increment(self):
+        # A 100 nm overrun at the 2 m scale is under half a float32 ulp
+        # there (ulp = 2.384e-07): still single-precision noise and must
+        # not inflate the envelope.
+        asset = PresentationBounds.from_bounds(
+            ((0.0, 0.0, 0.0), (2.0000001, 1.0, 1.0))
+        )
+
+        envelope = measurement_envelope(asset, 1.0)
+
+        self.assertEqual(envelope.dimensions[0], 2.0)
+        self.assertGreaterEqual(envelope.maximum[0], asset.maximum[0])
+
+    def test_metre_scale_micrometre_overrun_rounds_up(self):
+        # A micrometre past two metres is about 4.2 float32 ulps at that
+        # magnitude -- genuine data, not noise, and must round up to the
+        # next increment rather than snap back to 2 m.
+        asset = PresentationBounds.from_bounds(
+            ((0.0, 0.0, 0.0), (2.000001, 1.0, 1.0))
+        )
+
+        envelope = measurement_envelope(asset, 1.0)
+
+        self.assertEqual(envelope.dimensions[0], 3.0)
+        self.assertGreaterEqual(envelope.maximum[0], asset.maximum[0])
+
     def test_small_positive_extent_does_not_snap_down_to_zero(self):
         asset = PresentationBounds.from_bounds(
             ((0.0, 0.0, 0.0), (1e-10, 0.0, 0.0))

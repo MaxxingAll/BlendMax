@@ -20,6 +20,12 @@ Edge = Tuple[int, int]
 # Blender stores mesh and transform data in single precision, so world-space
 # bounds can carry float32-scale rounding noise once transforms are applied.
 _FLOAT32_EPS = 1.1920929e-07
+# Noise budget in float32 ulps of the coordinate magnitude. Calibrated
+# against the reproduced Blender overshoot -- an exact 2 m span off origin
+# measures 2.000000059605 m (~0.25 ulp) -- with 4x margin over the worst
+# deviation seen in dense sweeps (0.5 ulp). Genuine overruns of 4+ ulps
+# past an increment (e.g. a micrometre past two metres) still round up.
+_FLOAT32_NOISE_ULPS = 2.0
 
 
 @dataclass(frozen=True)
@@ -40,10 +46,12 @@ def measurement_envelope(
 
     Near-increment floating-point noise is snapped to the increment for the
     reported measurement. Blender supplies single-precision world bounds, so
-    the snap tolerance also covers a few float32 ulps of the coordinate
-    magnitude, capped at half an increment. The geometric maximum still
-    includes the raw asset maximum, so this tolerance can never make the cage
-    smaller than the asset. Degenerate axes remain zero-sized.
+    the snap tolerance also covers up to two float32 ulps of the coordinate
+    magnitude (four times the worst observed noise), capped at half an
+    increment. A genuine overrun of four or more ulps rounds up. The
+    geometric maximum still includes the raw asset maximum, so this
+    tolerance can never make the cage smaller than the asset. Degenerate
+    axes remain zero-sized.
     """
 
     try:
@@ -76,7 +84,7 @@ def measurement_envelope(
             noise = min(
                 max(abs(float(lower)), abs(float(upper)), abs(extent))
                 * _FLOAT32_EPS
-                * 8.0,
+                * _FLOAT32_NOISE_ULPS,
                 step * 0.5,
             )
             tolerance = max(tolerance, noise)
