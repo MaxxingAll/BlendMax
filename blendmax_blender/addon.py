@@ -8,10 +8,10 @@ import textwrap
 import time
 
 import bpy
-from bpy.props import BoolProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 
-from . import restart_notice
+from . import restart, restart_notice
 from .errors import BlendMaxImportError
 from .importer import import_blendmax
 from .models import ImportSummary
@@ -248,6 +248,37 @@ class BLENDMAX_OT_remove_measurement_cage(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class BLENDMAX_OT_restart_blender(bpy.types.Operator):
+    """Relaunch Blender, reopening the current file, to load the new code."""
+
+    bl_idname = "blendmax.restart_blender"
+    bl_label = "Restart Blender"
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    unsaved_action: EnumProperty(
+        name="Unsaved Changes",
+        items=(
+            (restart.SAVE, "Save & Restart", "Save the file, then restart"),
+            (restart.DISCARD, "Discard & Restart", "Restart without saving"),
+        ),
+        default=restart.SAVE,
+    )
+
+    @classmethod
+    def poll(cls, _context):
+        return not bpy.app.background
+
+    def invoke(self, context, _event):
+        if restart.is_dirty():
+            # Blender's own quit prompt could still be cancelled after the
+            # new process was spawned, so the choice is made here first.
+            return context.window_manager.invoke_props_dialog(self)
+        return self.execute(context)
+
+    def execute(self, _context):
+        return restart.restart_blender(self.report, self.unsaved_action)
+
+
 class BLENDMAX_OT_restart_notice_later(bpy.types.Operator):
     """Keep working; the restart notice stays in the add-on preferences."""
 
@@ -296,7 +327,9 @@ class BLENDMAX_OT_restart_notice_popup(bpy.types.Operator):
         layout.separator()
         buttons = layout.row()
         buttons.operator(
-            "wm.quit_blender", text="Quit Blender", icon="ERROR"
+            BLENDMAX_OT_restart_blender.bl_idname,
+            text="Restart Blender",
+            icon="ERROR",
         )
         buttons.operator(
             BLENDMAX_OT_restart_notice_later.bl_idname, text="Later"
@@ -412,6 +445,7 @@ _CLASSES = (
     BLENDMAX_OT_import_asset,
     BLENDMAX_OT_create_measurement_cage,
     BLENDMAX_OT_remove_measurement_cage,
+    BLENDMAX_OT_restart_blender,
     BLENDMAX_OT_restart_notice_popup,
     BLENDMAX_OT_restart_notice_later,
     BLENDMAX_MT_presentation,

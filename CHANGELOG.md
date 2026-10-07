@@ -56,10 +56,11 @@ called out separately from automated coverage.
 
 - A failed import now also removes the curves, armatures, cameras, lights and
   actions it created, instead of leaving them in the file as orphan data.
-- The restart notice and dialog button that runs Blender's quit command is now
-  labelled **Quit Blender**; Blender has no restart operator, so the old
-  **Restart Blender** label promised a relaunch that never happened. The
-  "Restart Blender to load the new code" instruction stays as text.
+- The **Restart Blender** button in the update notice and dialog now really
+  restarts Blender: it launches a new Blender, reopening the saved file, and
+  then quits the old one. With unsaved changes it first asks **Save &
+  Restart** or **Discard & Restart**. If the new Blender cannot be started,
+  the current session keeps running and reports an error.
 - 3ds Max: **Install Update** now re-imports `blendmax_install` and the shared
   archive policy, so a second update in the same 3ds Max session runs the
   installer the first update put on disk rather than the copy already loaded.

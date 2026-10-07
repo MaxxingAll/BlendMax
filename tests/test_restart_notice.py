@@ -339,7 +339,10 @@ class RestartNoticeTests(unittest.TestCase):
         self.assertTrue(layout.row_item.alert)
         self.assertEqual(
             layout.row_item.operator_call,
-            (("wm.quit_blender",), {"text": "Quit Blender", "icon": "ERROR"}),
+            (
+                ("blendmax.restart_blender",),
+                {"text": "Restart Blender", "icon": "ERROR"},
+            ),
         )
         self.assertEqual(
             [kwargs["text"] for _args, kwargs in layout.labels],
