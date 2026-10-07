@@ -50,6 +50,8 @@ class RestartTests(unittest.TestCase):
 
     def save_mainfile(self):
         self.events.append("save")
+        if isinstance(self.save_result, Exception):
+            raise self.save_result
         return self.save_result
 
     def report(self, levels, message):
@@ -153,6 +155,16 @@ class RestartTests(unittest.TestCase):
         self.bpy.data.is_dirty = True
         self.bpy.data.filepath = "/work/scene.blend"
         self.save_result = {"CANCELLED"}
+        self.assertEqual(self.run_restart("SAVE"), {"CANCELLED"})
+        self.assertEqual(self.events, ["save"])
+        self.assertEqual(self.reports[0][0], {"ERROR"})
+
+    def test_save_error_does_not_spawn_or_quit(self):
+        # Blender raises RuntimeError when the save operator reports an
+        # error, for example on a read-only file.
+        self.bpy.data.is_dirty = True
+        self.bpy.data.filepath = "/work/scene.blend"
+        self.save_result = RuntimeError("Error: Cannot open file for writing")
         self.assertEqual(self.run_restart("SAVE"), {"CANCELLED"})
         self.assertEqual(self.events, ["save"])
         self.assertEqual(self.reports[0][0], {"ERROR"})

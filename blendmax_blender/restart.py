@@ -93,7 +93,13 @@ def restart_blender(report, unsaved_action=DISCARD):
         if not bpy.data.filepath:
             report({"ERROR"}, "Save the file first (File > Save As), then restart.")
             return {"CANCELLED"}
-        if "FINISHED" not in bpy.ops.wm.save_mainfile():
+        try:
+            # Operators raise RuntimeError when they report an error, for
+            # example on a read-only file; treat it like a failed save.
+            saved = "FINISHED" in bpy.ops.wm.save_mainfile()
+        except RuntimeError:
+            saved = False
+        if not saved:
             report(
                 {"ERROR"},
                 "The file could not be saved; Blender was not restarted.",
