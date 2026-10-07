@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from .diagnostics import categorize_import_messages
-from .models import ImportSummary
 from .package import open_blendmax
 
 # Backwards-compatible private name for existing internal callers.

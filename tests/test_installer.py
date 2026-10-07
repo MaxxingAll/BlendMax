@@ -271,6 +271,63 @@ class InstallerTests(unittest.TestCase):
             sys.path[:] = original_path
             sys.modules.pop("blendmax_actions", None)
 
+    def test_second_update_in_one_session_uses_the_replaced_installer(self):
+        # An update replaces blendmax_install.py and the archive policy on
+        # disk. Max keeps running, so the next Install Update must import
+        # those files again instead of reusing the copies already in memory.
+        actions_source = (
+            SOURCE_ROOT
+            / "appbundle"
+            / BUNDLE_NAME
+            / "Contents"
+            / "python"
+            / "blendmax_actions.py"
+        )
+        notices = []
+        runtime = mock.Mock()
+        runtime.getOpenFileName.return_value = "C:/update.zip"
+        runtime.messageBox.side_effect = (
+            lambda message, title: notices.append(message)
+        )
+        fake_pymxs = mock.Mock(runtime=runtime)
+
+        def write_installer(root, version):
+            (root / "blendmax_install.py").write_text(
+                "class InstallError(RuntimeError):\n"
+                "    pass\n"
+                "def install_from_zip(path):\n"
+                "    return {{'version': {0!r}, 'bundle_path': 'bundle'}}\n".format(
+                    version
+                ),
+                encoding="utf-8",
+            )
+
+        original_path = list(sys.path)
+        try:
+            with tempfile.TemporaryDirectory() as temporary, mock.patch.dict(
+                sys.modules, {"pymxs": fake_pymxs}
+            ), mock.patch.object(sys, "dont_write_bytecode", True):
+                root = Path(temporary)
+                shutil.copy2(actions_source, root / "blendmax_actions.py")
+                write_installer(root, "first")
+                sys.modules.pop("blendmax_actions", None)
+                sys.modules.pop("blendmax_install", None)
+                sys.path.insert(0, str(root))
+                import blendmax_actions
+
+                blendmax_actions.install_update()
+                write_installer(root, "second")
+                blendmax_actions.install_update()
+        finally:
+            sys.path[:] = original_path
+            sys.modules.pop("blendmax_actions", None)
+            sys.modules["blendmax_install"] = blendmax_install
+            sys.modules["blendmax_archive_policy"] = archive_policy
+
+        self.assertEqual(len(notices), 2)
+        self.assertIn("BlendMax first installed.", notices[0])
+        self.assertIn("BlendMax second installed.", notices[1])
+
     def test_install_replaces_only_the_existing_bundle(self):
         with tempfile.TemporaryDirectory() as temporary:
             plugins = Path(temporary) / "ApplicationPlugins"

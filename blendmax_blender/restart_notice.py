@@ -244,7 +244,10 @@ def draw_notice(layout):
     column = box.column()
     row = column.row()
     row.alert = True
-    row.operator("wm.quit_blender", text="Restart Blender", icon="ERROR")
+    # wm.quit_blender only quits; Blender has no restart operator, so the
+    # button says what it does and the label asks for the reopen.
+    row.operator("wm.quit_blender", text="Quit Blender", icon="ERROR")
+    column.label(text="Restart Blender to load the new code.")
     column.label(text="Installed BlendMax version: {0}".format(_disk_version))
     column.label(text="Running BlendMax version: {0}".format(running_version()))
     return True

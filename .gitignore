@@ -1,5 +1,8 @@
 __pycache__/
 *.py[cod]
+.pytest_cache/
+# pytest leaves these behind on Windows when it cannot rename its cache dir.
+pytest-cache-files-*/
 *.blendmax
 *.fbx
 *.max

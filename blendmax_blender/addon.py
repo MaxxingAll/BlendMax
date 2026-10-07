@@ -296,7 +296,7 @@ class BLENDMAX_OT_restart_notice_popup(bpy.types.Operator):
         layout.separator()
         buttons = layout.row()
         buttons.operator(
-            "wm.quit_blender", text="Restart Blender", icon="ERROR"
+            "wm.quit_blender", text="Quit Blender", icon="ERROR"
         )
         buttons.operator(
             BLENDMAX_OT_restart_notice_later.bl_idname, text="Later"

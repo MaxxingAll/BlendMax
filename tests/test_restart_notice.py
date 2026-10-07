@@ -339,11 +339,12 @@ class RestartNoticeTests(unittest.TestCase):
         self.assertTrue(layout.row_item.alert)
         self.assertEqual(
             layout.row_item.operator_call,
-            (("wm.quit_blender",), {"text": "Restart Blender", "icon": "ERROR"}),
+            (("wm.quit_blender",), {"text": "Quit Blender", "icon": "ERROR"}),
         )
         self.assertEqual(
             [kwargs["text"] for _args, kwargs in layout.labels],
             [
+                "Restart Blender to load the new code.",
                 "Installed BlendMax version: 0.1.20",
                 "Running BlendMax version: 0.1.19",
             ],

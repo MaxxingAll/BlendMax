@@ -350,7 +350,7 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
             [
                 (
                     ("wm.quit_blender",),
-                    {"text": "Restart Blender", "icon": "ERROR"},
+                    {"text": "Quit Blender", "icon": "ERROR"},
                 ),
                 (
                     ("blendmax.restart_notice_later",),

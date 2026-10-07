@@ -16,6 +16,10 @@ if str(PYTHON_ROOT) not in sys.path:
 
 PROJECT_URL = "https://github.com/MaxxingAll/BlendMax"
 
+# Top-level modules an update replaces on disk alongside the blendmax_max
+# package. They are evicted with it so the next action runs the installed copy.
+_FRESH_TOP_LEVEL_MODULES = ("blendmax_install", "blendmax_archive_policy")
+
 
 def _fresh_core_callable(module_name: str, callable_name: str):
     """Load an action from the currently installed core, not Max's module cache."""
@@ -24,7 +28,9 @@ def _fresh_core_callable(module_name: str, callable_name: str):
     stale_modules = [
         name
         for name in sys.modules
-        if name == "blendmax_max" or name.startswith("blendmax_max.")
+        if name == "blendmax_max"
+        or name.startswith("blendmax_max.")
+        or name in _FRESH_TOP_LEVEL_MODULES
     ]
     for name in sorted(stale_modules, key=lambda value: value.count("."), reverse=True):
         sys.modules.pop(name, None)
@@ -62,7 +68,10 @@ def join_mesh_by_material() -> None:
 
 
 def install_update() -> None:
-    from blendmax_install import InstallError, install_from_zip
+    # Fresh import: a previous update in this session may have replaced the
+    # installer and the archive policy it imports.
+    install_from_zip = _fresh_core_callable("blendmax_install", "install_from_zip")
+    InstallError = sys.modules["blendmax_install"].InstallError
 
     try:
         archive = _runtime().getOpenFileName(
