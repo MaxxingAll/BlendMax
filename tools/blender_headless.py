@@ -17,7 +17,15 @@ disabled.
 Usage::
 
     python tools/blender_headless.py [--blender PATH] [--timeout SECONDS] -- \\
-        [blender arguments]
+        [blender arguments] [-- script arguments]
+
+There are two separators. The first ``--`` ends this tool's own options;
+what follows is passed to Blender. A second ``--`` is Blender's own: Blender
+hands everything after it to the ``--python`` script, and this tool passes
+those arguments through untouched. Before that second ``--``, every argument
+is a Blender option, so a ``-b`` there is a duplicate and is dropped::
+
+    python tools/blender_headless.py -- --python x.py -- -b    # x.py gets -b
 
 ``-b`` is always passed. Blender is found from ``--blender``, then the
 ``BLENDER`` environment variable, then the default Blender 5.2 install path on

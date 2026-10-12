@@ -153,7 +153,13 @@ class RestartTests(unittest.TestCase):
         self.assertEqual(self.events, [])
         self.assertEqual(
             self.reports,
-            [({"ERROR"}, "Save the file first (File > Save As), then restart.")],
+            [
+                (
+                    {"ERROR"},
+                    "This file has never been saved, so Blender was not "
+                    "restarted. Use File > Save As, then restart.",
+                )
+            ],
         )
 
     def test_dirty_save_saved_file_saves_then_spawns_then_quits(self):
@@ -202,12 +208,15 @@ class RestartTests(unittest.TestCase):
         self.run_restart()
         self.assertEqual(self.events, ["spawn", "quit"])
 
-    def test_failed_preference_save_warns_but_still_restarts(self):
+    def test_failed_preference_save_is_logged_and_still_restarts(self):
         self.preferences.is_dirty = True
         self.userpref_result = RuntimeError("Error: cannot write")
-        self.assertEqual(self.run_restart(), {"FINISHED"})
+        with patch("builtins.print") as printed:
+            self.assertEqual(self.run_restart(), {"FINISHED"})
         self.assertEqual(self.events, ["save_prefs", "spawn", "quit"])
-        self.assertEqual(self.reports[0][0], {"WARNING"})
+        # A UI report would vanish with the quit, so it goes to the console.
+        self.assertEqual(self.reports, [])
+        self.assertIn("preferences could not be saved", printed.call_args[0][0])
 
     def test_preferences_are_not_saved_when_the_restart_is_cancelled(self):
         self.preferences.is_dirty = True
@@ -232,7 +241,7 @@ class RestartOperatorTests(unittest.TestCase):
     def setUpClass(cls):
         cls.addon = load_addon("blendmax_blender._addon_restart_test")
 
-    def make_operator(self, dirty, images=()):
+    def make_operator(self, dirty, images=(), saved=True):
         operator = self.addon.BLENDMAX_OT_restart_blender()
         operator.unsaved_action = "SAVE"
         operator.report = lambda *_args: None
@@ -242,6 +251,7 @@ class RestartOperatorTests(unittest.TestCase):
             SAVE="SAVE",
             DISCARD="DISCARD",
             is_dirty=lambda: dirty,
+            has_file_path=lambda: saved,
             modified_images=lambda: tuple(images),
             describe_images=real_restart.describe_images,
             restart_blender=lambda report, action: (
@@ -311,7 +321,7 @@ class RestartOperatorTests(unittest.TestCase):
         operator.draw(None)
         texts = operator.layout.texts()
         self.assertEqual(operator.layout.props, [(operator, "unsaved_action")])
-        self.assertIn("4 image(s) have unsaved edits that will be lost:", texts)
+        self.assertIn("4 images have unsaved edits that will be lost:", texts)
         self.assertIn("a.png, b.png, c.png and 1 more", texts)
         self.assertIn("To keep them, cancel and use Image > Save first.", texts)
         self.assertTrue(operator.layout.alerted)
@@ -322,6 +332,25 @@ class RestartOperatorTests(unittest.TestCase):
         operator.draw(None)
         self.assertEqual(operator.layout.props, [])
         self.assertIn("paint.png", operator.layout.texts())
+
+    def test_draw_uses_singular_for_one_image(self):
+        operator, _calls = self.make_operator(dirty=False, images=("paint.png",))
+        operator.layout = RecordingLayout()
+        operator.draw(None)
+        self.assertIn(
+            "1 image has unsaved edits that will be lost:", operator.layout.texts()
+        )
+
+    def test_draw_warns_up_front_for_a_never_saved_file(self):
+        operator, _calls = self.make_operator(dirty=True, saved=False)
+        operator.layout = RecordingLayout()
+        operator.draw(None)
+        self.assertEqual(operator.layout.props, [(operator, "unsaved_action")])
+        self.assertIn(
+            "This file has never been saved: use File > Save As first, or "
+            "choose Discard & Restart.",
+            operator.layout.texts(),
+        )
 
     def test_draw_without_images_shows_no_warning(self):
         operator, _calls = self.make_operator(dirty=True)

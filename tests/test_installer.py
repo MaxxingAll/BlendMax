@@ -292,14 +292,23 @@ class InstallerTests(unittest.TestCase):
         fake_pymxs = mock.Mock(runtime=runtime)
 
         def write_installer(root, version):
+            # Like the real installer, the fake imports the archive policy at
+            # module level, and the reported version names both copies. A
+            # policy left in sys.modules would report its stale tag (or none,
+            # for the real policy module), so both evictions are exercised.
             (root / "blendmax_install.py").write_text(
+                "import blendmax_archive_policy as policy\n"
                 "class InstallError(RuntimeError):\n"
                 "    pass\n"
                 "def install_from_zip(path):\n"
-                "    return {{'version': {0!r}, 'bundle_path': 'bundle'}}\n".format(
+                "    tag = getattr(policy, 'TAG', 'stale-policy')\n"
+                "    return {{'version': {0!r} + '+' + tag, 'bundle_path': 'bundle'}}\n".format(
                     version
                 ),
                 encoding="utf-8",
+            )
+            (root / "blendmax_archive_policy.py").write_text(
+                "TAG = {0!r}\n".format("policy-" + version), encoding="utf-8"
             )
 
         original_path = list(sys.path)
@@ -325,8 +334,8 @@ class InstallerTests(unittest.TestCase):
             sys.modules["blendmax_archive_policy"] = archive_policy
 
         self.assertEqual(len(notices), 2)
-        self.assertIn("BlendMax first installed.", notices[0])
-        self.assertIn("BlendMax second installed.", notices[1])
+        self.assertIn("BlendMax first+policy-first installed.", notices[0])
+        self.assertIn("BlendMax second+policy-second installed.", notices[1])
 
     def test_broken_installer_on_disk_shows_the_failure_dialog(self):
         actions_source = (

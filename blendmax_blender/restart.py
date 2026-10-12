@@ -35,6 +35,11 @@ def is_dirty():
     return bool(bpy.data.is_dirty)
 
 
+def has_file_path():
+    """Return True when the open file has been saved to disk at least once."""
+    return bool(bpy.data.filepath)
+
+
 def modified_images():
     """Return the names of images with unsaved pixel edits.
 
@@ -125,8 +130,12 @@ def restart_blender(report, unsaved_action=SAVE):
     ``SAVE`` so a caller that does not choose never loses work.
     """
     if is_dirty() and unsaved_action == SAVE:
-        if not bpy.data.filepath:
-            report({"ERROR"}, "Save the file first (File > Save As), then restart.")
+        if not has_file_path():
+            report(
+                {"ERROR"},
+                "This file has never been saved, so Blender was not restarted. "
+                "Use File > Save As, then restart.",
+            )
             return {"CANCELLED"}
         try:
             # Operators raise RuntimeError when they report an error, for
@@ -150,10 +159,11 @@ def restart_blender(report, unsaved_action=SAVE):
         )
         return {"CANCELLED"}
     if not save_preferences_if_needed():
-        report(
-            {"WARNING"},
-            "Preferences could not be saved before restarting; recent "
-            "preference changes may need to be made again.",
+        # Printed, not reported: the quit below closes Blender before a UI
+        # report could be read. Quitting still auto-saves preferences.
+        print(
+            "BlendMax: preferences could not be saved before restarting; "
+            "Blender will save them as it quits."
         )
     try:
         launch(command)

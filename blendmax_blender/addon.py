@@ -286,14 +286,28 @@ class BLENDMAX_OT_restart_blender(bpy.types.Operator):
         layout = self.layout
         if restart.is_dirty():
             layout.prop(self, "unsaved_action")
+            if not restart.has_file_path():
+                # Save & Restart cannot work on a never-saved file; say so
+                # here rather than only after the dialog has closed.
+                note = layout.row()
+                note.alert = True
+                note.label(
+                    text="This file has never been saved: use File > Save As "
+                    "first, or choose Discard & Restart.",
+                    icon="INFO",
+                )
         images = restart.modified_images()
         if images:
             box = layout.box()
             heading = box.row()
             heading.alert = True
             heading.label(
-                text="{0} image(s) have unsaved edits that will be lost:".format(
-                    len(images)
+                text=(
+                    "1 image has unsaved edits that will be lost:"
+                    if len(images) == 1
+                    else "{0} images have unsaved edits that will be lost:".format(
+                        len(images)
+                    )
                 ),
                 icon="ERROR",
             )

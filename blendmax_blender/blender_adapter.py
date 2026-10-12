@@ -74,8 +74,13 @@ class _DataSnapshot:
             for item in tuple(set(data) - before):
                 if item.users == 0:
                     data.remove(item)
+        # Same rule as object data: a new action is removed only once nothing
+        # uses it. A failed import's actions belong to its own objects, which
+        # are already gone; one assigned to a pre-existing object stays rather
+        # than silently clearing that object's animation.
         for item in tuple(set(bpy.data.actions) - self.actions):
-            bpy.data.actions.remove(item, do_unlink=True)
+            if item.users == 0:
+                bpy.data.actions.remove(item)
         for item in tuple(set(bpy.data.materials) - self.materials):
             bpy.data.materials.remove(item, do_unlink=True)
         for item in tuple(set(bpy.data.images) - self.images):

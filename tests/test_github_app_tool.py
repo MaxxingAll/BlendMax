@@ -78,6 +78,30 @@ class LoadCredentialsTests(unittest.TestCase):
         self.assertIn("docs/AGENT_WORKFLOW.md", message)
         self.assertNotIn("GITHUB_APP_PRIVATE_KEY_B64", message)
 
+    def test_malformed_config_is_a_credentials_error(self):
+        for content in ("{not json", "[1, 2, 3]"):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as temporary:
+                config = Path(temporary) / "config.json"
+                config.write_text(content, encoding="utf-8")
+                with self.assertRaises(github_app.CredentialsError):
+                    github_app.load_credentials({}, config_path=config)
+
+    def test_malformed_data_file_is_reported_without_traceback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data_file = Path(temporary) / "body.json"
+            data_file.write_text("{not json", encoding="utf-8")
+            credentials = github_app.AppCredentials("42", PEM, "test")
+            with mock.patch.object(
+                github_app, "load_credentials", return_value=credentials
+            ), mock.patch.object(github_app, "_installation_token") as token, mock.patch(
+                "sys.stderr"
+            ):
+                code = github_app.main(
+                    ["api", "POST", "/repos/o/r/issues", "--data-file", str(data_file)]
+                )
+        self.assertEqual(code, 2)
+        token.assert_not_called()
+
     def test_main_reports_missing_credentials_without_traceback(self):
         with mock.patch.object(
             github_app, "load_credentials", side_effect=github_app.CredentialsError("none")

@@ -344,6 +344,10 @@ your real preferences and installed extensions (including BlendMax), use:
 python tools/blender_headless.py --timeout 120 -- --python my_script.py
 ```
 
+The first `--` ends the runner's own options. To pass arguments to your
+script, add Blender's own second `--` before them:
+`... -- --python my_script.py -- --my-flag`.
+
 It points `BLENDER_USER_SCRIPTS` at an empty temporary folder for that run, so
 legacy add-ons in `scripts/addons` (V-Ray and others), startup scripts, presets
 and templates are skipped. Nothing on disk changes. Do not save preferences

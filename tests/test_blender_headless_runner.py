@@ -95,6 +95,34 @@ class RunTests(unittest.TestCase):
             ["--python-expr", "print(1)"], blender="blender", timeout=None
         )
 
+    def test_main_end_to_end_keeps_script_arguments_after_blenders_separator(self):
+        seen = {}
+
+        def fake_run(command, env, timeout):
+            seen["command"] = command
+            return SimpleNamespace(returncode=0)
+
+        with mock.patch.object(blender_headless.subprocess, "run", side_effect=fake_run):
+            blender_headless.main(
+                ["--blender", "blender", "--", "--python", "x.py", "--", "-b", "flag"]
+            )
+        self.assertEqual(
+            seen["command"], ["blender", "-b", "--python", "x.py", "--", "-b", "flag"]
+        )
+
+    def test_main_end_to_end_drops_a_duplicate_blender_background_flag(self):
+        # Without Blender's own "--", a trailing -b is a Blender option, not a
+        # script argument, so the duplicate is dropped.
+        seen = {}
+
+        def fake_run(command, env, timeout):
+            seen["command"] = command
+            return SimpleNamespace(returncode=0)
+
+        with mock.patch.object(blender_headless.subprocess, "run", side_effect=fake_run):
+            blender_headless.main(["--blender", "blender", "--", "--python", "x.py", "-b"])
+        self.assertEqual(seen["command"], ["blender", "-b", "--python", "x.py"])
+
     def test_main_reports_timeout(self):
         error = subprocess.TimeoutExpired(cmd="blender", timeout=5)
         with mock.patch.object(blender_headless, "run", side_effect=error):

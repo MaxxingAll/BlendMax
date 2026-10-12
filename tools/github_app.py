@@ -85,7 +85,12 @@ def load_credentials(
             "docs/AGENT_WORKFLOW.md). Cloud sessions should use their built-in "
             "GitHub access instead of this tool.".format(path)
         )
-    config = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise CredentialsError("Could not read {0}: {1}".format(path, exc)) from exc
+    if not isinstance(config, dict):
+        raise CredentialsError("{0} must contain a JSON object.".format(path))
     try:
         key = Path(config["private_key_path"]).read_text(encoding="utf-8")
         return AppCredentials(str(config["app_id"]), key, str(path))
@@ -211,7 +216,11 @@ def main(argv=None) -> int:
         return 2
     data = None
     if options.data_file is not None:
-        data = json.loads(options.data_file.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(options.data_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print("Could not read {0}: {1}".format(options.data_file, exc), file=sys.stderr)
+            return 2
     token, _permissions, _installation = _installation_token(credentials, repo)
     status, result = _request(options.method, options.path, token, data)
     _print({"status": status, "response": result})

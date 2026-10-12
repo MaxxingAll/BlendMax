@@ -90,12 +90,12 @@ class DataSnapshotRollbackTests(unittest.TestCase):
 
     def test_rollback_keeps_new_object_data_that_is_still_used(self):
         snapshot = self.adapter._DataSnapshot()
-        for name in ("meshes", "curves", "armatures", "cameras", "lights"):
+        for name in ("meshes", "curves", "armatures", "cameras", "lights", "actions"):
             getattr(self.bpy.data, name).add(FakeDatablock("shared " + name, users=1))
 
         snapshot.rollback()
 
-        for name in ("meshes", "curves", "armatures", "cameras", "lights"):
+        for name in ("meshes", "curves", "armatures", "cameras", "lights", "actions"):
             with self.subTest(collection=name):
                 self.assertIn(
                     "shared " + name,
