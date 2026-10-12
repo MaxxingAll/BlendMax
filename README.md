@@ -20,7 +20,7 @@ created automatically by Python.
 
 | Component | Version | Status |
 | --- | --- | --- |
-| 3ds Max exporter and cleanup | `0.1.0-alpha.4.3.0` | Host verified in 3ds Max 2025.3 |
+| 3ds Max exporter and cleanup | `0.1.0-alpha.4.3.1` | Host verified in 3ds Max 2025.3; updater reload host-checked in 3ds Max 2025 |
 | Blender importer | `0.1.20` | Measurement Cage, structured import summary, and a version-based restart notice with a one-shot dialog |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
 | Automated suite | See CI | Python 3.11–3.13 |

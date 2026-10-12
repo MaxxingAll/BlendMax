@@ -61,10 +61,17 @@ def find_blender(
 
 
 def headless_command(blender: str, arguments: Sequence[str]) -> list:
-    """Return the argv for a background run; ``-b`` is added once."""
+    """Return the argv for a background run; ``-b`` is added once.
 
-    rest = [item for item in arguments if item not in {"-b", "--background"}]
-    return [blender, "-b", *rest]
+    Only Blender's own options (before a ``--`` separator) are filtered:
+    everything after ``--`` belongs to the user's script and is passed on
+    untouched, even when it contains ``-b``.
+    """
+
+    arguments = list(arguments)
+    split = arguments.index("--") if "--" in arguments else len(arguments)
+    own = [item for item in arguments[:split] if item not in {"-b", "--background"}]
+    return [blender, "-b", *own, *arguments[split:]]
 
 
 def headless_environment(

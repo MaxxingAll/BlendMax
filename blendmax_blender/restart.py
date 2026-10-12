@@ -35,6 +35,23 @@ def is_dirty():
     return bool(bpy.data.is_dirty)
 
 
+def modified_images():
+    """Return the names of images with unsaved pixel edits.
+
+    Saving the .blend does not write these (painted or edited images need
+    Image > Save), and quitting drops them, so the restart dialog warns
+    about them instead of losing them silently.
+    """
+    return tuple(image.name for image in bpy.data.images if image.is_dirty)
+
+
+def describe_images(names, limit=3):
+    """Return a short, human-readable list such as "a, b and 2 more"."""
+    shown = ", ".join(names[:limit])
+    hidden = len(names) - limit
+    return shown if hidden <= 0 else "{0} and {1} more".format(shown, hidden)
+
+
 def executable_path():
     """Return the Blender executable to relaunch, or "" when unknown.
 

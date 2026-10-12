@@ -262,6 +262,9 @@ class BLENDMAX_OT_restart_blender(bpy.types.Operator):
             (restart.DISCARD, "Discard & Restart", "Restart without saving"),
         ),
         default=restart.SAVE,
+        # Not remembered between invocations: a Discard picked before a
+        # failed restart must not become the preselected choice next time.
+        options={"SKIP_SAVE"},
     )
 
     @classmethod
@@ -269,7 +272,7 @@ class BLENDMAX_OT_restart_blender(bpy.types.Operator):
         return not bpy.app.background
 
     def invoke(self, context, _event):
-        if restart.is_dirty():
+        if restart.is_dirty() or restart.modified_images():
             # Blender's own quit prompt could still be cancelled after the
             # new process was spawned, so the choice is made here first.
             # confirm_text needs Blender 4.1+; the extension requires 4.2.
@@ -277,6 +280,24 @@ class BLENDMAX_OT_restart_blender(bpy.types.Operator):
                 self, confirm_text="Restart Blender"
             )
         return self.execute(context)
+
+    def draw(self, _context):
+        layout = self.layout
+        if restart.is_dirty():
+            layout.prop(self, "unsaved_action")
+        images = restart.modified_images()
+        if images:
+            box = layout.box()
+            heading = box.row()
+            heading.alert = True
+            heading.label(
+                text="{0} image(s) have unsaved edits that will be lost:".format(
+                    len(images)
+                ),
+                icon="ERROR",
+            )
+            box.label(text=restart.describe_images(images))
+            box.label(text="To keep them, cancel and use Image > Save first.")
 
     def execute(self, _context):
         return restart.restart_blender(self.report, self.unsaved_action)

@@ -41,6 +41,14 @@ class CommandAndEnvironmentTests(unittest.TestCase):
             ["blender", "-b", "--python", "x.py"],
         )
 
+    def test_script_arguments_after_separator_are_untouched(self):
+        self.assertEqual(
+            blender_headless.headless_command(
+                "blender", ["-b", "--python", "x.py", "--", "-b", "--background"]
+            ),
+            ["blender", "-b", "--python", "x.py", "--", "-b", "--background"],
+        )
+
     def test_environment_points_user_scripts_at_empty_folder(self):
         environment = blender_headless.headless_environment(
             "/tmp/empty", {"PATH": "/bin", "BLENDER_USER_SCRIPTS": "/real"}

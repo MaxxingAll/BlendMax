@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import unittest
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
@@ -186,15 +187,18 @@ class RestartOperatorTests(unittest.TestCase):
     def setUpClass(cls):
         cls.addon = load_addon("blendmax_blender._addon_restart_test")
 
-    def make_operator(self, dirty):
+    def make_operator(self, dirty, images=()):
         operator = self.addon.BLENDMAX_OT_restart_blender()
         operator.unsaved_action = "SAVE"
         operator.report = lambda *_args: None
         calls = []
+        real_restart = self.addon.restart
         fake_restart = SimpleNamespace(
             SAVE="SAVE",
             DISCARD="DISCARD",
             is_dirty=lambda: dirty,
+            modified_images=lambda: tuple(images),
+            describe_images=real_restart.describe_images,
             restart_blender=lambda report, action: (
                 calls.append(action) or {"FINISHED"}
             ),
@@ -238,6 +242,114 @@ class RestartOperatorTests(unittest.TestCase):
         operator, calls = self.make_operator(dirty=False)
         self.assertEqual(operator.invoke(SimpleNamespace(), None), {"FINISHED"})
         self.assertEqual(calls, ["SAVE"])
+
+    def test_invoke_asks_when_only_images_are_modified(self):
+        operator, calls = self.make_operator(dirty=False, images=("paint.png",))
+        shown = []
+        context = SimpleNamespace(
+            window_manager=SimpleNamespace(
+                invoke_props_dialog=lambda op, **kwargs: shown.append(op)
+                or {"RUNNING_MODAL"}
+            )
+        )
+        self.assertEqual(operator.invoke(context, None), {"RUNNING_MODAL"})
+        self.assertEqual(shown, [operator])
+        self.assertEqual(calls, [])
+
+    def test_draw_shows_choice_and_image_warning(self):
+        operator, _calls = self.make_operator(
+            dirty=True, images=("a.png", "b.png", "c.png", "d.png")
+        )
+        operator.layout = RecordingLayout()
+        operator.draw(None)
+        texts = operator.layout.texts()
+        self.assertEqual(operator.layout.props, [(operator, "unsaved_action")])
+        self.assertIn("4 image(s) have unsaved edits that will be lost:", texts)
+        self.assertIn("a.png, b.png, c.png and 1 more", texts)
+        self.assertIn("To keep them, cancel and use Image > Save first.", texts)
+        self.assertTrue(operator.layout.alerted)
+
+    def test_draw_without_unsaved_file_hides_the_choice(self):
+        operator, _calls = self.make_operator(dirty=False, images=("paint.png",))
+        operator.layout = RecordingLayout()
+        operator.draw(None)
+        self.assertEqual(operator.layout.props, [])
+        self.assertIn("paint.png", operator.layout.texts())
+
+    def test_draw_without_images_shows_no_warning(self):
+        operator, _calls = self.make_operator(dirty=True)
+        operator.layout = RecordingLayout()
+        operator.draw(None)
+        self.assertEqual(operator.layout.texts(), [])
+
+    def test_unsaved_choice_is_not_remembered(self):
+        # Annotations are strings under ``from __future__ import annotations``,
+        # so the property options are checked in the source itself.
+        addon_source = (
+            Path(__file__).resolve().parents[1] / "blendmax_blender" / "addon.py"
+        ).read_text(encoding="utf-8")
+        start = addon_source.index("class BLENDMAX_OT_restart_blender")
+        end = addon_source.index("\nclass ", start + 1)
+        self.assertIn('options={"SKIP_SAVE"}', addon_source[start:end])
+
+
+class DescribeImagesTests(unittest.TestCase):
+    def setUp(self):
+        bpy = ModuleType("bpy")
+        bpy.data = SimpleNamespace(
+            images=[
+                SimpleNamespace(name="painted.png", is_dirty=True),
+                SimpleNamespace(name="clean.png", is_dirty=False),
+            ]
+        )
+        self.restart = load_blender_module("restart.py", vector=object, bpy=bpy)
+
+    def test_only_dirty_images_are_listed(self):
+        self.assertEqual(self.restart.modified_images(), ("painted.png",))
+
+    def test_short_lists_are_shown_in_full(self):
+        self.assertEqual(self.restart.describe_images(("a", "b")), "a, b")
+
+    def test_long_lists_are_truncated(self):
+        self.assertEqual(
+            self.restart.describe_images(("a", "b", "c", "d", "e")),
+            "a, b, c and 2 more",
+        )
+
+
+class RecordingLayout:
+    """Minimal UILayout stand-in that records what the dialog draws."""
+
+    def __init__(self, root=None):
+        self.root = root or self
+        if root is None:
+            self.props = []
+            self.labels = []
+            self.alerted = False
+
+    def box(self):
+        return RecordingLayout(self.root)
+
+    def row(self):
+        return RecordingLayout(self.root)
+
+    @property
+    def alert(self):
+        return self.root.alerted
+
+    @alert.setter
+    def alert(self, value):
+        if value:
+            self.root.alerted = True
+
+    def prop(self, data, name, **_kwargs):
+        self.root.props.append((data, name))
+
+    def label(self, text="", **_kwargs):
+        self.root.labels.append(text)
+
+    def texts(self):
+        return list(self.root.labels)
 
 
 if __name__ == "__main__":
