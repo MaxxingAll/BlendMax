@@ -1,12 +1,12 @@
-# BlendMax 0.1.0-alpha.4.3.0 Test Matrix
+# BlendMax 0.1.0-alpha.4.3.1 Test Matrix
 
-Status: **0.1.0-alpha.4.3.0 automated baseline; newest host pass recorded below is Alpha.4.1.0**
+Status: **0.1.0-alpha.4.3.1 automated baseline; newest full host pass recorded below is Alpha.4.1.0**
 
 ## Reference environment
 
 - Autodesk 3ds Max 2025.3
 - V-Ray 7.00.02
-- BlendMax Max Exporter 0.1.0-alpha.4.3.0
+- BlendMax Max Exporter 0.1.0-alpha.4.3.1
 - BlendMax manifest schema 0.1.1
 - FBX binary, Z-up, metres, animation disabled
 - Automated suite: Python 3.11, 3.12 and 3.13 on `ubuntu-latest`, from the CI matrix
@@ -20,6 +20,9 @@ grouped-asset geometry limit from 15 to 30 objects. Alpha.4.0 adds the explicit
 Join Mesh by Material cleanup and a strict hidden/frozen-object preflight.
 Alpha.4.2.0 raises the grouped-asset geometry limit from 30 to 500 objects.
 Alpha.4.3.0 adds alpha/opacity protection to the cleanup workflow.
+Alpha.4.3.1 makes **Install Update** reload the installer from disk; it was
+host-checked in 3ds Max 2025 with two updates in one session, the second
+running the installer the first one put on disk.
 
 Manual evidence packages are not committed because they contain user-provided
 textures. Their filenames are recorded here so results can be traced to the

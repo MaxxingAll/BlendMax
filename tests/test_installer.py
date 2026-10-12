@@ -84,7 +84,7 @@ class InstallerTests(unittest.TestCase):
             bundle = Path(temporary) / BUNDLE_NAME
             version = build_bundle(SOURCE_ROOT, bundle)
 
-            self.assertEqual(version, "0.1.0-alpha.4.3.0")
+            self.assertEqual(version, "0.1.0-alpha.4.3.1")
             self.assertTrue(
                 (bundle / "Contents" / "python" / "blendmax_max" / "exporter.py").is_file()
             )
@@ -175,8 +175,8 @@ class InstallerTests(unittest.TestCase):
             [component.get("Description") for component in components],
             ["macroscripts parts", "post-start-up scripts parts"],
         )
-        self.assertEqual(manifest.get("AppVersion"), "0.1.0.4")
-        self.assertEqual(manifest.get("FriendlyVersion"), "0.1.0-alpha.4.3.0")
+        self.assertEqual(manifest.get("AppVersion"), "0.1.0.5")
+        self.assertEqual(manifest.get("FriendlyVersion"), "0.1.0-alpha.4.3.1")
 
     def test_launchers_import_actions_when_executed_from_an_isolated_path(self):
         launchers = {
@@ -271,6 +271,116 @@ class InstallerTests(unittest.TestCase):
             sys.path[:] = original_path
             sys.modules.pop("blendmax_actions", None)
 
+    def test_second_update_in_one_session_uses_the_replaced_installer(self):
+        # An update replaces blendmax_install.py and the archive policy on
+        # disk. Max keeps running, so the next Install Update must import
+        # those files again instead of reusing the copies already in memory.
+        actions_source = (
+            SOURCE_ROOT
+            / "appbundle"
+            / BUNDLE_NAME
+            / "Contents"
+            / "python"
+            / "blendmax_actions.py"
+        )
+        notices = []
+        runtime = mock.Mock()
+        runtime.getOpenFileName.return_value = "C:/update.zip"
+        runtime.messageBox.side_effect = (
+            lambda message, title: notices.append(message)
+        )
+        fake_pymxs = mock.Mock(runtime=runtime)
+
+        def write_installer(root, version):
+            # Like the real installer, the fake imports the archive policy at
+            # module level, and the reported version names both copies. A
+            # policy left in sys.modules would report its stale tag (or none,
+            # for the real policy module), so both evictions are exercised.
+            (root / "blendmax_install.py").write_text(
+                "import blendmax_archive_policy as policy\n"
+                "class InstallError(RuntimeError):\n"
+                "    pass\n"
+                "def install_from_zip(path):\n"
+                "    tag = getattr(policy, 'TAG', 'stale-policy')\n"
+                "    return {{'version': {0!r} + '+' + tag, 'bundle_path': 'bundle'}}\n".format(
+                    version
+                ),
+                encoding="utf-8",
+            )
+            (root / "blendmax_archive_policy.py").write_text(
+                "TAG = {0!r}\n".format("policy-" + version), encoding="utf-8"
+            )
+
+        original_path = list(sys.path)
+        try:
+            with tempfile.TemporaryDirectory() as temporary, mock.patch.dict(
+                sys.modules, {"pymxs": fake_pymxs}
+            ), mock.patch.object(sys, "dont_write_bytecode", True):
+                root = Path(temporary)
+                shutil.copy2(actions_source, root / "blendmax_actions.py")
+                write_installer(root, "first")
+                sys.modules.pop("blendmax_actions", None)
+                sys.modules.pop("blendmax_install", None)
+                sys.path.insert(0, str(root))
+                import blendmax_actions
+
+                blendmax_actions.install_update()
+                write_installer(root, "second")
+                blendmax_actions.install_update()
+        finally:
+            sys.path[:] = original_path
+            sys.modules.pop("blendmax_actions", None)
+            sys.modules["blendmax_install"] = blendmax_install
+            sys.modules["blendmax_archive_policy"] = archive_policy
+
+        self.assertEqual(len(notices), 2)
+        self.assertIn("BlendMax first+policy-first installed.", notices[0])
+        self.assertIn("BlendMax second+policy-second installed.", notices[1])
+
+    def test_broken_installer_on_disk_shows_the_failure_dialog(self):
+        actions_source = (
+            SOURCE_ROOT
+            / "appbundle"
+            / BUNDLE_NAME
+            / "Contents"
+            / "python"
+            / "blendmax_actions.py"
+        )
+        notices = []
+        runtime = mock.Mock()
+        runtime.messageBox.side_effect = (
+            lambda message, title: notices.append((title, message))
+        )
+        original_path = list(sys.path)
+        try:
+            with tempfile.TemporaryDirectory() as temporary, mock.patch.dict(
+                sys.modules, {"pymxs": mock.Mock(runtime=runtime)}
+            ), mock.patch.object(sys, "dont_write_bytecode", True), mock.patch(
+                "sys.stdout"
+            ):
+                root = Path(temporary)
+                shutil.copy2(actions_source, root / "blendmax_actions.py")
+                (root / "blendmax_install.py").write_text(
+                    "this is not valid python\n", encoding="utf-8"
+                )
+                sys.modules.pop("blendmax_actions", None)
+                sys.modules.pop("blendmax_install", None)
+                sys.path.insert(0, str(root))
+                import blendmax_actions
+
+                blendmax_actions.install_update()
+        finally:
+            sys.path[:] = original_path
+            sys.modules.pop("blendmax_actions", None)
+            sys.modules["blendmax_install"] = blendmax_install
+            sys.modules["blendmax_archive_policy"] = archive_policy
+
+        self.assertEqual(len(notices), 1)
+        title, message = notices[0]
+        self.assertEqual(title, "BlendMax Update Failed")
+        self.assertIn("could not be loaded", message)
+        runtime.getOpenFileName.assert_not_called()
+
     def test_install_replaces_only_the_existing_bundle(self):
         with tempfile.TemporaryDirectory() as temporary:
             plugins = Path(temporary) / "ApplicationPlugins"
@@ -283,7 +393,7 @@ class InstallerTests(unittest.TestCase):
 
             result = install_from_source(SOURCE_ROOT, install_root=plugins)
 
-            self.assertEqual(result["version"], "0.1.0-alpha.4.3.0")
+            self.assertEqual(result["version"], "0.1.0-alpha.4.3.1")
             self.assertFalse((target / "stale.txt").exists())
             self.assertEqual(
                 (unrelated / "keep.txt").read_text(encoding="utf-8"),
@@ -317,7 +427,7 @@ class InstallerTests(unittest.TestCase):
             plugins = root / "ApplicationPlugins"
             result = install_from_zip(archive_path, install_root=plugins)
 
-            self.assertEqual(result["version"], "0.1.0-alpha.4.3.0")
+            self.assertEqual(result["version"], "0.1.0-alpha.4.3.1")
             self.assertTrue((plugins / BUNDLE_NAME / "PackageContents.xml").is_file())
 
     def test_rejects_zip_path_traversal(self):
@@ -873,6 +983,19 @@ class ArchivePolicyUpgradePathTests(unittest.TestCase):
 
             self.assertIn("blendmax_archive_policy.py", names)
             self.assertIn(self.TEMPLATE_POLICY, names)
+
+    def test_release_leaves_out_maintainer_tooling(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            release_zip = release_builder.build(Path(temporary) / "release.zip")
+            with zipfile.ZipFile(release_zip) as archive:
+                names = set(archive.namelist())
+
+        for excluded in release_builder.EXCLUDED_FILES:
+            self.assertNotIn(excluded, names)
+        # The product's own tools and tests still ship.
+        self.assertIn("tools/build_release.py", names)
+        self.assertIn("tools/build_blender_extension.py", names)
+        self.assertIn("tests/test_installer.py", names)
 
     def test_template_copy_is_identical_to_the_canonical_file(self):
         with tempfile.TemporaryDirectory() as temporary:

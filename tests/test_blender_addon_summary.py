@@ -79,6 +79,7 @@ def load_addon(module_name="blendmax_blender._addon_summary_test"):
     )
     fake_bpy.props = SimpleNamespace(
         BoolProperty=lambda **_kwargs: None,
+        EnumProperty=lambda **_kwargs: None,
         FloatProperty=lambda **_kwargs: None,
         IntProperty=lambda **_kwargs: None,
         StringProperty=lambda **_kwargs: None,
@@ -349,7 +350,7 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
             layout.operator_calls,
             [
                 (
-                    ("wm.quit_blender",),
+                    ("blendmax.restart_blender",),
                     {"text": "Restart Blender", "icon": "ERROR"},
                 ),
                 (

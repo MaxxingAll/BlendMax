@@ -47,12 +47,20 @@ from .manifest import ManifestIndex
 from .models import ImportSummary, PackageContents
 
 
+# Object data the FBX importer can create besides meshes. Like meshes, each is
+# removed on rollback only once removing the new objects leaves it unused.
+_OBJECT_DATA_COLLECTIONS = ("meshes", "curves", "armatures", "cameras", "lights")
+
+
 class _DataSnapshot:
     """Remove data created during a failed import."""
 
     def __init__(self):
         self.objects = set(bpy.data.objects)
-        self.meshes = set(bpy.data.meshes)
+        self.object_data = {
+            name: set(getattr(bpy.data, name)) for name in _OBJECT_DATA_COLLECTIONS
+        }
+        self.actions = set(bpy.data.actions)
         self.materials = set(bpy.data.materials)
         self.images = set(bpy.data.images)
         self.texts = set(bpy.data.texts)
@@ -61,9 +69,18 @@ class _DataSnapshot:
     def rollback(self) -> None:
         for item in tuple(set(bpy.data.objects) - self.objects):
             bpy.data.objects.remove(item, do_unlink=True)
-        for item in tuple(set(bpy.data.meshes) - self.meshes):
+        for name, before in self.object_data.items():
+            data = getattr(bpy.data, name)
+            for item in tuple(set(data) - before):
+                if item.users == 0:
+                    data.remove(item)
+        # Same rule as object data: a new action is removed only once nothing
+        # uses it. A failed import's actions belong to its own objects, which
+        # are already gone; one assigned to a pre-existing object stays rather
+        # than silently clearing that object's animation.
+        for item in tuple(set(bpy.data.actions) - self.actions):
             if item.users == 0:
-                bpy.data.meshes.remove(item)
+                bpy.data.actions.remove(item)
         for item in tuple(set(bpy.data.materials) - self.materials):
             bpy.data.materials.remove(item, do_unlink=True)
         for item in tuple(set(bpy.data.images) - self.images):

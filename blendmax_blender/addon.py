@@ -8,10 +8,10 @@ import textwrap
 import time
 
 import bpy
-from bpy.props import BoolProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 
-from . import restart_notice
+from . import restart, restart_notice
 from .errors import BlendMaxImportError
 from .importer import import_blendmax
 from .models import ImportSummary
@@ -248,6 +248,78 @@ class BLENDMAX_OT_remove_measurement_cage(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class BLENDMAX_OT_restart_blender(bpy.types.Operator):
+    """Relaunch Blender, reopening the current file, to load the new code."""
+
+    bl_idname = "blendmax.restart_blender"
+    bl_label = "Restart Blender"
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    unsaved_action: EnumProperty(
+        name="Unsaved Changes",
+        items=(
+            (restart.SAVE, "Save & Restart", "Save the file, then restart"),
+            (restart.DISCARD, "Discard & Restart", "Restart without saving"),
+        ),
+        default=restart.SAVE,
+        # Not remembered between invocations: a Discard picked before a
+        # failed restart must not become the preselected choice next time.
+        options={"SKIP_SAVE"},
+    )
+
+    @classmethod
+    def poll(cls, _context):
+        return not bpy.app.background
+
+    def invoke(self, context, _event):
+        if restart.is_dirty() or restart.modified_images():
+            # Blender's own quit prompt could still be cancelled after the
+            # new process was spawned, so the choice is made here first.
+            # confirm_text needs Blender 4.1+; the extension requires 4.2.
+            # The default width clips the "Unsaved Changes" label.
+            return context.window_manager.invoke_props_dialog(
+                self, width=420, confirm_text="Restart Blender"
+            )
+        return self.execute(context)
+
+    def draw(self, _context):
+        layout = self.layout
+        if restart.is_dirty():
+            layout.prop(self, "unsaved_action")
+            if not restart.has_file_path():
+                # Save & Restart cannot work on a never-saved file; say so
+                # here rather than only after the dialog has closed. Two
+                # short lines: Blender cuts the middle out of a long label.
+                note = layout.column()
+                note.alert = True
+                note.label(text="This file has never been saved.", icon="INFO")
+                note.label(text="Use File > Save As first, or choose Discard & Restart.")
+        images = restart.modified_images()
+        if images:
+            box = layout.box()
+            heading = box.row()
+            heading.alert = True
+            heading.label(
+                text=(
+                    "1 image has unsaved edits that will be lost:"
+                    if len(images) == 1
+                    else "{0} images have unsaved edits that will be lost:".format(
+                        len(images)
+                    )
+                ),
+                icon="ERROR",
+            )
+            box.label(text=restart.describe_images(images))
+            box.label(
+                text="To keep {0}, cancel and use Image > Save first.".format(
+                    "it" if len(images) == 1 else "them"
+                )
+            )
+
+    def execute(self, _context):
+        return restart.restart_blender(self.report, self.unsaved_action)
+
+
 class BLENDMAX_OT_restart_notice_later(bpy.types.Operator):
     """Keep working; the restart notice stays in the add-on preferences."""
 
@@ -296,7 +368,9 @@ class BLENDMAX_OT_restart_notice_popup(bpy.types.Operator):
         layout.separator()
         buttons = layout.row()
         buttons.operator(
-            "wm.quit_blender", text="Restart Blender", icon="ERROR"
+            BLENDMAX_OT_restart_blender.bl_idname,
+            text="Restart Blender",
+            icon="ERROR",
         )
         buttons.operator(
             BLENDMAX_OT_restart_notice_later.bl_idname, text="Later"
@@ -412,6 +486,7 @@ _CLASSES = (
     BLENDMAX_OT_import_asset,
     BLENDMAX_OT_create_measurement_cage,
     BLENDMAX_OT_remove_measurement_cage,
+    BLENDMAX_OT_restart_blender,
     BLENDMAX_OT_restart_notice_popup,
     BLENDMAX_OT_restart_notice_later,
     BLENDMAX_MT_presentation,

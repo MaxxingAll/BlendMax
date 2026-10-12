@@ -1,0 +1,180 @@
+"""Relaunch Blender for the BlendMax update notice.
+
+Blender has no restart operator, so a restart is a new detached Blender
+process followed by a quit of this one. The new process is spawned first and
+the quit only runs once the spawn succeeded; when no new Blender can be
+started the running session is left untouched. Unsaved changes are resolved
+before spawning, because Blender's own quit prompt can still be cancelled
+after the new process already exists.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+
+import bpy
+
+
+SAVE = "SAVE"
+DISCARD = "DISCARD"
+
+# subprocess only defines these on Windows; the values are the Win32 flags.
+_DETACHED_PROCESS = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+_CREATE_NEW_PROCESS_GROUP = getattr(
+    subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
+)
+
+
+def _is_windows():
+    return os.name == "nt"
+
+
+def is_dirty():
+    """Return True when the open file has unsaved changes."""
+    return bool(bpy.data.is_dirty)
+
+
+def has_file_path():
+    """Return True when the open file has been saved to disk at least once."""
+    return bool(bpy.data.filepath)
+
+
+def modified_images():
+    """Return the names of images with unsaved pixel edits.
+
+    Saving the .blend does not write these (painted or edited images need
+    Image > Save), and quitting drops them, so the restart dialog warns
+    about them instead of losing them silently.
+    """
+    return tuple(image.name for image in bpy.data.images if image.is_dirty)
+
+
+def describe_images(names, limit=3):
+    """Return a short, human-readable list such as "a, b and 2 more"."""
+    shown = ", ".join(names[:limit])
+    hidden = len(names) - limit
+    return shown if hidden <= 0 else "{0} and {1} more".format(shown, hidden)
+
+
+def executable_path():
+    """Return the Blender executable to relaunch, or "" when unknown.
+
+    On Windows a sibling ``blender-launcher.exe`` is preferred because it
+    starts Blender without a console window.
+    """
+    binary = bpy.app.binary_path
+    if not binary:
+        return ""
+    if _is_windows():
+        launcher = os.path.join(os.path.dirname(binary), "blender-launcher.exe")
+        if os.path.isfile(launcher):
+            return launcher
+    return binary
+
+
+def build_command():
+    """Return the argv for the new Blender, or None without an executable.
+
+    The original ``sys.argv`` is never forwarded: it may carry ``-b`` or
+    ``--python`` arguments that must not run again. A saved file is reopened.
+    """
+    executable = executable_path()
+    if not executable:
+        return None
+    command = [executable]
+    filepath = bpy.data.filepath
+    if filepath:
+        command.append(filepath)
+    return command
+
+
+def save_preferences_if_needed():
+    """Write auto-saved preferences now, before the new Blender reads them.
+
+    With Auto-Save Preferences on, Blender writes changed preferences only as
+    it quits. The new process starts first, so it could read the older file
+    and later save that copy over the newer one. Returns False only when a
+    save was needed and failed; quitting still auto-saves in that case.
+    """
+    preferences = bpy.context.preferences
+    if not (preferences.use_preferences_save and preferences.is_dirty):
+        return True
+    try:
+        return "FINISHED" in bpy.ops.wm.save_userpref()
+    except RuntimeError:
+        return False
+
+
+def launch(command):
+    """Start `command` as a detached process; may raise OSError."""
+    options = {
+        "close_fds": True,
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "cwd": os.path.dirname(command[0]) or None,
+    }
+    if _is_windows():
+        options["creationflags"] = _DETACHED_PROCESS | _CREATE_NEW_PROCESS_GROUP
+    else:
+        options["start_new_session"] = True
+    return subprocess.Popen(command, **options)
+
+
+def restart_blender(report, unsaved_action=SAVE):
+    """Relaunch Blender and quit this session; return an operator result set.
+
+    `report` is the operator's ``report`` method. `unsaved_action` decides
+    what happens to unsaved changes (``SAVE`` or ``DISCARD``). It defaults to
+    ``SAVE`` so a caller that does not choose never loses work.
+    """
+    if is_dirty() and unsaved_action == SAVE:
+        if not has_file_path():
+            report(
+                {"ERROR"},
+                "This file has never been saved, so Blender was not restarted. "
+                "Use File > Save As, then restart.",
+            )
+            return {"CANCELLED"}
+        try:
+            # Operators raise RuntimeError when they report an error, for
+            # example on a read-only file; treat it like a failed save.
+            saved = "FINISHED" in bpy.ops.wm.save_mainfile()
+        except RuntimeError:
+            saved = False
+        if not saved:
+            report(
+                {"ERROR"},
+                "The file could not be saved; Blender was not restarted.",
+            )
+            return {"CANCELLED"}
+
+    command = build_command()
+    if command is None:
+        report(
+            {"ERROR"},
+            "Could not start a new Blender: the Blender executable is "
+            "unknown; quit and reopen Blender manually.",
+        )
+        return {"CANCELLED"}
+    if not save_preferences_if_needed():
+        # Printed, not reported: the quit below closes Blender before a UI
+        # report could be read. Quitting still auto-saves preferences.
+        print(
+            "BlendMax: preferences could not be saved before restarting; "
+            "Blender will save them as it quits."
+        )
+    try:
+        launch(command)
+    except OSError as error:
+        report(
+            {"ERROR"},
+            "Could not start a new Blender: {0}; quit and reopen Blender "
+            "manually.".format(error),
+        )
+        return {"CANCELLED"}
+
+    # EXEC_DEFAULT does not prompt: unsaved changes were resolved above.
+    bpy.ops.wm.quit_blender("EXEC_DEFAULT")
+    return {"FINISHED"}

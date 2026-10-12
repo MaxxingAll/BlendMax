@@ -4,6 +4,32 @@ This file records user-visible changes to the 3ds Max exporter/cleanup and the
 Blender importer. BlendMax is still alpha software; host-tested baselines are
 called out separately from automated coverage.
 
+## Max Exporter 0.1.0-alpha.4.3.1 — Unreleased
+
+### Fixed
+
+- **Install Update** now re-imports `blendmax_install` and the shared archive
+  policy, so a second update in the same 3ds Max session runs the installer
+  the first update put on disk rather than the copy already loaded.
+- If the installed updater itself cannot be loaded, **Install Update** shows
+  the normal "BlendMax Update Failed" dialog with reinstall instructions
+  instead of a raw Python error.
+
+### Changed
+
+- The release ZIP no longer ships maintainer tooling
+  (`tools/github_app.py`, `tools/blender_headless.py` and their tests).
+
+### Release metadata
+
+- Bumps the Max exporter and AppBundle version (`AppVersion` 0.1.0.5) so the
+  updater fix is identifiable in installed builds.
+
+### Verification
+
+- Host-checked in 3ds Max 2025: two **Install Update from ZIP** actions in one
+  session; the second loaded the installer the first one put on disk.
+
 ## Blender Importer 0.1.20 — Unreleased
 
 ### Changed
@@ -54,6 +80,17 @@ called out separately from automated coverage.
 
 ### Fixed
 
+- A failed import now also removes the curves, armatures, cameras, lights and
+  actions it created, instead of leaving them in the file as orphan data.
+- The **Restart Blender** button in the update notice and dialog now really
+  restarts Blender: it launches a new Blender, reopening the saved file, and
+  then quits the old one. With unsaved changes it first asks **Save &
+  Restart** or **Discard & Restart**. Images with unsaved edits, which saving
+  the .blend does not write, are listed in the dialog as a warning before
+  they would be lost. Auto-saved preferences with pending changes are written
+  before the new Blender starts, so it never reads an older copy. If the new
+  Blender cannot be started, the current session keeps running and reports an
+  error.
 - Fixed a regression where every face on an imported mesh with a manifest
   material assignment silently collapsed onto material slot 0, discarding
   the per-face material assignment 3ds Max exported and Blender's FBX

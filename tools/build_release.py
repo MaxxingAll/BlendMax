@@ -27,6 +27,17 @@ INCLUDED_ROOTS = (
     "tools",
 )
 
+# Maintainer and agent tooling (see docs/AGENT_WORKFLOW.md), not part of the
+# 3ds Max product. Kept out of the release along with their tests.
+EXCLUDED_FILES = frozenset(
+    {
+        "tools/blender_headless.py",
+        "tools/github_app.py",
+        "tests/test_blender_headless_runner.py",
+        "tests/test_github_app_tool.py",
+    }
+)
+
 
 ARCHIVE_POLICY_FILE = "blendmax_archive_policy.py"
 # The template path whose copytree every installer version already performs.
@@ -53,6 +64,8 @@ def iter_release_files():
             if not child.is_file():
                 continue
             if "__pycache__" in child.parts or child.suffix in {".pyc", ".pyo"}:
+                continue
+            if child.relative_to(PROJECT_ROOT).as_posix() in EXCLUDED_FILES:
                 continue
             yield child
 

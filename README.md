@@ -20,7 +20,7 @@ created automatically by Python.
 
 | Component | Version | Status |
 | --- | --- | --- |
-| 3ds Max exporter and cleanup | `0.1.0-alpha.4.3.0` | Host verified in 3ds Max 2025.3 |
+| 3ds Max exporter and cleanup | `0.1.0-alpha.4.3.1` | Host verified in 3ds Max 2025.3; updater reload host-checked in 3ds Max 2025 |
 | Blender importer | `0.1.20` | Measurement Cage, structured import summary, and a version-based restart notice with a one-shot dialog |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
 | Automated suite | See CI | Python 3.11–3.13 |
@@ -333,3 +333,23 @@ payload, and the importer/exporter parameter-name contract (every VRayMtl parame
 exporter's property whitelist).
 Actual `pymxs`, `bpy`, FBX, and host UI
 behavior must be tested inside 3ds Max and Blender.
+
+### Headless Blender runs
+
+Some add-ons cannot run in background mode. V-Ray for Blender Community
+Edition refuses it, so `blender -b` never exits. To run Blender headless with
+your real preferences and installed extensions (including BlendMax), use:
+
+```bash
+python tools/blender_headless.py --timeout 120 -- --python my_script.py
+```
+
+The first `--` ends the runner's own options. To pass arguments to your
+script, add Blender's own second `--` before them:
+`... -- --python my_script.py -- --my-flag`.
+
+It points `BLENDER_USER_SCRIPTS` at an empty temporary folder for that run, so
+legacy add-ons in `scripts/addons` (V-Ray and others), startup scripts, presets
+and templates are skipped. Nothing on disk changes. Do not save preferences
+from such a run. `--factory-startup` also avoids the hang but drops the
+preferences and the installed extension.

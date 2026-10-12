@@ -1,0 +1,196 @@
+"""Tests for tools/github_app.py; GitHub is never contacted.
+
+Credential resolution and path parsing need only the standard library. The
+JWT test runs only where pyjwt[crypto] is installed (CI does not install it).
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from tools import github_app
+
+PEM = "-----BEGIN RSA PRIVATE KEY-----\nTEST\n-----END RSA PRIVATE KEY-----\n"
+
+
+class LoadCredentialsTests(unittest.TestCase):
+    def test_base64_environment_variable(self):
+        encoded = base64.b64encode(PEM.encode("utf-8")).decode("ascii")
+        credentials = github_app.load_credentials(
+            {"GITHUB_APP_ID": "42", "GITHUB_APP_PRIVATE_KEY_B64": encoded},
+            config_path=Path("missing.json"),
+        )
+        self.assertEqual(credentials, github_app.AppCredentials("42", PEM, "environment"))
+
+    def test_plain_environment_variable_restores_escaped_newlines(self):
+        flattened = PEM.replace("\n", "\\n")
+        credentials = github_app.load_credentials(
+            {"GITHUB_APP_ID": "42", "GITHUB_APP_PRIVATE_KEY": flattened},
+            config_path=Path("missing.json"),
+        )
+        self.assertEqual(credentials.private_key, PEM)
+
+    def test_invalid_base64_is_reported(self):
+        with self.assertRaises(github_app.CredentialsError):
+            github_app.load_credentials(
+                {"GITHUB_APP_ID": "42", "GITHUB_APP_PRIVATE_KEY_B64": "not base64!"},
+                config_path=Path("missing.json"),
+            )
+
+    def test_environment_wins_over_config_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = self._write_config(Path(temporary), "7")
+            encoded = base64.b64encode(PEM.encode("utf-8")).decode("ascii")
+            credentials = github_app.load_credentials(
+                {"GITHUB_APP_ID": "42", "GITHUB_APP_PRIVATE_KEY_B64": encoded},
+                config_path=config,
+            )
+        self.assertEqual(credentials.app_id, "42")
+
+    def test_config_file_used_without_environment(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = self._write_config(Path(temporary), "7")
+            credentials = github_app.load_credentials({}, config_path=config)
+        self.assertEqual(credentials.app_id, "7")
+        self.assertEqual(credentials.private_key, PEM)
+        self.assertEqual(credentials.source, str(config))
+
+    def test_app_id_alone_falls_back_to_config(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = self._write_config(Path(temporary), "7")
+            credentials = github_app.load_credentials(
+                {"GITHUB_APP_ID": "42"}, config_path=config
+            )
+        self.assertEqual(credentials.app_id, "7")
+
+    def test_missing_everything_is_reported(self):
+        with self.assertRaises(github_app.CredentialsError) as caught:
+            github_app.load_credentials({}, config_path=Path("does/not/exist.json"))
+        message = str(caught.exception)
+        # Points at the local config and the docs, not at environment
+        # variables, which must never hold the key in cloud sessions.
+        self.assertIn("exist.json", message)
+        self.assertIn("docs/AGENT_WORKFLOW.md", message)
+        self.assertNotIn("GITHUB_APP_PRIVATE_KEY_B64", message)
+
+    def test_malformed_config_is_a_credentials_error(self):
+        for content in ("{not json", "[1, 2, 3]"):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as temporary:
+                config = Path(temporary) / "config.json"
+                config.write_text(content, encoding="utf-8")
+                with self.assertRaises(github_app.CredentialsError):
+                    github_app.load_credentials({}, config_path=config)
+
+    def test_malformed_data_file_is_reported_without_traceback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data_file = Path(temporary) / "body.json"
+            data_file.write_text("{not json", encoding="utf-8")
+            credentials = github_app.AppCredentials("42", PEM, "test")
+            with mock.patch.object(
+                github_app, "load_credentials", return_value=credentials
+            ), mock.patch.object(github_app, "_installation_token") as token, mock.patch(
+                "sys.stderr"
+            ):
+                code = github_app.main(
+                    ["api", "POST", "/repos/o/r/issues", "--data-file", str(data_file)]
+                )
+        self.assertEqual(code, 2)
+        token.assert_not_called()
+
+    def test_main_reports_missing_credentials_without_traceback(self):
+        with mock.patch.object(
+            github_app, "load_credentials", side_effect=github_app.CredentialsError("none")
+        ), mock.patch("sys.stderr"):
+            self.assertEqual(github_app.main(["check", "o/r"]), 2)
+
+    @staticmethod
+    def _write_config(root, app_id):
+        key = root / "app.private-key.pem"
+        key.write_text(PEM, encoding="utf-8")
+        config = root / "config.json"
+        config.write_text(
+            json.dumps({"app_id": int(app_id), "private_key_path": str(key)}),
+            encoding="utf-8",
+        )
+        return config
+
+
+class RepoFromPathTests(unittest.TestCase):
+    def test_repo_is_taken_from_the_path(self):
+        self.assertEqual(
+            github_app.repo_from_path("/repos/MaxxingAll/BlendMax/pulls?state=all"),
+            "MaxxingAll/BlendMax",
+        )
+
+    def test_non_repo_path_is_rejected(self):
+        for path in ("/app", "/repos/only-owner", "C:/Program Files/Git/repos/a/b"):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                github_app.repo_from_path(path)
+
+
+class RequestTests(unittest.TestCase):
+    def test_requests_use_a_timeout(self):
+        seen = {}
+
+        class Response:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"ok": true}'
+
+        def fake_urlopen(request, timeout=None):
+            seen["timeout"] = timeout
+            return Response()
+
+        with mock.patch.object(github_app.urllib.request, "urlopen", fake_urlopen):
+            status, body = github_app._request("GET", "/app", "token")
+        self.assertEqual((status, body), (200, {"ok": True}))
+        self.assertEqual(seen["timeout"], github_app.TIMEOUT_SECONDS)
+
+    def test_network_errors_become_status_zero(self):
+        for error in (
+            github_app.urllib.error.URLError("timed out"),
+            TimeoutError("read timed out"),
+        ):
+            with self.subTest(error=type(error).__name__), mock.patch.object(
+                github_app.urllib.request, "urlopen", side_effect=error
+            ):
+                status, detail = github_app._request("GET", "/app", "token")
+            self.assertEqual(status, 0)
+            self.assertIn("Network error contacting GitHub", detail)
+
+
+class AppJwtTests(unittest.TestCase):
+    def test_jwt_is_signed_with_the_app_id_as_issuer(self):
+        try:
+            import jwt
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.hazmat.primitives.asymmetric import rsa
+        except ImportError:
+            self.skipTest("pyjwt[crypto] is not installed")
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        pem = key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        ).decode("ascii")
+        token = github_app.app_jwt(github_app.AppCredentials("42", pem, "test"), now=1000)
+        claims = jwt.decode(
+            token, key.public_key(), algorithms=["RS256"], options={"verify_exp": False}
+        )
+        self.assertEqual(claims, {"iat": 940, "exp": 1540, "iss": "42"})
+
+
+if __name__ == "__main__":
+    unittest.main()
