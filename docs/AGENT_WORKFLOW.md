@@ -66,6 +66,25 @@ come from `GET /repos/MaxxingAll/BlendMax/commits/<sha>/check-runs`.
   `GET /pulls?head=MaxxingAll:<branch>&state=all`) before retrying, so nothing
   is created twice.
 - Pushing uses normal `git push` credentials, not the app.
+
+### Commit identity
+
+Agent commits are authored by the app's bot account, with the maintainer
+credited as co-author. Pass the identity per commit (never set it in git
+config, so the maintainer's own commits stay theirs):
+
+```bash
+git -c user.name="claude-tan[bot]" \
+    -c user.email="341245867+claude-tan[bot]@users.noreply.github.com" \
+    commit -m "<subject>" -m "<body>
+
+Co-Authored-By: Alleluia <dluffys97@gmail.com>
+Co-Authored-By: Claude <noreply@anthropic.com>"
+```
+
+The email is the bot's GitHub no-reply address (user ID `341245867`), so
+GitHub links the commit to `claude-tan[bot]`. Use the Claude line the
+session's attribution instructions specify (it names the model).
 - The desktop app's PR tracking needs `gh`, so it cannot bind these PRs. Read
   CI through the tool instead.
 
