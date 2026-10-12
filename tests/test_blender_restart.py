@@ -280,7 +280,9 @@ class RestartOperatorTests(unittest.TestCase):
             )
         )
         self.assertEqual(operator.invoke(context, None), {"RUNNING_MODAL"})
-        self.assertEqual(shown, [(operator, {"confirm_text": "Restart Blender"})])
+        self.assertEqual(
+            shown, [(operator, {"width": 420, "confirm_text": "Restart Blender"})]
+        )
         self.assertEqual(calls, [])
 
     def test_invoke_executes_directly_when_clean(self):

@@ -276,8 +276,9 @@ class BLENDMAX_OT_restart_blender(bpy.types.Operator):
             # Blender's own quit prompt could still be cancelled after the
             # new process was spawned, so the choice is made here first.
             # confirm_text needs Blender 4.1+; the extension requires 4.2.
+            # The default width clips the "Unsaved Changes" label.
             return context.window_manager.invoke_props_dialog(
-                self, confirm_text="Restart Blender"
+                self, width=420, confirm_text="Restart Blender"
             )
         return self.execute(context)
 
