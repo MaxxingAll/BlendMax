@@ -12,51 +12,61 @@ on writes. GitHub writes therefore go through the maintainer's own GitHub App,
 **claude-tan**. Pull requests and comments it creates are authored by
 `claude-tan[bot]`.
 
+The tool is `tools/github_app.py` (needs `pyjwt[crypto]`). It holds no
+secrets; the app's credentials come from the session.
+
 ### Local sessions (maintainer's Windows machine)
 
-The helper lives outside the repository in `%USERPROFILE%\.config\github-app\`:
+Credentials live outside the repository in `%USERPROFILE%\.config\github-app\`:
 
 | File | Purpose |
 | --- | --- |
-| `gh_app.py` | Signs in as the app and calls the GitHub REST API |
-| `config.json` | App ID and the private key's path |
+| `config.json` | `{"app_id": ..., "private_key_path": ...}` |
 | `*.private-key.pem` | The app's private key. Never read, print, copy or commit it |
 
-From Git Bash, with Python 3.11+ and `pyjwt[crypto]` installed:
+From Git Bash at the repository root:
 
 ```bash
-cd ~/.config/github-app
-
 # Confirm the installation and its permissions
-py -3 gh_app.py check MaxxingAll/BlendMax
+MSYS_NO_PATHCONV=1 py -3 tools/github_app.py check MaxxingAll/BlendMax
 
 # Any REST call; prints {"status": ..., "response": ...}
-MSYS_NO_PATHCONV=1 py -3 gh_app.py api GET "/repos/MaxxingAll/BlendMax/pulls?state=open"
-MSYS_NO_PATHCONV=1 py -3 gh_app.py api POST /repos/MaxxingAll/BlendMax/pulls --data-file pr.json
+MSYS_NO_PATHCONV=1 py -3 tools/github_app.py api GET "/repos/MaxxingAll/BlendMax/pulls?state=open"
+MSYS_NO_PATHCONV=1 py -3 tools/github_app.py api POST /repos/MaxxingAll/BlendMax/pulls --data-file pr.json
 ```
+
+### Cloud sessions
+
+The same tool reads the credentials from environment variables, set as
+secrets in the cloud environment's settings (never in this repository):
+
+| Variable | Value |
+| --- | --- |
+| `GITHUB_APP_ID` | The app's ID |
+| `GITHUB_APP_PRIVATE_KEY_B64` | The `.pem` file, base64-encoded onto one line |
+
+The environment's setup script must install the dependency:
+`pip install "pyjwt[crypto]"`. Then run the same commands with `python`
+instead of `py -3` (`MSYS_NO_PATHCONV` is harmless outside Git Bash).
+`check` reports `"credentials": "environment"` when the variables are used.
+If they are absent, use the session's own GitHub access instead.
+
+### Calls and gotchas
 
 `pr.json` holds `{"title", "head", "base", "body"}`. Issues use
 `POST /repos/MaxxingAll/BlendMax/issues` with `{"title", "body"}`. CI results
 come from `GET /repos/MaxxingAll/BlendMax/commits/<sha>/check-runs`.
 
-Gotchas:
-
-- Set `MSYS_NO_PATHCONV=1`, or Git Bash rewrites `/repos/...` into a Windows
-  file path before Python sees it.
-- Use `py -3`. A bare `python` may hit the Microsoft Store alias.
+- Set `MSYS_NO_PATHCONV=1` in Git Bash, or it rewrites `/repos/...` into a
+  Windows file path before Python sees it.
+- Use `py -3` on Windows. A bare `python` may hit the Microsoft Store alias.
 - If a create call errors while printing its output, the request may still have
   succeeded. Look the object up (for example
   `GET /pulls?head=MaxxingAll:<branch>&state=all`) before retrying, so nothing
   is created twice.
 - Pushing uses normal `git push` credentials, not the app.
 - The desktop app's PR tracking needs `gh`, so it cannot bind these PRs. Read
-  CI through the helper instead.
-
-### Cloud sessions
-
-Cloud sessions do not have the helper or the private key, and the key must
-never be copied there. Use the session's own GitHub access, or the **Claude**
-GitHub App (Claude Code GitHub Actions) that is installed on this account.
+  CI through the tool instead.
 
 ## Live host testing
 
