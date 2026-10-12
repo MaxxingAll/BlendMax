@@ -78,13 +78,13 @@ git -c user.name="claude-tan[bot]" \
     -c user.email="341245867+claude-tan[bot]@users.noreply.github.com" \
     commit -m "<subject>" -m "<body>
 
-Co-Authored-By: Alleluia <dluffys97@gmail.com>
-Co-Authored-By: Claude <noreply@anthropic.com>"
+Co-Authored-By: Alleluia <dluffys97@gmail.com>"
 ```
 
 The email is the bot's GitHub no-reply address (user ID `341245867`), so
-GitHub links the commit to `claude-tan[bot]`. Use the Claude line the
-session's attribution instructions specify (it names the model).
+GitHub links the commit to `claude-tan[bot]`. The maintainer is the only
+co-author: by the maintainer's choice, agent commits carry no separate
+Claude co-author line.
 - The desktop app's PR tracking needs `gh`, so it cannot bind these PRs. Read
   CI through the tool instead.
 
