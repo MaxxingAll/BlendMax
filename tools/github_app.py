@@ -3,7 +3,8 @@
 Used by AI coding sessions to open pull requests and issues and to read CI;
 see docs/AGENT_WORKFLOW.md. The app's credentials come from, in order:
 
-1. Environment variables (cloud sessions):
+1. Environment variables from a real secret store (e.g. GitHub Actions
+   secrets; never Claude Code cloud environment variables, which are readable):
    ``GITHUB_APP_ID`` and ``GITHUB_APP_PRIVATE_KEY_B64`` (the PEM file,
    base64-encoded onto one line) or ``GITHUB_APP_PRIVATE_KEY`` (the PEM text).
 2. A config file (local sessions), ``--config`` or by default

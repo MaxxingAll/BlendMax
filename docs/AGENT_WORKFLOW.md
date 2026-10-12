@@ -35,21 +35,22 @@ MSYS_NO_PATHCONV=1 py -3 tools/github_app.py api GET "/repos/MaxxingAll/BlendMax
 MSYS_NO_PATHCONV=1 py -3 tools/github_app.py api POST /repos/MaxxingAll/BlendMax/pulls --data-file pr.json
 ```
 
-### Cloud sessions
+### Cloud sessions (Claude Code on the web)
 
-The same tool reads the credentials from environment variables, set as
-secrets in the cloud environment's settings (never in this repository):
+Do **not** use the GitHub App or its key in cloud sessions. Cloud
+environment variables are readable by anyone using the environment, and
+network secrets cannot hold a key that must sign requests inside the session.
 
-| Variable | Value |
-| --- | --- |
-| `GITHUB_APP_ID` | The app's ID |
-| `GITHUB_APP_PRIVATE_KEY_B64` | The `.pem` file, base64-encoded onto one line |
+Cloud sessions do not need it: the built-in GitHub proxy authenticates the
+session's GitHub tools, `git push` and `gh` (where `GH_TOKEN` reads as the
+placeholder `proxy-injected`) with the maintainer's own credentials, without
+the token entering the session. Use those to push branches, open pull
+requests and issues, and read CI. See
+<https://code.claude.com/docs/en/cloud-environments#github-proxy>.
 
-The environment's setup script must install the dependency:
-`pip install "pyjwt[crypto]"`. Then run the same commands with `python`
-instead of `py -3` (`MSYS_NO_PATHCONV` is harmless outside Git Bash).
-`check` reports `"credentials": "environment"` when the variables are used.
-If they are absent, use the session's own GitHub access instead.
+The tool's `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY_B64` environment
+variables exist only for a real secret store, such as GitHub Actions
+secrets, should a workflow ever need to act as the app.
 
 ### Calls and gotchas
 
