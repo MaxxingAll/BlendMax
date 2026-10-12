@@ -333,3 +333,19 @@ payload, and the importer/exporter parameter-name contract (every VRayMtl parame
 exporter's property whitelist).
 Actual `pymxs`, `bpy`, FBX, and host UI
 behavior must be tested inside 3ds Max and Blender.
+
+### Headless Blender runs
+
+Some add-ons cannot run in background mode. V-Ray for Blender Community
+Edition refuses it, so `blender -b` never exits. To run Blender headless with
+your real preferences and installed extensions (including BlendMax), use:
+
+```bash
+python tools/blender_headless.py --timeout 120 -- --python my_script.py
+```
+
+It points `BLENDER_USER_SCRIPTS` at an empty temporary folder for that run, so
+legacy add-ons in `scripts/addons` (V-Ray and others), startup scripts, presets
+and templates are skipped. Nothing on disk changes. Do not save preferences
+from such a run. `--factory-startup` also avoids the hang but drops the
+preferences and the installed extension.
