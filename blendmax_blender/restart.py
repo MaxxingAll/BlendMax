@@ -84,6 +84,23 @@ def build_command():
     return command
 
 
+def save_preferences_if_needed():
+    """Write auto-saved preferences now, before the new Blender reads them.
+
+    With Auto-Save Preferences on, Blender writes changed preferences only as
+    it quits. The new process starts first, so it could read the older file
+    and later save that copy over the newer one. Returns False only when a
+    save was needed and failed; quitting still auto-saves in that case.
+    """
+    preferences = bpy.context.preferences
+    if not (preferences.use_preferences_save and preferences.is_dirty):
+        return True
+    try:
+        return "FINISHED" in bpy.ops.wm.save_userpref()
+    except RuntimeError:
+        return False
+
+
 def launch(command):
     """Start `command` as a detached process; may raise OSError."""
     options = {
@@ -131,6 +148,12 @@ def restart_blender(report, unsaved_action=DISCARD):
             "unknown; quit and reopen Blender manually.",
         )
         return {"CANCELLED"}
+    if not save_preferences_if_needed():
+        report(
+            {"WARNING"},
+            "Preferences could not be saved before restarting; recent "
+            "preference changes may need to be made again.",
+        )
     try:
         launch(command)
     except OSError as error:

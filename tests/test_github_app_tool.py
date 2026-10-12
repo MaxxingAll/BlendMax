@@ -103,6 +103,44 @@ class RepoFromPathTests(unittest.TestCase):
                 github_app.repo_from_path(path)
 
 
+class RequestTests(unittest.TestCase):
+    def test_requests_use_a_timeout(self):
+        seen = {}
+
+        class Response:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"ok": true}'
+
+        def fake_urlopen(request, timeout=None):
+            seen["timeout"] = timeout
+            return Response()
+
+        with mock.patch.object(github_app.urllib.request, "urlopen", fake_urlopen):
+            status, body = github_app._request("GET", "/app", "token")
+        self.assertEqual((status, body), (200, {"ok": True}))
+        self.assertEqual(seen["timeout"], github_app.TIMEOUT_SECONDS)
+
+    def test_network_errors_become_status_zero(self):
+        for error in (
+            github_app.urllib.error.URLError("timed out"),
+            TimeoutError("read timed out"),
+        ):
+            with self.subTest(error=type(error).__name__), mock.patch.object(
+                github_app.urllib.request, "urlopen", side_effect=error
+            ):
+                status, detail = github_app._request("GET", "/app", "token")
+            self.assertEqual(status, 0)
+            self.assertIn("Network error contacting GitHub", detail)
+
+
 class AppJwtTests(unittest.TestCase):
     def test_jwt_is_signed_with_the_app_id_as_issuer(self):
         try:

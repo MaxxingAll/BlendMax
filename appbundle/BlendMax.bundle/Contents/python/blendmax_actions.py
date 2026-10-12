@@ -69,9 +69,22 @@ def join_mesh_by_material() -> None:
 
 def install_update() -> None:
     # Fresh import: a previous update in this session may have replaced the
-    # installer and the archive policy it imports.
-    install_from_zip = _fresh_core_callable("blendmax_install", "install_from_zip")
-    InstallError = sys.modules["blendmax_install"].InstallError
+    # installer and the archive policy it imports. A broken installer on disk
+    # gets the normal failure dialog rather than a raw Python error.
+    try:
+        install_from_zip = _fresh_core_callable("blendmax_install", "install_from_zip")
+        InstallError = sys.modules["blendmax_install"].InstallError
+    except Exception as exc:
+        print(traceback.format_exc())
+        _notify(
+            (
+                "The installed BlendMax updater could not be loaded: {0}\n\n"
+                "Reinstall BlendMax by running install_blendmax.py from a "
+                "release ZIP (Scripting > Run Script)."
+            ).format(exc),
+            "BlendMax Update Failed",
+        )
+        return
 
     try:
         archive = _runtime().getOpenFileName(

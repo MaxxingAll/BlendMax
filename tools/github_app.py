@@ -40,6 +40,8 @@ from pathlib import Path
 from typing import Mapping, NamedTuple, Optional
 
 API = "https://api.github.com"
+# Seconds to wait on GitHub before giving up, so a stalled connection fails.
+TIMEOUT_SECONDS = 30
 DEFAULT_CONFIG = Path.home() / ".config" / "github-app" / "config.json"
 
 
@@ -124,7 +126,7 @@ def _request(method, path, bearer, data=None):
     if body is not None:
         request.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(request) as response:
+        with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
             raw = response.read()
             return response.status, (json.loads(raw) if raw else None)
     except urllib.error.HTTPError as error:
@@ -134,6 +136,12 @@ def _request(method, path, bearer, data=None):
         except ValueError:
             detail = raw.decode("utf-8", "replace")
         return error.code, detail
+    except (urllib.error.URLError, TimeoutError) as error:
+        # No HTTP response at all (timeout, DNS, refused): status 0, so every
+        # caller's "not 2xx" handling reports it instead of a traceback.
+        return 0, "Network error contacting GitHub: {0}".format(
+            getattr(error, "reason", error)
+        )
 
 
 def _installation_token(credentials, repo):

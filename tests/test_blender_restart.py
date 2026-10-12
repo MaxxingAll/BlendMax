@@ -19,10 +19,14 @@ class RestartTests(unittest.TestCase):
         self.bpy = ModuleType("bpy")
         self.bpy.app = SimpleNamespace(binary_path="/opt/blender/blender")
         self.bpy.data = SimpleNamespace(filepath="", is_dirty=False)
+        self.preferences = SimpleNamespace(use_preferences_save=True, is_dirty=False)
+        self.userpref_result = {"FINISHED"}
+        self.bpy.context = SimpleNamespace(preferences=self.preferences)
         self.bpy.ops = SimpleNamespace(
             wm=SimpleNamespace(
                 quit_blender=self.quit_blender,
                 save_mainfile=self.save_mainfile,
+                save_userpref=self.save_userpref,
             )
         )
         self.restart = load_blender_module(
@@ -48,6 +52,12 @@ class RestartTests(unittest.TestCase):
     def quit_blender(self, *args):
         self.events.append("quit")
         return {"FINISHED"}
+
+    def save_userpref(self):
+        self.events.append("save_prefs")
+        if isinstance(self.userpref_result, Exception):
+            raise self.userpref_result
+        return self.userpref_result
 
     def save_mainfile(self):
         self.events.append("save")
@@ -175,6 +185,35 @@ class RestartTests(unittest.TestCase):
         self.bpy.data.filepath = "/work/scene.blend"
         self.assertEqual(self.run_restart("DISCARD"), {"FINISHED"})
         self.assertEqual(self.events, ["spawn", "quit"])
+
+    def test_dirty_auto_saved_preferences_are_written_before_spawning(self):
+        self.preferences.is_dirty = True
+        self.assertEqual(self.run_restart(), {"FINISHED"})
+        self.assertEqual(self.events, ["save_prefs", "spawn", "quit"])
+        self.assertEqual(self.reports, [])
+
+    def test_clean_preferences_are_not_saved(self):
+        self.run_restart()
+        self.assertEqual(self.events, ["spawn", "quit"])
+
+    def test_preferences_without_auto_save_are_left_alone(self):
+        self.preferences.is_dirty = True
+        self.preferences.use_preferences_save = False
+        self.run_restart()
+        self.assertEqual(self.events, ["spawn", "quit"])
+
+    def test_failed_preference_save_warns_but_still_restarts(self):
+        self.preferences.is_dirty = True
+        self.userpref_result = RuntimeError("Error: cannot write")
+        self.assertEqual(self.run_restart(), {"FINISHED"})
+        self.assertEqual(self.events, ["save_prefs", "spawn", "quit"])
+        self.assertEqual(self.reports[0][0], {"WARNING"})
+
+    def test_preferences_are_not_saved_when_the_restart_is_cancelled(self):
+        self.preferences.is_dirty = True
+        self.bpy.app.binary_path = ""
+        self.assertEqual(self.run_restart(), {"CANCELLED"})
+        self.assertEqual(self.events, [])
 
     def test_clean_file_never_saves(self):
         self.bpy.data.filepath = "/work/scene.blend"

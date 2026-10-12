@@ -11,6 +11,9 @@ called out separately from automated coverage.
 - **Install Update** now re-imports `blendmax_install` and the shared archive
   policy, so a second update in the same 3ds Max session runs the installer
   the first update put on disk rather than the copy already loaded.
+- If the installed updater itself cannot be loaded, **Install Update** shows
+  the normal "BlendMax Update Failed" dialog with reinstall instructions
+  instead of a raw Python error.
 
 ### Changed
 
@@ -84,8 +87,10 @@ called out separately from automated coverage.
   then quits the old one. With unsaved changes it first asks **Save &
   Restart** or **Discard & Restart**. Images with unsaved edits, which saving
   the .blend does not write, are listed in the dialog as a warning before
-  they would be lost. If the new Blender cannot be started, the current
-  session keeps running and reports an error.
+  they would be lost. Auto-saved preferences with pending changes are written
+  before the new Blender starts, so it never reads an older copy. If the new
+  Blender cannot be started, the current session keeps running and reports an
+  error.
 - Fixed a regression where every face on an imported mesh with a manifest
   material assignment silently collapsed onto material slot 0, discarding
   the per-face material assignment 3ds Max exported and Blender's FBX

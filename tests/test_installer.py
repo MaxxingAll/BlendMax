@@ -328,6 +328,50 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("BlendMax first installed.", notices[0])
         self.assertIn("BlendMax second installed.", notices[1])
 
+    def test_broken_installer_on_disk_shows_the_failure_dialog(self):
+        actions_source = (
+            SOURCE_ROOT
+            / "appbundle"
+            / BUNDLE_NAME
+            / "Contents"
+            / "python"
+            / "blendmax_actions.py"
+        )
+        notices = []
+        runtime = mock.Mock()
+        runtime.messageBox.side_effect = (
+            lambda message, title: notices.append((title, message))
+        )
+        original_path = list(sys.path)
+        try:
+            with tempfile.TemporaryDirectory() as temporary, mock.patch.dict(
+                sys.modules, {"pymxs": mock.Mock(runtime=runtime)}
+            ), mock.patch.object(sys, "dont_write_bytecode", True), mock.patch(
+                "sys.stdout"
+            ):
+                root = Path(temporary)
+                shutil.copy2(actions_source, root / "blendmax_actions.py")
+                (root / "blendmax_install.py").write_text(
+                    "this is not valid python\n", encoding="utf-8"
+                )
+                sys.modules.pop("blendmax_actions", None)
+                sys.modules.pop("blendmax_install", None)
+                sys.path.insert(0, str(root))
+                import blendmax_actions
+
+                blendmax_actions.install_update()
+        finally:
+            sys.path[:] = original_path
+            sys.modules.pop("blendmax_actions", None)
+            sys.modules["blendmax_install"] = blendmax_install
+            sys.modules["blendmax_archive_policy"] = archive_policy
+
+        self.assertEqual(len(notices), 1)
+        title, message = notices[0]
+        self.assertEqual(title, "BlendMax Update Failed")
+        self.assertIn("could not be loaded", message)
+        runtime.getOpenFileName.assert_not_called()
+
     def test_install_replaces_only_the_existing_bundle(self):
         with tempfile.TemporaryDirectory() as temporary:
             plugins = Path(temporary) / "ApplicationPlugins"
