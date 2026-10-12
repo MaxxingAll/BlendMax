@@ -226,12 +226,12 @@ class RestartOperatorTests(unittest.TestCase):
         shown = []
         context = SimpleNamespace(
             window_manager=SimpleNamespace(
-                invoke_props_dialog=lambda op: shown.append(op)
+                invoke_props_dialog=lambda op, **kwargs: shown.append((op, kwargs))
                 or {"RUNNING_MODAL"}
             )
         )
         self.assertEqual(operator.invoke(context, None), {"RUNNING_MODAL"})
-        self.assertEqual(shown, [operator])
+        self.assertEqual(shown, [(operator, {"confirm_text": "Restart Blender"})])
         self.assertEqual(calls, [])
 
     def test_invoke_executes_directly_when_clean(self):

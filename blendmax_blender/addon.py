@@ -272,7 +272,10 @@ class BLENDMAX_OT_restart_blender(bpy.types.Operator):
         if restart.is_dirty():
             # Blender's own quit prompt could still be cancelled after the
             # new process was spawned, so the choice is made here first.
-            return context.window_manager.invoke_props_dialog(self)
+            # confirm_text needs Blender 4.1+; the extension requires 4.2.
+            return context.window_manager.invoke_props_dialog(
+                self, confirm_text="Restart Blender"
+            )
         return self.execute(context)
 
     def execute(self, _context):
