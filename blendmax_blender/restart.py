@@ -117,11 +117,12 @@ def launch(command):
     return subprocess.Popen(command, **options)
 
 
-def restart_blender(report, unsaved_action=DISCARD):
+def restart_blender(report, unsaved_action=SAVE):
     """Relaunch Blender and quit this session; return an operator result set.
 
     `report` is the operator's ``report`` method. `unsaved_action` decides
-    what happens to unsaved changes (``SAVE`` or ``DISCARD``).
+    what happens to unsaved changes (``SAVE`` or ``DISCARD``). It defaults to
+    ``SAVE`` so a caller that does not choose never loses work.
     """
     if is_dirty() and unsaved_action == SAVE:
         if not bpy.data.filepath:

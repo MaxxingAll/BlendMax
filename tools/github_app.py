@@ -81,8 +81,9 @@ def load_credentials(
     path = Path(config_path) if config_path is not None else DEFAULT_CONFIG
     if not path.is_file():
         raise CredentialsError(
-            "No GitHub App credentials: set GITHUB_APP_ID and "
-            "GITHUB_APP_PRIVATE_KEY_B64, or create {0}.".format(path)
+            "No GitHub App credentials: create {0} (see "
+            "docs/AGENT_WORKFLOW.md). Cloud sessions should use their built-in "
+            "GitHub access instead of this tool.".format(path)
         )
     config = json.loads(path.read_text(encoding="utf-8"))
     try:

@@ -215,6 +215,12 @@ class RestartTests(unittest.TestCase):
         self.assertEqual(self.run_restart(), {"CANCELLED"})
         self.assertEqual(self.events, [])
 
+    def test_default_choice_saves_rather_than_discards(self):
+        self.bpy.data.is_dirty = True
+        self.bpy.data.filepath = "/work/scene.blend"
+        self.assertEqual(self.run_restart(), {"FINISHED"})
+        self.assertEqual(self.events, ["save", "spawn", "quit"])
+
     def test_clean_file_never_saves(self):
         self.bpy.data.filepath = "/work/scene.blend"
         self.run_restart("SAVE")

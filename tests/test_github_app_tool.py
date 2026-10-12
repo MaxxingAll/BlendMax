@@ -69,8 +69,14 @@ class LoadCredentialsTests(unittest.TestCase):
         self.assertEqual(credentials.app_id, "7")
 
     def test_missing_everything_is_reported(self):
-        with self.assertRaises(github_app.CredentialsError):
+        with self.assertRaises(github_app.CredentialsError) as caught:
             github_app.load_credentials({}, config_path=Path("does/not/exist.json"))
+        message = str(caught.exception)
+        # Points at the local config and the docs, not at environment
+        # variables, which must never hold the key in cloud sessions.
+        self.assertIn("exist.json", message)
+        self.assertIn("docs/AGENT_WORKFLOW.md", message)
+        self.assertNotIn("GITHUB_APP_PRIVATE_KEY_B64", message)
 
     def test_main_reports_missing_credentials_without_traceback(self):
         with mock.patch.object(
