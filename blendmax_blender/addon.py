@@ -288,14 +288,12 @@ class BLENDMAX_OT_restart_blender(bpy.types.Operator):
             layout.prop(self, "unsaved_action")
             if not restart.has_file_path():
                 # Save & Restart cannot work on a never-saved file; say so
-                # here rather than only after the dialog has closed.
-                note = layout.row()
+                # here rather than only after the dialog has closed. Two
+                # short lines: Blender cuts the middle out of a long label.
+                note = layout.column()
                 note.alert = True
-                note.label(
-                    text="This file has never been saved: use File > Save As "
-                    "first, or choose Discard & Restart.",
-                    icon="INFO",
-                )
+                note.label(text="This file has never been saved.", icon="INFO")
+                note.label(text="Use File > Save As first, or choose Discard & Restart.")
         images = restart.modified_images()
         if images:
             box = layout.box()
@@ -312,7 +310,11 @@ class BLENDMAX_OT_restart_blender(bpy.types.Operator):
                 icon="ERROR",
             )
             box.label(text=restart.describe_images(images))
-            box.label(text="To keep them, cancel and use Image > Save first.")
+            box.label(
+                text="To keep {0}, cancel and use Image > Save first.".format(
+                    "it" if len(images) == 1 else "them"
+                )
+            )
 
     def execute(self, _context):
         return restart.restart_blender(self.report, self.unsaved_action)

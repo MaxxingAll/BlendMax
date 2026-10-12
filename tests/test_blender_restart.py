@@ -337,20 +337,19 @@ class RestartOperatorTests(unittest.TestCase):
         operator, _calls = self.make_operator(dirty=False, images=("paint.png",))
         operator.layout = RecordingLayout()
         operator.draw(None)
-        self.assertIn(
-            "1 image has unsaved edits that will be lost:", operator.layout.texts()
-        )
+        texts = operator.layout.texts()
+        self.assertIn("1 image has unsaved edits that will be lost:", texts)
+        self.assertIn("To keep it, cancel and use Image > Save first.", texts)
 
     def test_draw_warns_up_front_for_a_never_saved_file(self):
         operator, _calls = self.make_operator(dirty=True, saved=False)
         operator.layout = RecordingLayout()
         operator.draw(None)
         self.assertEqual(operator.layout.props, [(operator, "unsaved_action")])
-        self.assertIn(
-            "This file has never been saved: use File > Save As first, or "
-            "choose Discard & Restart.",
-            operator.layout.texts(),
-        )
+        texts = operator.layout.texts()
+        self.assertIn("This file has never been saved.", texts)
+        self.assertIn("Use File > Save As first, or choose Discard & Restart.", texts)
+        self.assertTrue(operator.layout.alerted)
 
     def test_draw_without_images_shows_no_warning(self):
         operator, _calls = self.make_operator(dirty=True)
@@ -407,6 +406,9 @@ class RecordingLayout:
         return RecordingLayout(self.root)
 
     def row(self):
+        return RecordingLayout(self.root)
+
+    def column(self):
         return RecordingLayout(self.root)
 
     @property
