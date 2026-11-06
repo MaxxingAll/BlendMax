@@ -65,7 +65,18 @@ come from `GET /repos/MaxxingAll/BlendMax/commits/<sha>/check-runs`.
   succeeded. Look the object up (for example
   `GET /pulls?head=MaxxingAll:<branch>&state=all`) before retrying, so nothing
   is created twice.
-- Pushing uses normal `git push` credentials, not the app.
+- Local sessions push as the app too, passing the credential helper per
+  command. Never change the clone's config, so the maintainer's own pushes stay
+  theirs. The helper is `gh_app.py` in the credentials folder;
+  `tools/github_app.py` has no `git-credential` command. Cloud sessions push
+  through the GitHub proxy instead.
+
+  ```bash
+  git -c credential.helper= \
+      -c credential.helper='!py -3 "C:/Users/<user>/.config/github-app/gh_app.py" git-credential' \
+      -c credential.useHttpPath=true \
+      push -u origin <branch>
+  ```
 
 ### Commit identity
 
