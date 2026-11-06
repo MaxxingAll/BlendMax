@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import unittest
 
 from blendmax_blender.errors import ManifestValidationError
@@ -494,6 +495,62 @@ class ManifestReferenceTests(unittest.TestCase):
 
         parents = {item.object_id: item.parent_id for item in manifest.objects}
         self.assertEqual(parents, {"obj_1": None, "obj_2": "obj_1", "obj_3": "obj_2"})
+
+    @staticmethod
+    def _manifest_with_parents(pairs):
+        """A valid manifest whose objects are ``(object_id, parent_id)`` pairs."""
+        raw = valid_manifest()
+        template = raw["objects"][0]
+        objects = []
+        for object_id, parent_id in pairs:
+            item = dict(template)
+            item.update(id=object_id, fbx_name="BM_" + object_id, parent_id=parent_id)
+            objects.append(item)
+        raw["objects"] = objects
+        raw["asset"]["root_id"] = pairs[0][0]
+        raw["materials"]["assignments"] = []
+        return raw
+
+    def test_cycle_after_a_cleared_chain_is_rejected(self):
+        """Clearing the valid objects first must not hide a later cycle."""
+        raw = self._manifest_with_parents(
+            [("root", None), ("kid", "root"), ("a", "b"), ("b", "a")]
+        )
+        with self.assertRaisesRegex(ManifestValidationError, "object id: 'a'"):
+            parse_manifest(raw)
+
+    def test_cycle_error_names_the_first_object_reaching_it(self):
+        raw = self._manifest_with_parents(
+            [("tail", "a"), ("a", "b"), ("b", "a")]
+        )
+        with self.assertRaisesRegex(ManifestValidationError, "object id: 'tail'"):
+            parse_manifest(raw)
+
+    def test_siblings_sharing_a_cleared_ancestor_are_not_a_cycle(self):
+        raw = self._manifest_with_parents(
+            [("kid_1", "mid"), ("kid_2", "mid"), ("mid", "root"), ("root", None)]
+        )
+        raw["asset"]["root_id"] = "root"
+
+        manifest = parse_manifest(raw)
+
+        self.assertEqual(len(manifest.objects), 4)
+
+    def test_deep_chain_validates_in_linear_time(self):
+        """The restart-per-object walk took about 18 s on this chain (#37)."""
+        count = 20000
+        pairs = [
+            ("o{0}".format(index), "o{0}".format(index - 1) if index else None)
+            for index in range(count)
+        ]
+        raw = self._manifest_with_parents(pairs)
+
+        started = time.perf_counter()
+        manifest = parse_manifest(raw)
+        elapsed = time.perf_counter() - started
+
+        self.assertEqual(len(manifest.objects), count)
+        self.assertLess(elapsed, 3.0)
 
 
 if __name__ == "__main__":
