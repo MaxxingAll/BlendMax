@@ -324,18 +324,22 @@ def _validate_references(manifest: BlendMaxManifest) -> None:
     # Existence alone leaves parent_id half-validated: a cycle passes every
     # target check above and only fails later in placement.hierarchy_bounds,
     # which raises a bare ValueError outside the importer's error handling.
+    # The exporter's object cap does not bind a manifest read here, so each walk
+    # stops at objects already cleared: O(n) however deep the hierarchy is.
     parents = {item.object_id: item.parent_id for item in manifest.objects}
+    cleared = set()
     for start in parents:
-        seen = set()
+        path = set()
         current = start
-        while current is not None:
-            if current in seen:
+        while current is not None and current not in cleared:
+            if current in path:
                 raise ManifestValidationError(
                     "Object hierarchy contains a parent cycle reachable from object id: "
                     "{0!r}.".format(start)
                 )
-            seen.add(current)
+            path.add(current)
             current = parents.get(current)
+        cleared |= path
 
     for offset, texture in enumerate(manifest.textures):
         if texture.graph_node_id is not None and texture.graph_node_id not in node_ids:
