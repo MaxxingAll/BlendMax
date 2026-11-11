@@ -1,4 +1,4 @@
-# BlendMax Blender Importer 0.1.20 Test Matrix
+# BlendMax Blender Importer 0.1.21 Test Matrix
 
 
 ## Material-name collision reservation (`.001`) — PENDING HOST TEST
@@ -68,16 +68,16 @@ ground truth for renderer-specific host behavior.
 
 ## Version metadata
 
-- Extension version: **0.1.20** — declared in `blender_manifest.toml`, which is
+- Extension version: **0.1.21** — declared in `blender_manifest.toml`, which is
   the metadata Blender reads for an installed extension and the value the build
-  uses to name the artifact (`blendmax_importer-0.1.20.zip`).
+  uses to name the artifact (`blendmax_importer-0.1.21.zip`).
 - `blender_version_min`: **4.2.0**.
 - `__init__.py` mirrors the version in `__version__` and in the legacy `bl_info`
   dict. Nothing in the repository reads those two, so
   `tests/test_blender_extension_build.py` (`BlenderVersionMetadataTests`) pins
   all three against each other and fails if any one moves alone.
 - A fourth value is a hand-maintained expectation rather than a declaration: the
-  literal `"0.1.20"` asserted by `BlenderExtensionBuildTests` in the same file. It
+  literal `"0.1.21"` asserted by `BlenderExtensionBuildTests` in the same file. It
   must move with the other three, or that test fails with no other explanation.
 
 ## Archive validation coverage
@@ -165,6 +165,67 @@ notice. Development builds must bump the manifest version when needed.
 Record the exact Blender version, build ZIP, and result here after host
 validation. The automated suite cannot verify extension-loader behavior because
 it does not import `bpy`.
+
+## Curve UV > Project From View
+
+The UVs live on the Curve itself: a **BlendMax Curve UV** Geometry Nodes
+modifier writes `UVMap` from a view stored on the modifier. No other object is
+made.
+
+**Host-checked in Blender 5.2.3** (background, real `bpy`, the repo module):
+
+- The modifier's `UVMap` matches `curve_uv.project_from_view` to within 4e-08
+  on a 1200 x 700 perspective view, on a filled flat Curve and an extruded one.
+  An open Curve without faces is skipped and gets no modifier.
+- A re-run from a 600 x 900 view at another angle updates the same modifier
+  (still one modifier, one node group) and matches to 6e-08.
+- Moving a control point afterwards keeps the match (5e-08): new points go
+  through the stored view.
+- At and behind the viewpoint (PR #67 review), the node graph's real output on
+  a mesh with w = 0, 1e-7 and -2 equals the reference exactly to 6 places and is
+  finite; at w = 2e-5 (just in front, UV about 12500) it differs only at float32
+  precision. An extruded Curve crossing the eye plane, run through the tool,
+  gets finite UVs within 1.5e-07 of the reference, 58 of 96 points counted
+  outside.
+- Save and reload keep the Curve a Curve, the modifier and the same UVs.
+- Cycles with an Image Texture that has no UV input uses the stored `UVMap`: a
+  2 x 2 test image renders upright, as the view saw it.
+- The derived-mesh build this replaces matched Blender's own
+  `uv.project_from_view` to 6e-08 through the same `project_from_view`; camera
+  view keeps the viewport framing rather than the render camera's frame.
+
+**Live pass in Blender 5.2.3:** the built ZIP installed with `extension
+install-file` into a throwaway profile, driven by real mouse and keyboard input,
+on a three-curve SVG logo:
+
+- **BlendMax > Curve UV > Project From View** opens and runs from the top bar:
+  "Curve UV: 3 curve(s) projected.", three Curves, one shared node group, no new
+  objects. The SVG importer's own flat `UVMap` is replaced, not duplicated. A
+  colour grid runs continuously across all three Curves (zoomed check).
+- Orbiting afterwards keeps the texture on the Curves. F3 search from the
+  viewport re-projects from the new view.
+- Found live and fixed: after that re-run, Material Preview kept drawing the old
+  UVs although the Curves held the new ones; an object or data update tag did
+  not help, a Solid/Material Preview switch did. The tool now flips the
+  modifier's viewport switch and sets it back, and the re-run redraws at once.
+- Ctrl+Z restores the previous projection.
+- Running in Edit Mode gives "Switch to Object Mode first." and changes nothing.
+- Scaling a Curve by 1.3 in Edit Mode and leaving Edit Mode keeps the texture
+  fixed in space with no re-run (UV span 0.13 to 0.17).
+- The modifier panel shows the shared group and a closed **Stored View** panel.
+- Deleting Curves with X or Delete drops the node group's users (3, 2, 1) and
+  leaves nothing of the tool behind.
+- With only the Camera selected: "Select one or more Curve objects first."
+
+**V-Ray for Blender 7.40.03, Blender 5.2.3** (the maintainer's profile, the repo
+module loaded by script, nothing installed): a filled Curve projected by the
+tool, with a V-Ray Light Mtl whose V-Ray Bitmap keeps its default Mapping,
+renders a four-colour test image upright. With the stored view turned 90
+degrees the quadrants turn with it, so V-Ray reads the modifier's `UVMap` and
+not a bounding-box fallback.
+
+**PENDING:** Blender 4.2, the minimum version (its modifier inputs are ID
+properties, covered only by a unit test).
 
 ## Verified Blender 5.2 manual passes
 

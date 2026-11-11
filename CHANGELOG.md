@@ -30,6 +30,35 @@ called out separately from automated coverage.
 - Host-checked in 3ds Max 2025: two **Install Update from ZIP** actions in one
   session; the second loaded the installer the first one put on disk.
 
+## Blender Importer 0.1.21 — Unreleased
+
+### Added
+
+- Adds **BlendMax > Curve UV > Project From View**. Each selected Curve gets a
+  real `UVMap`, projected from the 3D viewport with the same mapping as
+  Blender's **Mesh > UV > Project From View**. A Curve cannot store a UV map
+  itself, so a **BlendMax Curve UV** Geometry Nodes modifier on the Curve
+  writes it onto the Curve's evaluated geometry. No second object is made, and
+  the Curve stays an editable Curve; removing the modifier removes the UVs.
+- The view is stored on the modifier, under its closed **Stored View** panel,
+  as 16 numbers: Blender does not let a modifier input hold a matrix. All
+  Curves share one **BlendMax Curve UV** node group.
+- In a perspective view, points on or behind the viewpoint get a finite UV
+  instead of an infinite one: the node graph skips the perspective divide
+  there, the same way the out-of-view count does, and counts them as outside.
+- Editing the Curve's shape afterwards keeps the projection: new points are
+  projected through the stored view.
+- The menu runs from the top bar, so it projects from the largest 3D viewport
+  on the screen. Running the command from inside a viewport with F3 search uses
+  that viewport. In camera view it keeps the viewport framing rather than
+  switching to the render camera's frame.
+- Running it again updates the same modifier from the current view. Other
+  modifiers on the Curve are left alone, and a new Curve UV modifier goes last.
+- It works in Object Mode only, and asks you to switch from any other mode.
+- A Curve without faces, such as an open line with no bevel, is skipped and
+  named in the report. Vertices outside the view keep their true position
+  beyond 0..1 and are counted in the report.
+
 ## Blender Importer 0.1.20 — Unreleased
 
 ### Changed

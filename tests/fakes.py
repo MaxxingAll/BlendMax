@@ -224,6 +224,9 @@ class FakeMatrix:
     def __init__(self, rows):
         self.rows = tuple(tuple(float(value) for value in row) for row in rows)
 
+    def __getitem__(self, row):
+        return self.rows[row]
+
     @classmethod
     def identity(cls):
         return cls(

@@ -21,7 +21,7 @@ created automatically by Python.
 | Component | Version | Status |
 | --- | --- | --- |
 | 3ds Max exporter and cleanup | `0.1.0-alpha.4.3.1` | Host verified in 3ds Max 2025.3; updater reload host-checked in 3ds Max 2025 |
-| Blender importer | `0.1.20` | Measurement Cage, structured import summary, and a version-based restart notice with a one-shot dialog |
+| Blender importer | `0.1.21` | Measurement Cage, Curve UV Project From View, structured import summary, and a version-based restart notice with a one-shot dialog |
 | `.blendmax` manifest | `0.1.1` | Current exporter/importer contract |
 | Automated suite | See CI | Python 3.11–3.13 |
 
@@ -139,7 +139,7 @@ continue running stale code.
 
 ## Install the Blender importer
 
-Build or download `blendmax_importer-0.1.20.zip`, then in Blender:
+Build or download `blendmax_importer-0.1.21.zip`, then in Blender:
 
 1. Open **Edit > Preferences > Get Extensions**.
 2. Open the menu in the top-right and choose **Install from Disk**.
