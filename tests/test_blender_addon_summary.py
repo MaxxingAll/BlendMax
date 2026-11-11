@@ -209,6 +209,55 @@ class BlenderAddonSummaryContractTests(unittest.TestCase):
             [({"ERROR"}, "Select an asset with valid mesh geometry.")],
         )
 
+    def _run_curve_uv(self, outcome):
+        module = ModuleType("blendmax_blender.blender_curve_uv")
+
+        def project(_context):
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        module.project_curves_from_view = project
+        reports = []
+        operator = self.addon.BLENDMAX_OT_curve_uv_project_from_view()
+        operator.report = lambda levels, message: reports.append((levels, message))
+        with patch.dict(
+            sys.modules,
+            {"blendmax_blender.blender_curve_uv": module},
+        ):
+            return operator.execute(None), reports
+
+    def test_curve_uv_operator_reports_value_error_and_cancels(self):
+        result, reports = self._run_curve_uv(ValueError("Select a Curve."))
+
+        self.assertEqual(result, {"CANCELLED"})
+        self.assertEqual(reports, [({"ERROR"}, "Select a Curve.")])
+
+    def test_curve_uv_operator_reports_a_clean_run_as_info(self):
+        result, reports = self._run_curve_uv(
+            SimpleNamespace(projected=(object(), object()), skipped=(), outside=0)
+        )
+
+        self.assertEqual(result, {"FINISHED"})
+        self.assertEqual(reports, [({"INFO"}, "Curve UV: 2 curve(s) projected.")])
+
+    def test_curve_uv_operator_warns_about_skipped_curves_and_vertices_out_of_view(self):
+        result, reports = self._run_curve_uv(
+            SimpleNamespace(projected=(object(),), skipped=("A", "B"), outside=7)
+        )
+
+        self.assertEqual(result, {"FINISHED"})
+        self.assertEqual(
+            reports,
+            [
+                (
+                    {"WARNING"},
+                    "Curve UV: 1 curve(s) projected. Skipped, no faces: A, B. "
+                    "7 vertices are outside the view.",
+                )
+            ],
+        )
+
     def test_icon_falls_back_when_stdout_cannot_encode_glyphs(self):
         with patch.object(self.addon, "_stdout_encoding", return_value="ascii"):
             self.assertEqual(self.addon._icon("objects"), "[O]")
@@ -412,6 +461,36 @@ class BlendMaxMenuRegistrationTests(unittest.TestCase):
         self.assertNotIn(self.addon._menu_blendmax, types.TOPBAR_MT_editor_menus)
         self.assertNotIn(self.addon._menu_blendmax, types.VIEW3D_MT_editor_menus)
         self.assertNotIn(self.addon._menu_import, types.TOPBAR_MT_file_import)
+
+    def test_curve_uv_is_reachable_only_through_the_blendmax_menu(self):
+        addon = self.addon
+        self.assertIn(addon.BLENDMAX_OT_curve_uv_project_from_view, addon._CLASSES)
+        self.assertIn(addon.BLENDMAX_MT_curve_uv, addon._CLASSES)
+        self.assertEqual(
+            addon.BLENDMAX_OT_curve_uv_project_from_view.bl_idname,
+            "blendmax.curve_uv_project_from_view",
+        )
+
+        menus = []
+        main = addon.BLENDMAX_MT_main()
+        main.layout = SimpleNamespace(
+            menu=lambda name, **_kwargs: menus.append(name)
+        )
+        main.draw(None)
+        self.assertEqual(
+            menus, ["BLENDMAX_MT_presentation", "BLENDMAX_MT_curve_uv"]
+        )
+
+        operators = []
+        submenu = addon.BLENDMAX_MT_curve_uv()
+        submenu.layout = SimpleNamespace(
+            operator=lambda name, **kwargs: operators.append((name, kwargs["text"]))
+        )
+        submenu.draw(None)
+        self.assertEqual(
+            operators,
+            [("blendmax.curve_uv_project_from_view", "Project From View")],
+        )
 
     def test_remove_measurement_cage_operator_is_registered(self):
         self.assertIn(

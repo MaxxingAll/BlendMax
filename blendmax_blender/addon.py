@@ -248,6 +248,37 @@ class BLENDMAX_OT_remove_measurement_cage(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class BLENDMAX_OT_curve_uv_project_from_view(bpy.types.Operator):
+    """Give the selected Curves a UV map projected from the 3D viewport."""
+
+    bl_idname = "blendmax.curve_uv_project_from_view"
+    bl_label = "Project From View"
+    bl_description = (
+        "Add or update a BlendMax Curve UV modifier on each selected Curve, "
+        "giving it a UV map projected from the 3D viewport. The Curve stays "
+        "an editable Curve"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        from .blender_curve_uv import project_curves_from_view
+
+        try:
+            result = project_curves_from_view(context)
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+
+        message = "Curve UV: {0} curve(s) projected.".format(len(result.projected))
+        if result.skipped:
+            message += " Skipped, no faces: {0}.".format(", ".join(result.skipped))
+        if result.outside:
+            message += " {0} vertices are outside the view.".format(result.outside)
+        level = "WARNING" if result.skipped or result.outside else "INFO"
+        self.report({level}, message)
+        return {"FINISHED"}
+
+
 class BLENDMAX_OT_restart_blender(bpy.types.Operator):
     """Relaunch Blender, reopening the current file, to load the new code."""
 
@@ -394,6 +425,18 @@ class BLENDMAX_MT_presentation(bpy.types.Menu):
         )
 
 
+class BLENDMAX_MT_curve_uv(bpy.types.Menu):
+    bl_idname = "BLENDMAX_MT_curve_uv"
+    bl_label = "Curve UV"
+
+    def draw(self, _context):
+        self.layout.operator(
+            BLENDMAX_OT_curve_uv_project_from_view.bl_idname,
+            text="Project From View",
+            icon="MOD_UVPROJECT",
+        )
+
+
 class BLENDMAX_MT_main(bpy.types.Menu):
     bl_idname = "BLENDMAX_MT_main"
     bl_label = "BlendMax"
@@ -402,6 +445,10 @@ class BLENDMAX_MT_main(bpy.types.Menu):
         self.layout.menu(
             BLENDMAX_MT_presentation.bl_idname,
             icon="SCENE_DATA",
+        )
+        self.layout.menu(
+            BLENDMAX_MT_curve_uv.bl_idname,
+            icon="UV",
         )
 
 
@@ -486,10 +533,12 @@ _CLASSES = (
     BLENDMAX_OT_import_asset,
     BLENDMAX_OT_create_measurement_cage,
     BLENDMAX_OT_remove_measurement_cage,
+    BLENDMAX_OT_curve_uv_project_from_view,
     BLENDMAX_OT_restart_blender,
     BLENDMAX_OT_restart_notice_popup,
     BLENDMAX_OT_restart_notice_later,
     BLENDMAX_MT_presentation,
+    BLENDMAX_MT_curve_uv,
     BLENDMAX_MT_main,
 )
 
