@@ -6,8 +6,14 @@ every point through the stored view and writes the result as the ``UVMap``
 face-corner attribute, which Blender and renderers read as a normal UV map.
 No second object is made, and the Curve stays an editable Curve.
 
-The view is stored as 16 numbers on the modifier, because Blender does not let
-a modifier input hold a matrix. Every modifier shares one node group.
+The node graph repeats :func:`curve_uv.project_from_view` step by step,
+including its guard at and behind the viewpoint (w <= MIN_W: no divide), so
+the written UVs stay finite and match the Python reference everywhere. It
+does not use Project Point, which divides by any w.
+
+The view is stored on the modifier as plain numbers (the clip-space x, y and
+w rows, and the viewport fit), because Blender does not let a modifier input
+hold a matrix. Every modifier shares one node group.
 """
 
 from __future__ import annotations
@@ -16,7 +22,7 @@ from typing import NamedTuple, Tuple
 
 import bpy
 
-from .curve_uv import project_from_view, uv_matrix
+from .curve_uv import MIN_W, project_from_view, uv_fit
 
 _GROUP_NAME = "BlendMax Curve UV"
 _GROUP_KEY = "blendmax_curve_uv_group"
@@ -24,6 +30,10 @@ _GROUP_VALUE = "project_from_view"
 _MODIFIER_NAME = "BlendMax Curve UV"
 _PANEL_NAME = "Stored View"
 _UV_MAP_NAME = "UVMap"
+
+# Clip-space rows the projection needs: x, y and w (z, the depth, is unused).
+_ROWS = (0, 1, 3)
+_FIT_NAMES = ("U Scale", "U Offset", "V Scale", "V Offset")
 
 
 def _input_name(row: int, column: int) -> str:
@@ -77,49 +87,84 @@ def _is_ours(group) -> bool:
     return group is not None and group.get(_GROUP_KEY) == _GROUP_VALUE
 
 
+def _math(nodes, links, operation, *sources):
+    """A Math node; ``sources`` are output sockets or constants, in input order."""
+    node = nodes.new("ShaderNodeMath")
+    node.operation = operation
+    for index, source in enumerate(sources):
+        if isinstance(source, float):
+            node.inputs[index].default_value = source
+        else:
+            links.new(source, node.inputs[index])
+    return node.outputs[0]
+
+
+def _clip_row(nodes, links, group_in, position, row):
+    """dot(row xyz, position) + row w: one clip-space coordinate."""
+    combine = nodes.new("ShaderNodeCombineXYZ")
+    for column, axis in enumerate("XYZ"):
+        links.new(group_in.outputs[_input_name(row, column)], combine.inputs[axis])
+    dot = nodes.new("ShaderNodeVectorMath")
+    dot.operation = "DOT_PRODUCT"
+    links.new(position, dot.inputs[0])
+    links.new(combine.outputs["Vector"], dot.inputs[1])
+    return _math(nodes, links, "ADD", dot.outputs["Value"], group_in.outputs[_input_name(row, 3)])
+
+
 def _build_group():
-    """Position -> Project Point (stored view) -> Store Named Attribute UVMap."""
+    """Position -> clip x, y, w -> guarded divide -> fit -> Store UVMap."""
     tree = bpy.data.node_groups.new(_GROUP_NAME, "GeometryNodeTree")
     tree[_GROUP_KEY] = _GROUP_VALUE
     interface = tree.interface
     interface.new_socket("Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
     panel = interface.new_panel(_PANEL_NAME, default_closed=True)
-    for row in range(4):
-        for column in range(4):
-            interface.new_socket(
-                _input_name(row, column),
-                in_out="INPUT",
-                socket_type="NodeSocketFloat",
-                parent=panel,
-            )
+    names = [_input_name(row, column) for row in _ROWS for column in range(4)]
+    for name in names + list(_FIT_NAMES):
+        interface.new_socket(name, in_out="INPUT", socket_type="NodeSocketFloat", parent=panel)
     interface.new_socket("Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
 
     nodes, links = tree.nodes, tree.links
     group_in = nodes.new("NodeGroupInput")
     group_out = nodes.new("NodeGroupOutput")
-    position = nodes.new("GeometryNodeInputPosition")
-    combine = nodes.new("FunctionNodeCombineMatrix")
-    project = nodes.new("FunctionNodeProjectPoint")
+    position = nodes.new("GeometryNodeInputPosition").outputs["Position"]
+    clip_x, clip_y, clip_w = (
+        _clip_row(nodes, links, group_in, position, row) for row in _ROWS
+    )
+
+    # On or behind the viewpoint (w <= MIN_W) divide by 1, as project_from_view.
+    in_front = nodes.new("FunctionNodeCompare")
+    in_front.data_type = "FLOAT"
+    in_front.operation = "GREATER_THAN"
+    links.new(clip_w, in_front.inputs[0])
+    in_front.inputs[1].default_value = MIN_W
+    divisor = nodes.new("GeometryNodeSwitch")
+    divisor.input_type = "FLOAT"
+    links.new(in_front.outputs["Result"], divisor.inputs["Switch"])
+    divisor.inputs["False"].default_value = 1.0
+    links.new(clip_w, divisor.inputs["True"])
+
+    uv = nodes.new("ShaderNodeCombineXYZ")
+    for clip, (scale, offset), axis in (
+        (clip_x, _FIT_NAMES[:2], "X"),
+        (clip_y, _FIT_NAMES[2:], "Y"),
+    ):
+        ndc = _math(nodes, links, "DIVIDE", clip, divisor.outputs["Output"])
+        value = _math(
+            nodes, links, "MULTIPLY_ADD", ndc, group_in.outputs[scale], group_in.outputs[offset]
+        )
+        links.new(value, uv.inputs[axis])
+    uv.inputs["Z"].default_value = 0.0
+
     store = nodes.new("GeometryNodeStoreNamedAttribute")
     store.data_type = "FLOAT2"
     store.domain = "CORNER"
     store.inputs["Name"].default_value = _UV_MAP_NAME
-
-    for row in range(4):
-        for column in range(4):
-            # Combine Matrix lists its inputs column by column.
-            links.new(
-                group_in.outputs[_input_name(row, column)],
-                combine.inputs[column * 4 + row],
-            )
     links.new(group_in.outputs["Geometry"], store.inputs["Geometry"])
-    links.new(position.outputs["Position"], project.inputs["Vector"])
-    links.new(combine.outputs["Matrix"], project.inputs["Transform"])
-    links.new(project.outputs["Vector"], store.inputs["Value"])
+    links.new(uv.outputs["Vector"], store.inputs["Value"])
     links.new(store.outputs["Geometry"], group_out.inputs["Geometry"])
 
-    for index, node in enumerate((group_in, position, combine, project, store, group_out)):
-        node.location = (index * 200.0, 0.0)
+    for index, node in enumerate(nodes):
+        node.location = ((index % 8) * 180.0, -(index // 8) * 220.0)
     return tree
 
 
@@ -139,24 +184,29 @@ def _our_modifier(obj):
     )
 
 
-def _set_view(modifier, group, matrix) -> None:
+def _set_view(modifier, group, matrix, fit) -> None:
+    """Store the clip rows of ``matrix`` and the viewport ``fit`` on the modifier."""
     identifiers = {
         item.name: item.identifier
         for item in group.interface.items_tree
         if getattr(item, "item_type", None) == "SOCKET" and item.in_out == "INPUT"
     }
+    values = {
+        _input_name(row, column): matrix[row][column]
+        for row in _ROWS
+        for column in range(4)
+    }
+    values.update(zip(_FIT_NAMES, fit))
     # Blender 5 reaches modifier inputs through ``properties.inputs``; older
     # versions keep them as ID properties on the modifier.
     properties = getattr(modifier, "properties", None)
     inputs = getattr(properties, "inputs", None)
-    for row in range(4):
-        for column in range(4):
-            identifier = identifiers[_input_name(row, column)]
-            value = float(matrix[row][column])
-            if inputs is not None:
-                getattr(inputs, identifier).value = value
-            else:
-                modifier[identifier] = value
+    for name, value in values.items():
+        identifier = identifiers[name]
+        if inputs is not None:
+            getattr(inputs, identifier).value = float(value)
+        else:
+            modifier[identifier] = float(value)
 
 
 def _refresh(modifier) -> None:
@@ -225,6 +275,6 @@ def project_curves_from_view(context) -> ProjectionResult:
         if modifier is None:
             modifier = curve.modifiers.new(_MODIFIER_NAME, "NODES")
             modifier.node_group = group
-        _set_view(modifier, modifier.node_group, uv_matrix(matrix, region.width, region.height))
+        _set_view(modifier, modifier.node_group, matrix, uv_fit(region.width, region.height))
         _refresh(modifier)
     return ProjectionResult(tuple(curve for curve, _ in targets), tuple(skipped), outside)

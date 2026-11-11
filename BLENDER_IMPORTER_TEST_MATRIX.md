@@ -174,13 +174,19 @@ made.
 
 **Host-checked in Blender 5.2.3** (background, real `bpy`, the repo module):
 
-- The modifier's `UVMap` matches `curve_uv.project_from_view` to within 8e-08
+- The modifier's `UVMap` matches `curve_uv.project_from_view` to within 4e-08
   on a 1200 x 700 perspective view, on a filled flat Curve and an extruded one.
   An open Curve without faces is skipped and gets no modifier.
 - A re-run from a 600 x 900 view at another angle updates the same modifier
-  (still one modifier, one node group) and matches to 8e-08.
-- Moving a control point afterwards keeps the match (8e-08): new points go
+  (still one modifier, one node group) and matches to 6e-08.
+- Moving a control point afterwards keeps the match (5e-08): new points go
   through the stored view.
+- At and behind the viewpoint (PR #67 review), the node graph's real output on
+  a mesh with w = 0, 1e-7 and -2 equals the reference exactly to 6 places and is
+  finite; at w = 2e-5 (just in front, UV about 12500) it differs only at float32
+  precision. An extruded Curve crossing the eye plane, run through the tool,
+  gets finite UVs within 1.5e-07 of the reference, 58 of 96 points counted
+  outside.
 - Save and reload keep the Curve a Curve, the modifier and the same UVs.
 - Cycles with an Image Texture that has no UV input uses the stored `UVMap`: a
   2 x 2 test image renders upright, as the view saw it.

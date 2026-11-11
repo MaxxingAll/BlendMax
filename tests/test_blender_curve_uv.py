@@ -9,6 +9,7 @@ node group into a UV map is a host test (``BLENDER_IMPORTER_TEST_MATRIX.md``).
 
 from __future__ import annotations
 
+import math
 import unittest
 from types import SimpleNamespace
 
@@ -39,23 +40,78 @@ class FakeIdProperties:
 class FakeSockets:
     """Node sockets, reachable by name or index like Blender's."""
 
-    def __init__(self):
+    def __init__(self, node):
+        self.node = node
         self.items = {}
 
     def __getitem__(self, key):
-        return self.items.setdefault(key, SimpleNamespace(key=key, default_value=None))
+        return self.items.setdefault(
+            key, SimpleNamespace(key=key, node=self.node, default_value=None)
+        )
 
 
 class FakeNodes(list):
     def new(self, kind):
-        node = SimpleNamespace(
-            type=kind, inputs=FakeSockets(), outputs=FakeSockets(), location=None
-        )
+        node = SimpleNamespace(type=kind, location=None)
+        node.inputs = FakeSockets(node)
+        node.outputs = FakeSockets(node)
         self.append(node)
         return node
 
     def of(self, kind):
         return next(node for node in self if node.type == kind)
+
+    def all_of(self, kind):
+        return [node for node in self if node.type == kind]
+
+
+def evaluate_uv(group, values, position):
+    """Run the node graph the tool built on one point, as Blender would.
+
+    ``values`` maps group input names to the modifier's stored numbers. Only
+    the node types the tool uses are known; anything else fails the test.
+    Blender's Math Divide returns 0 for a zero divisor.
+    """
+    sources = {id(target): source for source, target in group.links}
+
+    def read(node, key):
+        socket = node.inputs[key]
+        source = sources.get(id(socket))
+        if source is not None:
+            return output(source)
+        return 0.0 if socket.default_value is None else socket.default_value
+
+    def output(socket):
+        node, kind = socket.node, socket.node.type
+        if kind == "NodeGroupInput":
+            return values[socket.key]
+        if kind == "GeometryNodeInputPosition":
+            return tuple(position)
+        if kind == "ShaderNodeCombineXYZ":
+            return (read(node, "X"), read(node, "Y"), read(node, "Z"))
+        if kind == "ShaderNodeVectorMath" and node.operation == "DOT_PRODUCT":
+            return sum(a * b for a, b in zip(read(node, 0), read(node, 1)))
+        if kind == "ShaderNodeMath":
+            a, b, c = read(node, 0), read(node, 1), read(node, 2)
+            if node.operation == "ADD":
+                return a + b
+            if node.operation == "DIVIDE":
+                return a / b if b != 0 else 0.0
+            if node.operation == "MULTIPLY_ADD":
+                return a * b + c
+        if (
+            kind == "FunctionNodeCompare"
+            and node.data_type == "FLOAT"
+            and node.operation == "GREATER_THAN"
+        ):
+            return read(node, 0) > read(node, 1)
+        if kind == "GeometryNodeSwitch" and node.input_type == "FLOAT":
+            return read(node, "True") if read(node, "Switch") else read(node, "False")
+        raise AssertionError("unexpected node {0}".format(kind))
+
+    store = group.nodes.of("GeometryNodeStoreNamedAttribute")
+    value = read(store, "Value")
+    return (value[0], value[1])
 
 
 class FakeInterface:
@@ -231,26 +287,22 @@ class ProjectCurvesFromViewTests(unittest.TestCase):
         self.assertEqual(len(found), 1)
         return found[0]
 
-    def _stored_rows(self, curve):
+    def _stored(self, curve):
+        """Group input name -> number stored on the Curve's modifier."""
         modifier = self._ours(curve)
-        ids = {
-            item.name: item.identifier
+        return {
+            item.name: modifier.value(item.identifier)
             for item in modifier.node_group.interface.items_tree
-            if item.item_type == "SOCKET" and item.in_out == "INPUT"
+            if item.item_type == "SOCKET"
+            and item.in_out == "INPUT"
+            and item.socket_type == "NodeSocketFloat"
         }
-        return [
-            [modifier.value(ids["Row {0} Column {1}".format(r + 1, c + 1)]) for c in range(4)]
-            for r in range(4)
-        ]
 
     def _uvs(self, curve):
-        """The UVs Geometry Nodes would write: stored view, then divide by w."""
-        rows = self._stored_rows(curve)
-        uvs = []
-        for x, y, z in curve.data.points:
-            u, v, _depth, w = (r[0] * x + r[1] * y + r[2] * z + r[3] for r in rows)
-            uvs.append((u / w, v / w))
-        return uvs
+        """The UVs the tool's node graph writes for each Curve point."""
+        group = self._ours(curve).node_group
+        stored = self._stored(curve)
+        return [evaluate_uv(group, stored, point) for point in curve.data.points]
 
     def test_adds_one_modifier_whose_stored_view_gives_project_from_view_uvs(self):
         curve = self._curve()
@@ -278,7 +330,7 @@ class ProjectCurvesFromViewTests(unittest.TestCase):
         self.assertEqual(len(self.bpy.data.node_groups), 1)
         self.assertEqual(curve.open_meshes, 0)
 
-    def test_node_group_writes_uvmap_on_face_corners_from_projected_positions(self):
+    def test_node_group_writes_uvmap_on_face_corners(self):
         self._project(self._curve())
 
         group = self.bpy.data.node_groups[0]
@@ -288,21 +340,19 @@ class ProjectCurvesFromViewTests(unittest.TestCase):
         self.assertEqual(store.data_type, "FLOAT2")
         self.assertEqual(store.domain, "CORNER")
         self.assertEqual(store.inputs["Name"].default_value, "UVMap")
-        project = group.nodes.of("FunctionNodeProjectPoint")
-        combine = group.nodes.of("FunctionNodeCombineMatrix")
-        position = group.nodes.of("GeometryNodeInputPosition")
-        links = list(group.links)
-        self.assertIn((position.outputs["Position"], project.inputs["Vector"]), links)
-        self.assertIn((combine.outputs["Matrix"], project.inputs["Transform"]), links)
-        self.assertIn((project.outputs["Vector"], store.inputs["Value"]), links)
-        # Combine Matrix takes its inputs column by column.
         group_in = group.nodes.of("NodeGroupInput")
-        self.assertIn(
-            (group_in.outputs["Row 2 Column 1"], combine.inputs[1]), links
-        )
-        self.assertIn(
-            (group_in.outputs["Row 1 Column 2"], combine.inputs[4]), links
-        )
+        group_out = group.nodes.of("NodeGroupOutput")
+        links = list(group.links)
+        self.assertIn((group_in.outputs["Geometry"], store.inputs["Geometry"]), links)
+        self.assertIn((store.outputs["Geometry"], group_out.inputs["Geometry"]), links)
+
+    def test_node_graph_does_not_use_project_point(self):
+        # Project Point divides by any w; the graph must keep the guard.
+        self._project(self._curve())
+
+        types = {node.type for node in self.bpy.data.node_groups[0].nodes}
+        self.assertNotIn("FunctionNodeProjectPoint", types)
+        self.assertNotIn("FunctionNodeTransformPoint", types)
 
     def test_stored_view_sits_in_a_closed_panel(self):
         self._project(self._curve())
@@ -311,9 +361,50 @@ class ProjectCurvesFromViewTests(unittest.TestCase):
         panel = next(item for item in items if item.item_type == "PANEL")
         self.assertEqual(panel.name, "Stored View")
         self.assertTrue(panel.default_closed)
-        view_inputs = [item for item in items if item.item_type == "SOCKET" and item.name.startswith("Row")]
-        self.assertEqual(len(view_inputs), 16)
+        view_inputs = [
+            item for item in items
+            if item.item_type == "SOCKET" and item.socket_type == "NodeSocketFloat"
+        ]
+        self.assertEqual(
+            [item.name for item in view_inputs],
+            ["Row {0} Column {1}".format(r, c) for r in (1, 2, 4) for c in range(1, 5)]
+            + ["U Scale", "U Offset", "V Scale", "V Offset"],
+        )
         self.assertTrue(all(item.parent is panel for item in view_inputs))
+
+    def test_node_uvs_match_the_reference_at_and_behind_the_viewpoint(self):
+        # Review of PR #67: Project Point divided by w = 0 (infinite UVs) and by
+        # negative w (a different fallback). The graph must give exactly what
+        # project_from_view gives: finite UVs, true positions where w > MIN_W.
+        perspective = FakeMatrix(
+            (
+                (1.0, 0.0, 0.0, 0.0),
+                (0.0, 1.0, 0.0, 0.0),
+                (0.0, 0.0, 1.0, 0.0),
+                (0.0, 0.0, -1.0, 0.0),
+            )
+        )
+        self.viewport.data.perspective_matrix = perspective
+        self.viewport.width = 200
+        points = (
+            (1.0, 0.5, -2.0),     # in front
+            (1.0, 1.0, 0.0),      # w = 0, on the eye plane
+            (0.5, 0.5, -1e-7),    # w = 1e-7, inside the guard
+            (0.5, 0.5, -2e-5),    # w = 2e-5, just in front: huge but true
+            (0.5, -0.5, 2.0),     # w = -2, behind the viewpoint
+        )
+        curve = self._curve(points=points)
+
+        result = self._project(curve)
+
+        reference = self.module.project_from_view(points, perspective, 200, 100)
+        got = self._uvs(curve)
+        for index, (uv, expected) in enumerate(zip(got, reference.uvs)):
+            with self.subTest(point=points[index]):
+                self.assertTrue(all(math.isfinite(value) for value in uv))
+                self.assertAlmostEqual(uv[0], expected[0], places=9)
+                self.assertAlmostEqual(uv[1], expected[1], places=9)
+        self.assertEqual(result.outside, 4)
 
     def test_rerun_updates_the_same_modifier_from_a_new_view(self):
         curve = self._curve()

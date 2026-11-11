@@ -43,6 +43,9 @@ called out separately from automated coverage.
 - The view is stored on the modifier, under its closed **Stored View** panel,
   as 16 numbers: Blender does not let a modifier input hold a matrix. All
   Curves share one **BlendMax Curve UV** node group.
+- In a perspective view, points on or behind the viewpoint get a finite UV
+  instead of an infinite one: the node graph skips the perspective divide
+  there, the same way the out-of-view count does, and counts them as outside.
 - Editing the Curve's shape afterwards keeps the projection: new points are
   projected through the stored view.
 - The menu runs from the top bar, so it projects from the largest 3D viewport

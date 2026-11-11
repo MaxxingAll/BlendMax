@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import unittest
 
-from blendmax_blender.curve_uv import project_from_view, uv_matrix
+from blendmax_blender.curve_uv import project_from_view, uv_fit
 
 
 IDENTITY = (
@@ -95,38 +95,15 @@ class ProjectFromViewTests(unittest.TestCase):
         self.assertEqual(result.outside, 0)
 
 
-def _through(rows, point):
-    """What Geometry Nodes' Project Point does: transform, then divide by w."""
-    x, y, z = point
-    u, v, _depth, w = (r[0] * x + r[1] * y + r[2] * z + r[3] for r in rows)
-    return (u / w, v / w)
-
-
-class UvMatrixTests(unittest.TestCase):
-    POINTS = [(1, 0, -2), (1, 0.5, -4), (-0.3, 0.2, -1.5), (3, -2, -2)]
-
-    def test_matches_project_from_view_on_wide_tall_and_square_viewports(self):
-        for matrix in (IDENTITY, PERSPECTIVE):
-            for width, height in ((200, 100), (100, 200), (100, 100), (1366, 731)):
-                with self.subTest(matrix=matrix[3], width=width, height=height):
-                    expected = project_from_view(
-                        self.POINTS, matrix, width, height
-                    ).uvs
-                    rows = uv_matrix(matrix, width, height)
-                    for point, uv in zip(self.POINTS, expected):
-                        got = _through(rows, point)
-                        self.assertAlmostEqual(got[0], uv[0], places=12)
-                        self.assertAlmostEqual(got[1], uv[1], places=12)
-
-    def test_keeps_depth_and_w_rows(self):
-        rows = uv_matrix(PERSPECTIVE, 200, 100)
-
-        self.assertEqual(rows[2], PERSPECTIVE[2])
-        self.assertEqual(rows[3], PERSPECTIVE[3])
+class UvFitTests(unittest.TestCase):
+    def test_long_side_spans_the_uv_square_and_short_side_is_centred(self):
+        self.assertEqual(uv_fit(200, 100), (0.5, 0.5, 0.25, 0.5))
+        self.assertEqual(uv_fit(100, 200), (0.25, 0.5, 0.5, 0.5))
+        self.assertEqual(uv_fit(100, 100), (0.5, 0.5, 0.5, 0.5))
 
     def test_degenerate_viewport_is_refused(self):
         with self.assertRaisesRegex(ValueError, "no usable size"):
-            uv_matrix(IDENTITY, 0, 100)
+            uv_fit(0, 100)
 
 
 if __name__ == "__main__":
